@@ -6,11 +6,13 @@ import json
 import os
 import tempfile
 import threading
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
 
 import agent_ntfy
+import inject
 from tests.test_daemon import Harness, wait_until
 from tests.test_render import SAMPLE
 
@@ -200,12 +202,203 @@ class OtherCommandsTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn(f"pid {os.getpid()}", out)
         self.assertIn("已连上", out)
-        code, out, err = run(["--home", str(h.home), "confirm-sub", "slot1"])
-        self.assertEqual(code, 3)
-        self.assertIn("尚未提供", err)
+        self.assertIn("确认中：0", out)
         code, out, err = run(["--home", str(h.home), "add-slot"])
+        self.assertEqual(code, 0)
+        self.assertIn("slot6", out)
+        self.assertIn("confirm-sub slot6", out)  # 一步一事：不自动接确认，只指路
+        for t in h.store.load() or []:
+            self.assertNotIn(t, out)
+
+
+
+class ConfirmSubTest(unittest.TestCase):
+    """confirm-sub 的三种形态：默认（TTY，两段）· --subscribed（非 TTY 可用）· --show-topic（只看 topic）。"""
+
+    def click_when_sent(self, h, slot, n=1):
+        def go():
+            wait_until(lambda: len(h.client.published) == n)
+            h.client.message(h.topic(slot), inject.control_mark("confirmed", slot))
+        threading.Thread(target=go, daemon=True).start()
+
+    def run_on_tty(self, argv, stdin_text="\n", stdin=None):
+        """stdout 接一个伪终端：isatty() 为真。返回 (退出码, 终端上打印的文本, stderr)。stdin 给了对象就用它（可做门控）。"""
+        master, slave = os.openpty()
+        tty_out = os.fdopen(slave, "w", encoding="utf-8", buffering=1)
+        captured = []
+
+        def pump():
+            while True:
+                try:
+                    chunk = os.read(master, 65536)
+                except OSError:
+                    return
+                if not chunk:
+                    return
+                captured.append(chunk)
+
+        reader = threading.Thread(target=pump, daemon=True)
+        reader.start()
+        errbuf = io.StringIO()
+        environ = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_")}
+        try:
+            with mock.patch.dict(os.environ, environ, clear=True), mock.patch("sys.stdin", stdin or io.StringIO(stdin_text)), \
+                    mock.patch("sys.stdout", tty_out), contextlib.redirect_stderr(errbuf):
+                code = agent_ntfy.main(argv)
+        finally:
+            tty_out.close()
+            reader.join(2)
+            os.close(master)
+        return code, b"".join(captured).decode("utf-8", errors="replace"), errbuf.getvalue()
+
+    def test_default_on_non_tty_exits_4_without_touching_daemon(self):
+        h = Harness(self, subscribed=())
+        code, out, err = run(["--home", str(h.home), "confirm-sub", "slot4", "--timeout", "1"])  # run() 的 stdout 是 StringIO，不是 TTY
+        self.assertEqual((code, out), (4, ""))
+        self.assertIn("在你自己的终端跑", err)
+        self.assertIn("agent-ntfy confirm-sub slot4", err)
+        self.assertIn("--subscribed", err)
+        for t in h.store.load() or []:
+            self.assertNotIn(t, err)
+        self.assertEqual(h.client.published, [])
+        self.assertEqual(h.request(cmd="status")[0]["confirming"], 0)
+
+    def test_default_on_tty_prints_topic_waits_for_enter_then_confirms(self):
+        h = Harness(self, subscribed=())
+        self.click_when_sent(h, "slot4")
+        code, out, err = self.run_on_tty(["--home", str(h.home), "confirm-sub", "slot4", "--timeout", "5"], stdin_text="\n")
+        self.assertEqual(code, 0, err)
+        self.assertIn(h.topic("slot4"), out)  # topic 名只在这里出现
+        self.assertIn(h.client.topic_url(h.topic("slot4")), out)
+        self.assertIn(agent_ntfy.SUBSCRIBE_GUIDE, out)
+        self.assertIn("✅", out)
+        self.assertTrue(h.state.slots()["slot4"]["subscribed"])
+        self.assertEqual(h.client.published[0]["title"], "[slot4] 确认你能收到通知")
+
+    def test_default_on_tty_does_not_send_before_enter(self):
+        h = Harness(self, subscribed=())
+        enter = threading.Event()
+
+        class GatedStdin(io.StringIO):
+            def readline(self, *a):  # input() 会走到这里：用户还没按回车就一直等
+                enter.wait(10)
+                return "\n"
+
+        result = {}
+
+        def go():
+            result["r"] = self.run_on_tty(["--home", str(h.home), "confirm-sub", "slot4", "--timeout", "5"], stdin=GatedStdin())
+
+        t = threading.Thread(target=go, daemon=True)
+        t.start()
+        wait_until(lambda: h.request(cmd="status")[0]["confirming"] == 1, what="进入确认中")
+        time.sleep(0.3)
+        self.assertEqual(h.client.published, [])  # 用户还在订阅：没按回车之前不能发
+        self.click_when_sent(h, "slot4")
+        enter.set()
+        t.join(10)
+        code, out, err = result["r"]
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(h.client.published), 1)
+
+    def test_timeout_while_waiting_for_enter_exits_2_with_the_right_words(self):
+        h = Harness(self, subscribed=())
+
+        class SlowStdin(io.StringIO):
+            def readline(self, *a):  # 用户在 topic 段停留超过 timeout 才按回车
+                time.sleep(1.2)
+                return "\n"
+
+        code, out, err = self.run_on_tty(["--home", str(h.home), "confirm-sub", "slot4", "--timeout", "0.5"], stdin=SlowStdin())
+        self.assertEqual(code, 2, err)  # 是超时，不是「通道故障 Broken pipe」
+        self.assertIn("还没发出", err)  # 测试通知根本没发过，不能说「没收到按钮点击」
+        self.assertNotIn("Broken pipe", err)
+        self.assertEqual(h.client.published, [])
+
+    def test_stdin_eof_on_tty_cancels_instead_of_sending(self):
+        h = Harness(self, subscribed=())
+        code, out, err = self.run_on_tty(["--home", str(h.home), "confirm-sub", "slot4", "--timeout", "5"], stdin=io.StringIO(""))
+        self.assertEqual(code, 4, err)
+        self.assertIn("回车", err)
+        time.sleep(0.2)
+        self.assertEqual(h.client.published, [])  # 没等到回车就不发：先发再订阅正是两段式要避免的
+        self.assertEqual(h.request(cmd="status")[0]["confirming"], 0)
+
+    def test_subscribed_flag_works_without_tty_and_never_prints_topic(self):
+        h = Harness(self, subscribed=())
+        self.click_when_sent(h, "slot4")
+        code, out, err = run(["--home", str(h.home), "confirm-sub", "slot4", "--subscribed", "--timeout", "5"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("✅", out)
+        for t in h.store.load() or []:
+            self.assertNotIn(t, out + err)
+        self.assertTrue(h.state.slots()["slot4"]["subscribed"])
+
+    def test_show_topic_prints_and_exits_0_without_sending(self):
+        h = Harness(self)
+        code, out, err = run(["--home", str(h.home), "confirm-sub", "slot1", "--show-topic"])
+        self.assertEqual(code, 0, err)
+        self.assertIn(h.topic("slot1"), out)
+        self.assertIn(h.client.topic_url(h.topic("slot1")), out)
+        self.assertEqual(h.client.published, [])
+
+    def test_already_confirmed_exits_0_and_mentions_again(self):
+        h = Harness(self)
+        code, out, err = run(["--home", str(h.home), "confirm-sub", "slot1", "--subscribed", "--timeout", "1"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("--again", out)
+        self.assertEqual(h.client.published, [])
+
+    def test_timeout_exits_2(self):
+        h = Harness(self, subscribed=())
+        code, out, err = run(["--home", str(h.home), "confirm-sub", "slot4", "--subscribed", "--timeout", "0.5"])
+        self.assertEqual((code, out), (2, ""))  # 进度行走 stderr：stdout 只在退出 0 时有内容
+        self.assertIn("README", err)
+        self.assertIn("已发出", err)
+        self.assertFalse(h.state.slots()["slot4"]["subscribed"])
+
+    def test_busy_exits_4(self):
+        h = Harness(self)
+        sock, first, events = h.ask(leased_by="wD:p1")  # slot1 活跃
+        code, out, err = run(["--home", str(h.home), "confirm-sub", "slot1", "--subscribed", "--again"])
+        self.assertEqual(code, 4)
+        self.assertIn("等回复", err)
+        sock.close()
+
+    def test_publish_failure_exits_3_with_stdout_empty(self):
+        h = Harness(self, subscribed=())
+        h.client.fail_publish = "ntfy 不通"
+        code, out, err = run(["--home", str(h.home), "confirm-sub", "slot4", "--subscribed", "--timeout", "5"])
         self.assertEqual((code, out), (3, ""))
-        self.assertIn("尚未提供", err)
+        self.assertIn("发布", err)
+
+    def test_topic_event_under_subscribed_is_a_protocol_error(self):
+        h = Harness(self, subscribed=())
+        with mock.patch("agent_ntfy.read_events", lambda sock: iter([{"event": "topic", "topic": "not-a-real-topic", "url": "x"}])):
+            code, out, err = run(["--home", str(h.home), "confirm-sub", "slot4", "--subscribed", "--timeout", "5"])
+        self.assertEqual((code, out), (3, ""))  # 说了不要 topic 还收到：两端各守一道，topic 名不打印
+        self.assertNotIn("not-a-real-topic", out + err)
+        self.assertIn("协议", err)
+
+    def test_unknown_slot_exits_1_but_state_failure_exits_3(self):
+        h = Harness(self)
+        code, out, err = run(["--home", str(h.home), "confirm-sub", "slot9", "--subscribed"])
+        self.assertEqual((code, out), (1, ""))  # 槽位名打错是输入错，不是通道故障
+        self.assertIn("slot9", err)
+        code, out, err = run(["--home", str(h.home), "confirm-sub", "slot9", "--show-topic"])
+        self.assertEqual(code, 1)
+        code, out, err = run(["--home", str(h.home), "release", "slot9"])
+        self.assertEqual(code, 1)
+        (h.home / "leases.json").write_text("{not json", encoding="utf-8")
+        code, out, err = run(["--home", str(h.home), "release", "slot1"])
+        self.assertEqual(code, 3)
+        code, out, err = run(["--home", str(h.home), "add-slot"])
+        self.assertEqual(code, 3)
+
+    def test_no_daemon_exits_3_with_start_hint(self):
+        code, out, err = run(["--home", "/nonexistent/agent-ntfy-home", "confirm-sub", "slot1", "--subscribed"])
+        self.assertEqual((code, out), (3, ""))
+        self.assertIn("daemon 没在跑", err)
 
     # --detach 起子进程的参数顺序：--home 是顶层选项，必须在子命令前面（放后面 argparse 直接退 2，daemon 根本没起）
     def test_detach_spawns_child_with_home_before_subcommand(self):
@@ -230,7 +423,7 @@ class OtherCommandsTest(unittest.TestCase):
                 def serve():  # 像 daemon 一样回一条 status，pid 就是这个「子进程」的
                     conn, _ = srv.accept()
                     conn.recv(4096)
-                    conn.sendall(b'{"event":"status","pid":4242,"subscribed":true,"disconnected_for":null,"pending":0,"pool":5}\n')
+                    conn.sendall(b'{"event":"status","pid":4242,"subscribed":true,"disconnected_for":null,"pending":0,"confirming":0,"pool":5}\n')
                     conn.close()
                 threading.Thread(target=serve, daemon=True).start()
 
@@ -258,7 +451,7 @@ class OtherCommandsTest(unittest.TestCase):
     def test_status_before_first_connection_says_connecting(self):
         h = Harness(self)
         with mock.patch.object(agent_ntfy, "request", return_value={"event": "status", "pid": os.getpid(), "subscribed": False,
-                                                                     "disconnected_for": None, "pending": 0, "pool": 5}):
+                                                                     "disconnected_for": None, "pending": 0, "confirming": 0, "pool": 5}):
             code, out, err = run(["--home", str(h.home), "daemon", "--status"])
         self.assertEqual(code, 0)
         self.assertIn("连接中", out)

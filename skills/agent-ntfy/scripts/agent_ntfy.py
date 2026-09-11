@@ -7,8 +7,15 @@
                             常驻订阅进程（唯一的 ntfy 订阅者）：前台跑 / 脱离会话跑 / 看状态 / 停掉
     slots                   看槽位池与租约状态
     release [<槽位>]        释放租约；不给槽位就释放当前目标（本窗格）租的那个
-    confirm-sub <槽位>      确认该槽位「手机收得到通知」（尚未提供）
-    add-slot                新建一个槽位（尚未提供）
+    confirm-sub <槽位>      可达性确认闸：验「手机收得到通知」（要用户自己在终端跑：会显示 topic 名）
+        [--subscribed]        用户已订阅、跳过显示 topic 那段直接发测试通知（agent 代跑用，非终端也行）
+        [--show-topic]        只打印 topic 名就退出，不发（⚠️ 会进调用方的输出）
+        [--again]             已确认过的槽位重新确认（换手机后）
+        [--timeout 秒]        等按钮点击的秒数（默认 600）
+    add-slot                新建一个槽位（之后要 confirm-sub）
+
+confirm-sub / release / add-slot 的退出码: 0 成功 / 1 槽位名不对 / 2 超时没点按钮（confirm-sub）/ 3 通道故障（daemon 没跑、状态文件读写失败、发布失败）
+    / 4 需要人介入（confirm-sub 在非终端且没给 --subscribed；槽位正忙）/ 130 被 Ctrl-C 中断
 
 ask 的退出码（三种结局不能都表现为空输出）:
     0  拿到回复，stdout 是回复原文（末尾一个换行）
@@ -43,8 +50,12 @@ HOME = Path(os.environ.get("AGENT_NTFY_HOME", "~/.agent-ntfy")).expanduser()
 DEFAULT_TIMEOUT = 12 * 3600
 EXIT_REPLY, EXIT_INVALID, EXIT_TIMEOUT, EXIT_CHANNEL, EXIT_NEEDS_HUMAN, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 130
 # error 事件的 kind → 退出码
-EXIT_BY_KIND = {"invalid_input": EXIT_INVALID, "busy": EXIT_NEEDS_HUMAN, "no_free_slot": EXIT_NEEDS_HUMAN,
-                "unconfirmed": EXIT_NEEDS_HUMAN}
+EXIT_BY_KIND = {"invalid_input": EXIT_INVALID, "unknown_slot": EXIT_INVALID, "busy": EXIT_NEEDS_HUMAN, "no_free_slot": EXIT_NEEDS_HUMAN,
+                "unconfirmed": EXIT_NEEDS_HUMAN}  # 其余 kind（state / publish_failed / daemon_stopping / bad_request …）都是通道故障 3
+CONFIRM_TIMEOUT = 600  # 与 daemon.CONFIRM_TIMEOUT 同步（这里刻意不 import daemon）
+TOPIC_HINT = ("topic 名只在你自己的终端里显示：请在你自己的终端跑  agent-ntfy confirm-sub {slot}\n"
+              "  用户已经在手机上订阅过就加 --subscribed（不显示 topic，非终端也能跑）；只想看 topic 名用 --show-topic（会进调用方的输出）")
+SUBSCRIBE_GUIDE = "在手机 ntfy app 里订阅上面这个 topic；订阅好后按回车，我会发一条带按钮的测试通知——看到它弹出来、点按钮，确认就完成了。"
 START_HINT = ("daemon 没在跑。启动方式：\n"
               "  herdr 内 ：另开一个 pane 跑  agent-ntfy daemon      （可见、herdr 管生命周期）\n"
               "  非 herdr ：agent-ntfy daemon --detach              （脱离会话，靠 --status / --stop 管）\n"
@@ -195,25 +206,97 @@ def cmd_release(args) -> int:
         return EXIT_CHANNEL
     if ev.get("event") != "released":
         err(str(ev.get("message")))
-        return EXIT_CHANNEL
+        return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
     print(f"已释放 {ev['slot']}")
     return 0
 
 
 def cmd_confirm_sub(args) -> int:
-    ev = request(Path(args.home), {"cmd": "confirm-sub", "slot": args.slot})
-    if ev is None:
+    """可达性确认闸。默认两段：先显示 topic 让用户订阅、按回车后才发测试通知，等用户在通知栏点按钮。
+
+    topic 名就是密码：默认只在 stdout 是终端时才显示，agent 代跑（stdout 被捕获）时退出 4 让它转告用户；
+    用户已订阅过时 agent 可以带 --subscribed 代跑（不经过显示 topic 那段）。
+    """
+    home, slot = Path(args.home), args.slot
+    if args.show_topic:
+        ev = request(home, {"cmd": "confirm-sub", "slot": slot, "show_topic": True})
+        if ev is None:
+            return EXIT_CHANNEL
+        if ev.get("event") != "topic":
+            err(str(ev.get("message")))
+            return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
+        print(f"{slot} 的 topic：{ev['topic']}\n订阅地址：{ev['url']}")
+        return 0
+    if not args.subscribed and not sys.stdout.isatty():
+        err(TOPIC_HINT.format(slot=slot))
+        return EXIT_NEEDS_HUMAN
+    try:
+        sock = connect(home)
+    except OSError as e:
+        err(f"连不上 daemon（{sock_path(home)}：{e.strerror or e}）")
+        print(START_HINT, file=sys.stderr)
         return EXIT_CHANNEL
-    err(str(ev.get("message")))
-    return EXIT_CHANNEL
+    sent = False
+    try:
+        send_request(sock, {"cmd": "confirm-sub", "slot": slot, "again": args.again, "subscribed": args.subscribed, "timeout": args.timeout})
+        for ev in read_events(sock):
+            kind = ev.get("event")
+            if kind == "already_confirmed":
+                print(f"{slot} 已经确认过手机收得到通知，不用再做；换了手机要重新确认就加 --again")
+                return 0
+            elif kind == "topic":
+                if args.subscribed:
+                    err("协议错误：说了 --subscribed 却收到 topic 事件；不打印它。daemon 与 CLI 版本可能不一致")  # 两端各守一道
+                    return EXIT_CHANNEL
+                print(f"{slot} 的 topic：{ev['topic']}\n订阅地址：{ev['url']}\n{SUBSCRIBE_GUIDE}")
+                try:
+                    input("订阅好了就按回车…")
+                except EOFError:
+                    # stdin 到头（< /dev/null 之类）：没等到回车就不能发——先发再订阅正是两段式要避免的
+                    err("没等到回车（stdin 已到头），确认取消。请在你自己的终端交互式地跑；用户已订阅过就用 --subscribed")
+                    return EXIT_NEEDS_HUMAN
+                try:
+                    send_request(sock, {"ready": True})
+                except OSError:
+                    pass  # 等回车期间 daemon 已经收掉这条（超时 / 停止）：真实终态还在缓冲区里，继续读它，别报成通道故障
+            elif kind == "sent":
+                sent = True
+                err(f"测试通知已发出，请在手机通知栏点「我收到了」（{args.timeout:g} 秒内）…")  # 进度走 stderr：stdout 只在退出 0 时有内容
+            elif kind == "warning":
+                err(f"提醒：{ev.get('message')}")
+            elif kind == "confirmed":
+                print(f"✅ {slot} 已确认：手机收得到通知，之后 agent 可以用它提问了")
+                return 0
+            elif kind == "timeout":
+                if sent:
+                    err(f"{args.timeout:g} 秒内没有收到按钮点击，确认未完成。通知没弹出来？按 README 的排查清单检查后再跑一次")
+                else:
+                    err(f"{args.timeout:g} 秒内没等到回车，确认未完成；测试通知还没发出。订阅好之后再跑一次")
+                return EXIT_TIMEOUT
+            elif kind == "error":
+                err(str(ev.get("message")))
+                return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
+        err("daemon 连接中断，确认未完成")
+        return EXIT_CHANNEL
+    except (OSError, ValueError) as e:
+        err(f"与 daemon 通信失败：{e}")
+        return EXIT_CHANNEL
+    except KeyboardInterrupt:
+        err("已中断，确认未完成")
+        return EXIT_INTERRUPTED
+    finally:
+        sock.close()
 
 
 def cmd_add_slot(args) -> int:
     ev = request(Path(args.home), {"cmd": "add-slot"})
     if ev is None:
         return EXIT_CHANNEL
-    err(str(ev.get("message")))
-    return EXIT_CHANNEL
+    if ev.get("event") != "added":
+        err(str(ev.get("message")))
+        return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
+    print(f"已新建 {ev['slot']}（还没确认过手机收得到通知）。下一步：在你自己的终端跑  agent-ntfy confirm-sub {ev['slot']}")
+    return 0
 
 
 # ---------------------------------------------------------------- daemon 的起停
@@ -252,7 +335,7 @@ def daemon_status(home: Path) -> int:
         sub = "连接中"  # 刚起来还没连上，或从没连上过
     else:
         sub = f"断开 {ev['disconnected_for']} 秒"
-    print(f"daemon：pid {ev['pid']}  订阅：{sub}  等待中的提问：{ev['pending']}  槽位：{ev['pool']}")
+    print(f"daemon：pid {ev['pid']}  订阅：{sub}  等待中的提问：{ev['pending']}  确认中：{ev.get('confirming', 0)}  槽位：{ev['pool']}")
     return 0
 
 
@@ -337,8 +420,12 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("release", help="释放租约")
     r.add_argument("slot", nargs="?")
     r.set_defaults(fn=cmd_release)
-    c = sub.add_parser("confirm-sub", help="确认该槽位手机收得到通知")
+    c = sub.add_parser("confirm-sub", help="可达性确认闸：验该槽位手机收得到通知（默认要在终端跑，会显示 topic 名）")
     c.add_argument("slot")
+    c.add_argument("--again", action="store_true", help="已确认过的槽位重新确认（换手机后）")
+    c.add_argument("--subscribed", action="store_true", help="用户已订阅：不显示 topic，直接发测试通知（非终端也能跑）")
+    c.add_argument("--show-topic", action="store_true", help="只打印 topic 名就退出，不发测试通知（会进调用方的输出）")
+    c.add_argument("--timeout", type=positive_seconds, default=CONFIRM_TIMEOUT, help="等按钮点击的秒数（默认 600）")
     c.set_defaults(fn=cmd_confirm_sub)
     sub.add_parser("add-slot", help="新建一个槽位").set_defaults(fn=cmd_add_slot)
     return p

@@ -249,6 +249,34 @@ class ReceiptTest(unittest.TestCase):
         self.assertIn(r.body, closed.message)  # 原回执正文保留，事后能翻
 
 
+class ConfirmRequestTest(unittest.TestCase):
+    URL = "https://ntfy.example/t"
+
+    def test_confirmed_is_a_control_mark(self):
+        self.assertEqual(inject.control_mark("confirmed", "slot3"), "__agent-ntfy:confirmed:slot3__")
+        self.assertEqual(inject.parse_control_mark("__agent-ntfy:confirmed:slot3__"), ("confirmed", "slot3"))
+        self.assertIsNone(inject.parse_control_mark("__agent-ntfy:confirmed:slot3__ 收到"))
+
+    def test_confirm_request_has_one_button_and_explains_itself(self):
+        r = inject.render_confirm_request("slot3", reply_url=self.URL)
+        self.assertEqual(r.title, "[slot3] 确认你能收到通知")
+        self.assertEqual([a["label"] for a in r.actions], [inject.CONFIRM_LABEL])
+        self.assertEqual(r.actions[0]["body"], "__agent-ntfy:confirmed:slot3__")
+        self.assertEqual(r.actions[0]["url"], self.URL)
+        # 写给没看过任何文档的人：这条是什么、点按钮意味着什么、没弹通知怎么办
+        self.assertIn("slot3", r.message)
+        self.assertIn("测试消息", r.message)
+        self.assertIn(inject.CONFIRM_LABEL, r.message)
+        self.assertIn("通知栏", r.message)
+        self.assertIn("README", r.message)
+        self.assertEqual(r.body, r.message)
+
+    def test_confirm_request_fits_the_question_budget(self):
+        from render import QUESTION_MAX_BYTES
+        r = inject.render_confirm_request("slot12345", reply_url=self.URL)
+        self.assertLessEqual(len(r.message.encode("utf-8")), QUESTION_MAX_BYTES)
+
+
 class RunHerdrTest(unittest.TestCase):
     """只验子进程包装本身，用无害的本地命令，不碰 herdr。"""
 

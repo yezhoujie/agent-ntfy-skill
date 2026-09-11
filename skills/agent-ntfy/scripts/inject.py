@@ -56,10 +56,14 @@ NOT_RELEASED_PREFIX = "未释放 · "
 IGNORED_PREFIX = "已忽略 · "
 SUPERSEDED_PREFIX = "已被新回执取代 · "  # 同一槽位又来一张回执时，旧的那张按此关闭，按钮不悬着
 
-MARK_ACTIONS = ("release", "ignore")
+MARK_ACTIONS = ("release", "ignore", "confirmed")  # 回执的两个按钮 + 可达性确认的「我收到了」
 # 只认这一个精确形态（fullmatch），且槽位名要与消息所在的槽位相同——由调用方核；不匹配就是普通消息。
 # 这是「通路不解释内容」的唯一例外：认自己生成的固定标记可以，解析用户自由输入的文本不行。
-MARK_RE = re.compile(r"__agent-ntfy:(release|ignore):(slot[1-9][0-9]*)__")
+MARK_RE = re.compile(r"__agent-ntfy:(release|ignore|confirmed):(slot[1-9][0-9]*)__")
+
+CONFIRM_TITLE = "确认你能收到通知"  # Title = f"[{slot}] {CONFIRM_TITLE}"
+CONFIRM_LABEL = "我收到了"
+CONFIRMED_PREFIX = "✅ 已确认 · "
 
 LOG = logging.getLogger("agent-ntfy.inject")
 
@@ -189,6 +193,26 @@ def parse_control_mark(text: str) -> tuple[str, str] | None:
     """整段正文恰好是一个标记才算；多一个字符（含换行）都是普通消息。返回 (动作, 槽位)。"""
     m = MARK_RE.fullmatch(text)
     return (m.group(1), m.group(2)) if m else None
+
+
+# ---------------------------------------------------------------- 可达性确认的测试消息
+
+def render_confirm_request(slot: str, *, reply_url: str) -> Rendered:
+    """可达性确认闸的测试消息：验的是「通知弹出 → 点按钮 → 回传」整条链路，所以只有按钮点击算数。
+
+    正文写给一个没看过任何文档的人：这条是什么、点按钮意味着什么、没弹通知怎么办。排查清单在 README 里，这里只指过去。
+    """
+    body = (
+        f"这是 agent-ntfy 发来的测试消息，用来确认这台手机能收到槽位 {slot} 的通知。\n"
+        "\n"
+        f"请在通知栏里点下面的「{CONFIRM_LABEL}」按钮——点了就算确认完成，之后 agent 才会往这个槽位发提问。\n"
+        "\n"
+        "如果这条在 ntfy app 里看得见、但通知栏没有弹出来，说明手机的通知权限还没配好：\n"
+        "先按 README 的排查清单逐项检查（通知权限、省电策略、自启动、锁屏通知、这个 topic 没被静音），\n"
+        "让它弹出来之后再点按钮。只在 app 里点按钮证明不了通知会弹。"
+    )
+    return Rendered(title=f"[{slot}] {CONFIRM_TITLE}", message=body,
+                    actions=[http_action(CONFIRM_LABEL, reply_url, control_mark("confirmed", slot))], body=body)
 
 
 # ---------------------------------------------------------------- 回执

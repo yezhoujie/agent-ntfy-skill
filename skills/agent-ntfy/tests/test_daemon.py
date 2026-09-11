@@ -178,6 +178,13 @@ class Harness:
             agent_ntfy.send_request(sock, req)
             return list(agent_ntfy.read_events(sock))
 
+    def confirm(self, slot, *, again=False, timeout: float = 30):
+        """发 confirm-sub 并读到第一条事件（topic / already_confirmed / error），把连接交回去继续。"""
+        sock = self.connect()
+        agent_ntfy.send_request(sock, {"cmd": "confirm-sub", "slot": slot, "again": again, "timeout": timeout})
+        events = agent_ntfy.read_events(sock)
+        return sock, next(events), events
+
     def ask(self, *, leased_by="wD:p1", tag: str | None = "wD:p1", timeout=30, payload=None):
         """发 ask 并读到 sent（或首个终态事件），把连接交回去继续读。"""
         sock = self.connect()
@@ -374,7 +381,7 @@ class AskFlowTest(unittest.TestCase):
         sock, first, events = h.ask()
         self.assertIn("sent", first)
         sock.close()
-        for ev in h.request(cmd="release", slot="slot9") + h.request(cmd="confirm-sub", slot="slot1") + h.request(cmd="nonsense"):
+        for ev in h.request(cmd="release", slot="slot9") + h.request(cmd="confirm-sub", slot="slot9") + h.request(cmd="nonsense"):
             if ev["event"] == "error":
                 self.assertIn("sent", ev, ev)
 
@@ -402,11 +409,16 @@ class CommandsTest(unittest.TestCase):
         self.assertEqual(st["pid"], os.getpid())
         self.assertEqual((st["subscribed"], st["pending"], st["pool"]), (True, 0, 5))
 
-    def test_confirm_sub_and_add_slot_are_reserved(self):
+    def test_add_slot_extends_pool_and_resubscribes(self):
         h = Harness(self)
-        for req in ({"cmd": "confirm-sub", "slot": "slot1"}, {"cmd": "add-slot"}):
-            ev = h.request(**req)[0]
-            self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "not_implemented", False), req)
+        ev = h.request(cmd="add-slot")[0]
+        self.assertEqual(ev, {"event": "added", "slot": "slot6"})
+        self.assertEqual(len(h.store.load() or []), 6)  # 钥匙串替身里多了一个 topic（Harness 自己的 State 有缓存，不看它）
+        sub = h.client.wait_subscription(2)  # 池子变了：关流、按新列表重连
+        self.assertEqual(len(sub.topics), 6)
+        slots = h.request(cmd="slots")[0]["slots"]
+        self.assertEqual((slots["slot6"]["state"], slots["slot6"]["subscribed"], slots["slot6"]["leased_by"]), ("未分配", False, None))
+        self.assertEqual(h.request(cmd="status")[0]["pool"], 6)
 
     def test_request_split_across_two_sends(self):
         h = Harness(self)
@@ -679,6 +691,340 @@ class SubscriptionTest(unittest.TestCase):
             self.assertNotIn(t, log)
         self.assertNotIn("回复原文不该进日志", log)
         self.assertNotIn(SAMPLE["title"], log)
+
+
+class ConfirmTest(unittest.TestCase):
+    """可达性确认闸：只有按钮点击算确认；topic 只在这条流程里交给客户端；确认中按活跃对待。"""
+
+    def start(self, h, slot, **kw):
+        """走到「测试消息已发出」：topic → ready → sent。返回 (sock, events, sent 事件)。"""
+        sock, first, events = h.confirm(slot, **kw)
+        self.assertEqual(first["event"], "topic", first)
+        agent_ntfy.send_request(sock, {"ready": True})
+        sent = next(events)
+        self.assertEqual(sent["event"], "sent", sent)
+        return sock, events, sent
+
+    def test_flow_topic_ready_sent_button_confirmed(self):
+        h = Harness(self, subscribed=())
+        sock, first, events = h.confirm("slot4")
+        self.assertEqual(first, {"event": "topic", "topic": h.topic("slot4"), "url": h.client.topic_url(h.topic("slot4"))})
+        time.sleep(0.15)
+        self.assertEqual(h.client.published, [])  # 用户还没订阅：没按 ready 之前不发
+        agent_ntfy.send_request(sock, {"ready": True})
+        sent = next(events)
+        pub = h.client.published[-1]
+        self.assertEqual(sent, {"event": "sent", "slot": "slot4", "id": pub["id"]})
+        self.assertEqual(pub["title"], "[slot4] 确认你能收到通知")
+        self.assertEqual([a["label"] for a in pub["actions"]], [inject.CONFIRM_LABEL])
+        self.assertEqual(pub["actions"][0]["body"], "__agent-ntfy:confirmed:slot4__")
+        self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot4"]["state"], "确认中")
+        self.assertEqual(h.request(cmd="status")[0]["confirming"], 1)
+        # 手机点按钮
+        h.client.message(h.topic("slot4"), inject.control_mark("confirmed", "slot4"))
+        self.assertEqual(next(events), {"event": "confirmed", "slot": "slot4"})
+        with self.assertRaises(StopIteration):
+            next(events)
+        sock.close()
+        wait_until(lambda: len(h.client.clears) == 1, what="卡片 clear")
+        self.assertTrue(h.state.slots()["slot4"]["subscribed"])
+        upd = h.client.updates[-1]
+        self.assertEqual((upd["seq"], upd["title"]), (pub["id"], inject.CONFIRMED_PREFIX + pub["title"]))
+        self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot4"]["state"], "未分配")  # 确认不租用
+        self.assertEqual(h.request(cmd="status")[0]["confirming"], 0)
+        self.assertEqual(h.herdr.calls, [])  # 标记不注入
+
+    def test_subscribed_flag_skips_topic_phase_and_publishes_at_once(self):
+        h = Harness(self, subscribed=())
+        sock = h.connect()
+        agent_ntfy.send_request(sock, {"cmd": "confirm-sub", "slot": "slot4", "subscribed": True, "timeout": 30})
+        events = agent_ntfy.read_events(sock)
+        first = next(events)
+        self.assertEqual(first["event"], "sent", first)  # 没有 topic 事件：topic 名不出 daemon
+        self.assertEqual(h.client.published[-1]["title"], "[slot4] 确认你能收到通知")
+        h.client.message(h.topic("slot4"), inject.control_mark("confirmed", "slot4"))
+        self.assertEqual(next(events)["event"], "confirmed")
+        sock.close()
+
+    def test_show_topic_only_returns_topic_and_touches_nothing(self):
+        h = Harness(self)
+        evs = h.request(cmd="confirm-sub", slot="slot1", show_topic=True)  # 已确认的槽位也能看（换手机要重新订阅）
+        self.assertEqual(evs, [{"event": "topic", "topic": h.topic("slot1"), "url": h.client.topic_url(h.topic("slot1"))}])
+        self.assertEqual(h.client.published, [])
+        self.assertEqual(h.request(cmd="status")[0]["confirming"], 0)
+
+    def test_already_confirmed_without_again(self):
+        h = Harness(self)
+        sock, first, events = h.confirm("slot1")
+        self.assertEqual(first, {"event": "already_confirmed", "slot": "slot1"})
+        with self.assertRaises(StopIteration):
+            next(events)
+        sock.close()
+        self.assertEqual(h.client.published, [])
+
+    def test_again_reconfirms_a_confirmed_slot(self):
+        h = Harness(self)
+        sock, events, sent = self.start(h, "slot1", again=True)
+        h.client.message(h.topic("slot1"), inject.control_mark("confirmed", "slot1"))
+        self.assertEqual(next(events)["event"], "confirmed")
+        sock.close()
+
+    def test_busy_when_slot_active_or_already_confirming(self):
+        h = Harness(self)
+        asock, first, aevents = h.ask(leased_by="wD:p1")  # slot1 活跃
+        sock, ev, events = h.confirm("slot1", again=True)
+        self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "busy", False))
+        sock.close()
+        csock, cevents, _ = self.start(h, "slot4", again=True)
+        sock2, ev2, events2 = h.confirm("slot4", again=True)
+        self.assertEqual((ev2["event"], ev2["kind"]), ("error", "busy"))
+        sock2.close()
+        self.assertEqual(h.client.published[-1]["title"], "[slot4] 确认你能收到通知")  # 第二次没再发
+        self.assertEqual(sum(p["title"].startswith("[slot4]") for p in h.client.published), 1)
+        csock.close()
+        asock.close()
+
+    def test_unknown_slot_is_not_a_state_failure(self):
+        h = Harness(self)
+        # 客户端给的槽位名不在池子里 / 形态不对：是输入错，不是状态层坏了——release / confirm-sub 统一 kind
+        for slot in ("slot9", "slotX", "", None):
+            sock, ev, events = h.confirm(slot)
+            self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "unknown_slot", False), slot)
+            self.assertIn(str(slot), ev["message"])
+            sock.close()
+        for slot in ("slot9", "slotX"):  # release 不给 slot 也不给 leased_by 是 bad_request，不在此列
+            ev = h.request(cmd="release", slot=slot)[0]
+            self.assertEqual((ev["event"], ev["kind"]), ("error", "unknown_slot"), slot)
+        ev = h.request(cmd="confirm-sub", slot="slot9", show_topic=True)[0]
+        self.assertEqual(ev["kind"], "unknown_slot")
+        self.assertEqual(h.client.published, [])
+
+    def test_state_failure_keeps_kind_state(self):
+        h = Harness(self)
+        (h.home / "leases.json").write_text("{not json", encoding="utf-8")
+        sock, ev, events = h.confirm("slot1")
+        self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "state", False))
+        sock.close()
+        ev = h.request(cmd="release", slot="slot1")[0]
+        self.assertEqual((ev["event"], ev["kind"]), ("error", "state"))
+        self.assertEqual(h.request(cmd="add-slot")[0]["kind"], "state")
+
+    def test_text_during_confirm_is_a_warning_not_a_confirmation(self):
+        h = Harness(self, subscribed=())
+        sock, events, sent = self.start(h, "slot4")
+        h.client.message(h.topic("slot4"), "我收到了")  # 手打的文字，不是按钮
+        warn = next(events)
+        self.assertEqual(warn["event"], "warning")
+        self.assertIn("按钮", warn["message"])
+        self.assertFalse(h.state.slots()["slot4"]["subscribed"])
+        self.assertEqual(h.herdr.calls, [])  # 没有目标 agent 可注
+        self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot4"]["state"], "确认中")
+        h.client.message(h.topic("slot4"), inject.control_mark("confirmed", "slot4"))
+        self.assertEqual(next(events)["event"], "confirmed")
+        sock.close()
+
+    def test_timeout_updates_card_and_leaves_unconfirmed(self):
+        h = Harness(self, subscribed=())
+        sock, events, sent = self.start(h, "slot4", timeout=0.5)
+        self.assertEqual(next(events), {"event": "timeout"})
+        sock.close()
+        wait_until(lambda: len(h.client.clears) == 1)
+        self.assertEqual(h.client.updates[-1]["title"], daemon.TIMEOUT_PREFIX + "[slot4] 确认你能收到通知")
+        self.assertFalse(h.state.slots()["slot4"]["subscribed"])
+        self.assertEqual(h.request(cmd="status")[0]["confirming"], 0)
+
+    def test_timeout_counts_from_request_even_before_ready(self):
+        h = Harness(self, subscribed=())
+        sock, first, events = h.confirm("slot4", timeout=0.5)  # 用户一直没按回车
+        self.assertEqual(next(events), {"event": "timeout"})
+        sock.close()
+        self.assertEqual(h.client.published, [])
+        self.assertEqual(h.request(cmd="status")[0]["confirming"], 0)
+
+    def test_client_disconnect_cancels_and_closes_card(self):
+        h = Harness(self, subscribed=())
+        sock, events, sent = self.start(h, "slot4")
+        sock.close()
+        wait_until(lambda: len(h.client.clears) == 1, what="卡片 clear")
+        self.assertEqual(h.client.updates[-1]["title"], daemon.CANCELLED_PREFIX + "[slot4] 确认你能收到通知")
+        self.assertEqual(h.request(cmd="status")[0]["confirming"], 0)
+        # 之后到达的标记已无效：丢弃、不注入、不改状态
+        h.client.message(h.topic("slot4"), inject.control_mark("confirmed", "slot4"))
+        h.stop()
+        self.assertIn("无效的确认标记", (h.home / "daemon.log").read_text(encoding="utf-8"))
+        self.assertFalse(h.state.slots()["slot4"]["subscribed"])
+        self.assertEqual(h.herdr.calls, [])
+
+    def test_release_refused_while_confirming(self):
+        h = Harness(self)
+        h.state.acquire("wD:p1")  # slot1 已租
+        sock, events, sent = self.start(h, "slot1", again=True)
+        ev = h.request(cmd="release", slot="slot1")[0]
+        self.assertEqual((ev["event"], ev["kind"]), ("error", "active"))
+        self.assertIn("确认", ev["message"])
+        # 手机上的「释放这个槽位」同样拒绝
+        h.client.message(h.topic("slot1"), inject.control_mark("release", "slot1"))
+        wait_until(lambda: any(p["title"].startswith(inject.NOT_RELEASED_PREFIX) for p in h.client.published), what="未释放说明")
+        self.assertEqual(h.state.slots()["slot1"]["leased_by"], "wD:p1")
+        sock.close()
+
+    def test_ask_refused_while_slot_confirming(self):
+        h = Harness(self)
+        sock, events, sent = self.start(h, "slot1", again=True)  # slot1 未分配、已过闸、确认中
+        asock, first, aevents = h.ask(leased_by="wD:p1")  # acquire 会挑到 slot1
+        self.assertEqual((first["event"], first["kind"], first["sent"]), ("error", "busy", False))
+        self.assertIn("确认", first["message"])
+        asock.close()
+        self.assertEqual(sum(p["title"].startswith("[slot1] " + SAMPLE["title"]) for p in h.client.published), 0)
+        self.assertIsNone(h.state.slots()["slot1"]["leased_by"])  # busy 就是什么都没动：刚租到的租约要退回去
+        h.client.message(h.topic("slot1"), inject.control_mark("confirmed", "slot1"))
+        self.assertEqual(next(events)["event"], "confirmed")
+        sock.close()
+        wait_until(lambda: len(h.client.clears) == 1)
+        asock2, first2, aevents2 = h.ask(leased_by="wD:p1")  # 确认完成后重试：重新租到 slot1
+        self.assertEqual((first2["event"], first2["slot"]), ("sent", "slot1"))
+        asock2.close()
+
+    def test_ready_in_same_packet_as_request_is_honoured(self):
+        h = Harness(self, subscribed=())
+        sock = h.connect()
+        req = json.dumps({"cmd": "confirm-sub", "slot": "slot4", "timeout": 30}) + "\n" + json.dumps({"ready": True}) + "\n"
+        sock.sendall(req.encode("utf-8"))  # 两行一个包到达
+        events = agent_ntfy.read_events(sock)
+        self.assertEqual(next(events)["event"], "topic")
+        self.assertEqual(next(events)["event"], "sent")
+        sock.close()
+
+    def test_ready_split_across_two_sends_is_honoured(self):
+        h = Harness(self, subscribed=())
+        sock, first, events = h.confirm("slot4")
+        sock.sendall(b'{"ready": tr')
+        time.sleep(0.1)
+        sock.sendall(b'ue}\n')
+        self.assertEqual(next(events)["event"], "sent")
+        sock.close()
+
+    def test_junk_before_ready_is_ignored_and_second_ready_is_no_op(self):
+        h = Harness(self, subscribed=())
+        sock, first, events = h.confirm("slot4")
+        sock.sendall(b'not json\n{"ready": false}\n')
+        time.sleep(0.1)
+        self.assertEqual(h.client.published, [])
+        agent_ntfy.send_request(sock, {"ready": True})
+        self.assertEqual(next(events)["event"], "sent")
+        agent_ntfy.send_request(sock, {"ready": True})  # 发过了再 ready：不重发
+        time.sleep(0.1)
+        self.assertEqual(len(h.client.published), 1)
+        sock.close()
+
+    def test_client_disconnect_before_ready_leaves_no_trace(self):
+        h = Harness(self, subscribed=())
+        sock, first, events = h.confirm("slot4")
+        sock.close()
+        wait_until(lambda: h.request(cmd="status")[0]["confirming"] == 0, what="退出确认中")
+        self.assertEqual((h.client.published, h.client.updates, h.client.clears), ([], [], []))  # 没发过消息，没有卡片可收
+
+    def test_mark_subscribed_failure_is_an_error_and_card_is_closed(self):
+        h = Harness(self, subscribed=())
+        sock, events, sent = self.start(h, "slot4")
+        h.daemon.state.mark_subscribed = lambda slot: (_ for _ in ()).throw(daemon.StateError("磁盘满"))  # type: ignore[union-attr]
+        h.client.message(h.topic("slot4"), inject.control_mark("confirmed", "slot4"))
+        ev = next(events)
+        self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "state", True))
+        sock.close()
+        wait_until(lambda: len(h.client.clears) == 1, what="卡片收掉")
+        self.assertEqual(h.client.updates[-1]["seq"], sent["id"])
+        self.assertEqual(h.request(cmd="status")[0]["confirming"], 0)
+
+    def test_confirm_cli_gets_disconnect_warning_like_ask(self):
+        h = Harness(self, subscribed=(), backoff_base=0.01, backoff_max=0.02, warn_after_failures=2)
+        sock, events, sent = self.start(h, "slot4")
+        h.client.fail_subscribe = 2
+        h.client.drop()
+        warn = next(events)
+        self.assertEqual(warn["event"], "warning")
+        self.assertIn("断开", warn["message"])
+        sock.close()
+
+    def test_publish_failure_is_error_not_sent_and_leaves_nothing(self):
+        h = Harness(self, subscribed=())
+        h.client.fail_publish = "ntfy 不通"
+        sock = h.connect()
+        agent_ntfy.send_request(sock, {"cmd": "confirm-sub", "slot": "slot4", "subscribed": True, "timeout": 30})
+        events = agent_ntfy.read_events(sock)
+        ev = next(events)
+        self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "publish_failed", False))
+        with self.assertRaises(StopIteration):
+            next(events)
+        sock.close()
+        self.assertEqual(h.request(cmd="status")[0]["confirming"], 0)
+        self.assertEqual((h.client.updates, h.client.clears), ([], []))  # 没发出去的卡片没有可收的
+
+    def test_second_ready_after_publish_failure_does_not_publish_again(self):
+        h = Harness(self, subscribed=())
+        orig = h.client.publish
+
+        def fail_once(*a, **k):  # 第一次发失败、第二次能成——同包里的第二个 ready 不能再发一张没人等的卡片
+            if h.client.fail_publish:
+                h.client.fail_publish = None
+                raise NtfyError("暂时不通")
+            return orig(*a, **k)
+
+        h.client.fail_publish = "暂时不通"
+        h.client.publish = fail_once  # type: ignore[method-assign]
+        sock = h.connect()
+        req = json.dumps({"cmd": "confirm-sub", "slot": "slot4", "timeout": 30}) + "\n" + json.dumps({"ready": True}) + "\n" + json.dumps({"ready": True}) + "\n"
+        sock.sendall(req.encode("utf-8"))
+        events = agent_ntfy.read_events(sock)
+        self.assertEqual(next(events)["event"], "topic")
+        ev = next(events)
+        self.assertEqual((ev["event"], ev["kind"]), ("error", "publish_failed"))
+        sock.close()
+        time.sleep(0.15)
+        self.assertEqual(h.client.published, [])  # 终态之后的 ready 一律忽略
+        self.assertEqual(h.request(cmd="status")[0]["confirming"], 0)
+
+    def test_text_during_topic_phase_is_only_logged(self):
+        h = Harness(self, subscribed=())
+        sock, first, events = h.confirm("slot4")  # 还没 ready：测试消息没发，「请点按钮」这句没意义
+        h.client.message(h.topic("slot4"), "这是啥")
+        wait_until(lambda: "不算确认" in (h.home / "daemon.log").read_text(encoding="utf-8"), what="文字被记日志")
+        agent_ntfy.send_request(sock, {"ready": True})
+        self.assertEqual(next(events)["event"], "sent")  # 文字处理完了才发 ready：中间没有 warning
+        sock.close()
+
+    def test_stray_confirmed_mark_is_dropped_not_injected(self):
+        h = Harness(self)
+        h.state.acquire("wD:p1")
+        h.client.message(h.topic("slot1"), inject.control_mark("confirmed", "slot1"))
+        time.sleep(0.2)
+        self.assertEqual(h.herdr.calls, [])
+        self.assertEqual(h.client.published, [])
+        h.stop()
+        self.assertIn("无效", (h.home / "daemon.log").read_text(encoding="utf-8"))
+
+    def test_shutdown_cancels_confirm(self):
+        h = Harness(self, subscribed=())
+        sock, events, sent = self.start(h, "slot4")
+        h.stop()
+        ev = next(events)
+        self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "daemon_stopping", True))
+        sock.close()
+        self.assertEqual(h.client.updates[-1]["title"], daemon.CANCELLED_PREFIX + "[slot4] 确认你能收到通知")
+        self.assertEqual(h.client.clears[-1]["seq"], sent["id"])
+
+    def test_unconfirmed_and_full_messages_follow_the_agreed_wording(self):
+        h = Harness(self, subscribed=())
+        sock, first, events = h.ask()
+        self.assertEqual(first["kind"], "unconfirmed")
+        self.assertIn("请用户在自己的终端跑 agent-ntfy confirm-sub slot1", first["message"])
+        sock.close()
+        h2 = Harness(self, pool_size=1, subscribed=("slot1",))
+        h2.state.acquire("someone-else")
+        sock2, first2, _ = h2.ask(leased_by="wD:p9")
+        self.assertEqual(first2["kind"], "no_free_slot")
+        self.assertIn("之后要确认", first2["message"])
+        sock2.close()
 
 
 class InjectTest(unittest.TestCase):

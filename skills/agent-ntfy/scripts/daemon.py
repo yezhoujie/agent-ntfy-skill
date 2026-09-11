@@ -10,6 +10,7 @@
 
 socket 协议是 JSON Lines：客户端连上后发一行 {"cmd": ...}，daemon 回若干行事件（每行一个 JSON 对象）。
 ask 的连接保持到终态（reply / timeout / error）：daemon 若死了，连接当场断开，ask 立刻失败——这就是它的响亮信号；
+confirm-sub 同样保持到终态，且中途客户端会再发一行 {"ready": true}（用户订阅好了，可以发测试通知了）；
 其余命令一问一答即关。error 事件必带 sent：调用方要据此知道消息发出去了没有。
 
 线程模型：主线程用 selectors 跑一切状态变化（socket、pending、active、租约、回执）；订阅线程只把 ntfy 事件放进队列，
@@ -51,6 +52,8 @@ WARN_AFTER_FAILURES = 3  # 连续重连失败这么多次，或
 WARN_AFTER_SECONDS = 60.0  # 断开这么久 ⇒ 向每个 pending 的 ask 发 warning，不许静默重试
 TIMEOUT_PREFIX = "⌛ 已超时 · "
 CANCELLED_PREFIX = "⚠️ 已取消 · "  # ask 那端先断开（Ctrl-C / 被 kill）：没人等了，卡片按超时同款收掉
+CONFIRM_TIMEOUT = 600.0  # 可达性确认：订阅 + 找通知栏 + 点按钮，够用。CLI 侧同名默认值要同步（它刻意不 import 本模块）
+CONFIRMING_STATE = "确认中"  # slots 视图里确认中槽位的 state（叠在状态层三态之上）
 MAX_REQUEST_BYTES = 1024 * 1024  # 一行请求的上限：本地 0600 socket 威胁不大，但不能让一个不发换行的客户端把内存吃光
 SEND_TIMEOUT = 5.0  # 往客户端写事件的阻塞上限
 STOP_INJECT_GRACE = 2.0  # 关停时给在途的 herdr 调用这么久收尾（正常几十毫秒就回）；过了就按「无法确认」发回执
@@ -97,6 +100,19 @@ class Pending:
 
 
 @dataclass
+class Confirm:
+    """一次进行中的可达性确认（confirm-sub）。与 Pending 分开存：确认可以在未分配的槽位上做，
+    而 Pending 的键集合会原样交给状态层当「活跃」，状态层要求活跃 ⊆ 已租用。"""
+
+    slot: str
+    topic: str
+    conn: socket.socket
+    deadline: float
+    rendered: render.Rendered | None = None  # 测试消息发出之后才有
+    msg_id: str | None = None
+
+
+@dataclass
 class Receipt:
     """某槽位最近一条投递失败回执。存整个 Rendered：按钮被点后要拼「已释放 / 已忽略」态的更新，发完就丢就拼不出来了。只在内存里。"""
 
@@ -112,6 +128,7 @@ class Client:
     sock: socket.socket
     buf: bytes = b""
     pending: Pending | None = None
+    confirm: Confirm | None = None
 
 
 @dataclass
@@ -167,6 +184,7 @@ class Daemon:
         self._topics: list[str] = []
         self._slot_of: dict[str, str] = {}
         self._pending: dict[str, Pending] = {}  # slot → Pending；键集合就是「活跃」
+        self._confirming: dict[str, Confirm] = {}  # slot → 进行中的可达性确认；对 release / ask 按活跃对待，但不交给状态层
         self._own_ids: dict[str, float] = {}  # 我们自己发布的消息 id → 发布时刻；订阅流会回显它们，不是回复
         self._receipts: dict[str, Receipt] = {}  # slot → 最近一条投递失败回执；按钮被点后用它做同 seq 更新 + clear
         self._inject_q: queue.Queue = queue.Queue()  # 主线程 → 注入线程：(slot, leased_by, 消息 id, 正文)；None 是收工
@@ -318,11 +336,16 @@ class Daemon:
         self._teardown_logging()
 
     def _shutdown(self) -> None:
-        LOG.info("daemon 收尾：pending=%s", len(self._pending))
+        LOG.info("daemon 收尾：pending=%s confirming=%s", len(self._pending), len(self._confirming))
         for pend in list(self._pending.values()):
             # 不改手机上的卡片：daemon 停了不代表用户不会回，重启后那条回复走无 pending 分支
             self._finish(pend, {"event": "error", "kind": "daemon_stopping", "sent": True,
                                 "message": "daemon 正在停止；提问已发出，用户之后的回复会以指令形式送达"}, touch_card=False)
+        self.client.timeout = STOP_RECEIPT_TIMEOUT
+        for conf in list(self._confirming.values()):
+            # 确认的点击跨不了 daemon 生命周期（重启后那个标记当无效丢弃），卡片留着按钮只会误导：按取消收掉
+            self._finish_confirm(conf, {"event": "error", "kind": "daemon_stopping", "sent": conf.msg_id is not None,
+                                        "message": "daemon 正在停止，确认未完成；重启后再跑一次 confirm-sub"}, prefix=CANCELLED_PREFIX)
         with self._sub_lock:
             sub = self._sub
         if sub is not None:
@@ -423,7 +446,8 @@ class Daemon:
 
     def _next_timeout(self) -> float:
         now = time.monotonic()
-        soonest = min((p.deadline for p in self._pending.values()), default=now + 5.0)
+        deadlines = [p.deadline for p in self._pending.values()] + [c.deadline for c in self._confirming.values()]
+        soonest = min(deadlines, default=now + 5.0)
         return max(0.0, min(soonest - now, 5.0))
 
     def _accept(self) -> None:
@@ -451,12 +475,18 @@ class Daemon:
             if c.pending is not None and self._pending.get(c.pending.slot) is c.pending:
                 LOG.info("ask 连接断开 slot=%s id=%s，取消", c.pending.slot, c.pending.msg_id)
                 self._finish(c.pending, {"event": "cancelled"}, touch_card=True)
+            if c.confirm is not None and self._confirming.get(c.confirm.slot) is c.confirm:
+                LOG.info("confirm-sub 连接断开 slot=%s id=%s，取消", c.confirm.slot, c.confirm.msg_id)
+                self._finish_confirm(c.confirm, {"event": "cancelled"}, prefix=CANCELLED_PREFIX)
             self._drop_client(c)
             return
         c.buf += data
         if c.pending is not None:
             c.buf = b""
             return  # ask 期间客户端不该再发东西，收到也忽略
+        if c.confirm is not None:
+            self._consume_ready(c)
+            return
         if b"\n" not in c.buf:
             if len(c.buf) > MAX_REQUEST_BYTES:
                 self._send(c.sock, {"event": "error", "kind": "bad_request", "sent": False,
@@ -473,6 +503,26 @@ class Daemon:
             self._drop_client(c)
             return
         self._dispatch(c, req)
+        if c.confirm is not None and c.buf:
+            self._consume_ready(c)  # 请求行与 ready 行同一个包到达：余量里可能已经有它
+
+    def _consume_ready(self, c: Client) -> None:
+        """确认流程里客户端只会再发一行 {"ready": true}（用户已订阅、可以发测试消息了）。
+
+        按行取，半行留着等下一次 recv（unix socket 上分段罕见，但协议不能靠这个）；发过测试消息之后再来的行一律忽略。
+        """
+        while b"\n" in c.buf:
+            line, _, c.buf = c.buf.partition(b"\n")
+            if c.confirm is None or c.confirm.msg_id is not None or self._confirming.get(c.confirm.slot) is not c.confirm:
+                continue  # 发过了、或已经终态（比如第一次发布失败）：同包里再多的 ready 都不能再发一张没人等的卡片
+            try:
+                req = json.loads(line.decode("utf-8"))
+            except (ValueError, UnicodeDecodeError):
+                continue
+            if isinstance(req, dict) and req.get("ready") is True:
+                self._confirm_publish(c.confirm)
+        if len(c.buf) > MAX_REQUEST_BYTES:
+            c.buf = b""  # 不发换行的客户端：别让它把内存吃光
 
     def _drop_client(self, c: Client) -> None:
         try:
@@ -503,13 +553,15 @@ class Daemon:
             self._cmd_ask(c, req)
             return
         if cmd == "slots":
-            self._reply_once(c, {"event": "slots", "slots": self._state().slots(self._active())})
+            self._reply_once(c, {"event": "slots", "slots": self._slots_view()})
         elif cmd == "release":
             self._reply_once(c, self._cmd_release(req))
         elif cmd == "status":
             self._reply_once(c, self._status())
-        elif cmd in ("confirm-sub", "add-slot"):
-            self._reply_once(c, {"event": "error", "kind": "not_implemented", "sent": False, "message": f"{cmd} 尚未提供"})
+        elif cmd == "confirm-sub":
+            self._cmd_confirm(c, req)
+        elif cmd == "add-slot":
+            self._reply_once(c, self._cmd_add_slot())
         else:
             self._reply_once(c, {"event": "error", "kind": "bad_request", "sent": False, "message": f"未知命令：{cmd!r}"})
 
@@ -522,26 +574,47 @@ class Daemon:
         return self.state
 
     def _active(self) -> set[str]:
+        """交给状态层的「活跃」：只有 pending。确认中不算——它可以落在未分配的槽位上，状态层要求活跃 ⊆ 已租用。"""
         return set(self._pending)
+
+    def _slots_view(self) -> dict:
+        view = self._state().slots(self._active())
+        for slot in self._confirming:
+            if slot in view:
+                view[slot]["state"] = CONFIRMING_STATE
+        return view
 
     def _status(self) -> dict:
         return {"event": "status", "pid": os.getpid(), "subscribed": self._connected,
                 "disconnected_for": None if self._connected or self._disconnected_since is None
                 else round(time.monotonic() - self._disconnected_since, 1),
-                "pending": len(self._pending), "pool": len(self._topics), "cursor": self._cursor.since(),
-                "injecting": len(self._inflight)}
+                "pending": len(self._pending), "confirming": len(self._confirming), "pool": len(self._topics),
+                "cursor": self._cursor.since(), "injecting": len(self._inflight)}
+
+    def _unknown_slot(self, slot) -> dict:
+        """客户端给的槽位名不在池子里 / 形态不对：是输入错（kind=unknown_slot），不是状态层坏了（kind=state）。"""
+        return {"event": "error", "kind": "unknown_slot", "sent": False, "message": f"没有这个槽位：{slot!r}（agent-ntfy slots 看现有的）"}
 
     def _cmd_release(self, req: dict) -> dict:
         slot = req.get("slot")
         leased_by = req.get("leased_by")
+        try:
+            known = self._state().slots()
+        except StateError as e:
+            return {"event": "error", "kind": "state", "sent": False, "message": str(e)}
         if not slot and leased_by:
-            slot = next((s for s, rec in self._state().slots().items() if rec["leased_by"] == leased_by), None)
+            slot = next((s for s, rec in known.items() if rec["leased_by"] == leased_by), None)
             if slot is None:
                 return {"event": "error", "kind": "no_lease", "sent": False, "message": "这个目标没有租着任何槽位"}
-        if not isinstance(slot, str):
+        if not slot and not leased_by:
             return {"event": "error", "kind": "bad_request", "sent": False, "message": "release 要给 slot 或 leased_by"}
+        if slot not in known:
+            return self._unknown_slot(slot)
+        assert isinstance(slot, str)
         if slot in self._pending:
             return {"event": "error", "kind": "active", "sent": False, "message": f"槽位 {slot} 正有提问等回复，不能释放"}
+        if slot in self._confirming:
+            return {"event": "error", "kind": "active", "sent": False, "message": f"槽位 {slot} 正在做可达性确认，不能释放"}
         try:
             self._state().release(slot, self._active())
         except StateError as e:
@@ -572,6 +645,10 @@ class Daemon:
             self._reply_once(c, {"event": "error", "kind": "busy", "sent": False,
                                  "message": f"这个目标已有一个提问在 {existing} 上等回复，先等它结束"})
             return
+        if existing in self._confirming:
+            self._reply_once(c, {"event": "error", "kind": "busy", "sent": False,
+                                 "message": f"槽位 {existing} 正在做可达性确认，等它完成后重试"})
+            return
         try:
             if existing:
                 # 同一个目标复用自己的租约（一个目标一个 topic），不刷新 leased_at——那是租约起点，不是上次提问时间
@@ -581,18 +658,27 @@ class Daemon:
         except NeedsUserDecision as e:
             cands = [{"slot": s, "subscribed": slots[s]["subscribed"]} for s in e.candidates]
             self._reply_once(c, {"event": "error", "kind": "no_free_slot", "sent": False, "candidates": cands,
-                                 "message": "全部槽位已租用。两条路：agent-ntfy release <slot>（替换一个空闲槽位，然后重试）"
-                                            "或 agent-ntfy add-slot（新建）；"
-                                            + ("可替换：" + ", ".join(f"{x['slot']}{'（已过闸）' if x['subscribed'] else '（未过闸，要再动一次手机）'}" for x in cands)
-                                               if cands else "没有可替换的空闲槽位，只剩新建")})
+                                 "message": "全部槽位已租用。释放一个空闲槽位（agent-ntfy release <slot>，然后重试；候选："
+                                            + (", ".join(f"{x['slot']}{'（已过闸）' if x['subscribed'] else '（未过闸，选它要再动一次手机）'}" for x in cands)
+                                               if cands else "没有可替换的空闲槽位")
+                                            + "）或新建（agent-ntfy add-slot，之后要确认）"})
             return
         except StateError as e:
             self._reply_once(c, {"event": "error", "kind": "state", "sent": False, "message": str(e)})
             return
+        if lease.slot in self._confirming:
+            if not existing:
+                try:
+                    state.release(lease.slot, self._active())  # busy 就是什么都没动：刚租到的退回去，重试时再租
+                except StateError as e:
+                    LOG.warning("退回租约失败 slot=%s：%s", lease.slot, e)
+            self._reply_once(c, {"event": "error", "kind": "busy", "sent": False,
+                                 "message": f"槽位 {lease.slot} 正在做可达性确认，等它完成后重试"})
+            return
         if not lease.subscribed:
             self._reply_once(c, {"event": "error", "kind": "unconfirmed", "sent": False,
-                                 "message": f"槽位 {lease.slot} 还没确认过「手机收得到通知」。先在手机订阅它的 topic，"
-                                            f"再跑 agent-ntfy confirm-sub {lease.slot}，然后重试"})
+                                 "message": f"槽位 {lease.slot} 还没确认过手机收得到通知。请用户在自己的终端跑 agent-ntfy confirm-sub {lease.slot}，"
+                                            "按提示订阅并点按钮，然后重试"})
             return
         if not isinstance(tag, str) or not tag:
             tag = lease.slot
@@ -612,6 +698,112 @@ class Daemon:
         self._send(c.sock, {"event": "sent", "slot": lease.slot, "id": msg_id})
         if self._warned_disconnect:  # 订阅正断着：发布走 HTTP 照样通，但回复此刻收不到，得让它知道
             self._send(c.sock, {"event": "warning", "message": "ntfy 订阅目前断开、仍在重连；提问已发出，回复要等恢复后回放"})
+
+    # ---------------------------------------------------------------- confirm-sub / add-slot
+
+    def _cmd_confirm(self, c: Client, req: dict) -> None:
+        """可达性确认闸：验「通知弹出 → 点按钮 → 回传」整条链路。连接保持到终态，同 ask。
+
+        默认两段：先把 topic 交给 CLI（唯一会把 topic 名交给客户端的地方），等它回一行 {"ready": true}
+        （用户在手机上订阅好了）再发测试消息——先发再订阅的话通知弹不弹没有把握，而闸验的正是弹出。
+        show_topic：只回 topic 就关，不发、不进确认态。subscribed：跳过 topic 段直接发（用户已订阅、agent 代跑）。
+        """
+        slot = req.get("slot")
+        timeout = req.get("timeout", CONFIRM_TIMEOUT)
+        if not isinstance(timeout, (int, float)) or timeout <= 0:
+            self._reply_once(c, {"event": "error", "kind": "bad_request", "sent": False, "message": "confirm-sub 的 timeout 要是正数"})
+            return
+        try:
+            known = self._state().slots()
+        except StateError as e:
+            self._reply_once(c, {"event": "error", "kind": "state", "sent": False, "message": str(e)})
+            return
+        if not isinstance(slot, str) or slot not in known:
+            self._reply_once(c, self._unknown_slot(slot))
+            return
+        rec = known[slot]
+        topic = self._state().topic_of(slot)
+        url = self.client.topic_url(topic)
+        if req.get("show_topic"):
+            self._reply_once(c, {"event": "topic", "topic": topic, "url": url})
+            return
+        if rec["subscribed"] and not req.get("again"):
+            self._reply_once(c, {"event": "already_confirmed", "slot": slot})
+            return
+        if slot in self._pending or slot in self._confirming:
+            what = "正有提问等回复" if slot in self._pending else "已在确认中"
+            self._reply_once(c, {"event": "error", "kind": "busy", "sent": False, "message": f"槽位 {slot} {what}，等它结束再确认"})
+            return
+        conf = Confirm(slot=slot, topic=topic, conn=c.sock, deadline=time.monotonic() + float(timeout))
+        self._confirming[slot] = conf
+        c.confirm = conf
+        LOG.info("确认开始 slot=%s timeout=%ss", slot, timeout)
+        if req.get("subscribed"):
+            self._confirm_publish(conf)
+            return
+        self._send(c.sock, {"event": "topic", "topic": topic, "url": url})
+
+    def _confirm_publish(self, conf: Confirm) -> None:
+        """发测试消息（进入等点击）；发不出去就以 error 终态收掉。"""
+        rendered = inject.render_confirm_request(conf.slot, reply_url=self.client.topic_url(conf.topic))
+        try:
+            msg_id = self._publish_own(conf.topic, rendered.message, title=rendered.title, actions=rendered.actions)
+        except NtfyError as e:
+            LOG.warning("确认消息发布失败 slot=%s：%s", conf.slot, type(e).__name__)
+            self._finish_confirm(conf, {"event": "error", "kind": "publish_failed", "sent": False, "message": f"向 ntfy 发布测试消息失败：{e}"}, prefix=None)
+            return
+        conf.rendered, conf.msg_id = rendered, msg_id
+        LOG.info("确认消息已发 slot=%s id=%s", conf.slot, msg_id)
+        self._send(conf.conn, {"event": "sent", "slot": conf.slot, "id": msg_id})
+        if self._warned_disconnect:
+            self._send(conf.conn, {"event": "warning", "message": "ntfy 订阅目前断开、仍在重连；测试消息已发出，点击要等恢复后才收得到"})
+
+    def _on_confirmed(self, slot: str, mid: str) -> None:
+        conf = self._confirming.get(slot)
+        if conf is None:
+            LOG.info("无效的确认标记 slot=%s id=%s（该槽位不在确认中），丢弃", slot, mid)  # 我们自己的固定标记，不注入
+            return
+        try:
+            self._state().mark_subscribed(slot)
+        except StateError as e:
+            LOG.error("确认落盘失败 slot=%s：%s", slot, e)
+            self._finish_confirm(conf, {"event": "error", "kind": "state", "sent": True, "message": "按钮已收到，但订阅状态落盘失败（看 daemon 日志）；修好后再跑一次 confirm-sub"},
+                                 prefix=CANCELLED_PREFIX)  # 卡片一样要收：没人等的按钮悬在手机上是误触的温床
+            return
+        LOG.info("确认完成 slot=%s id=%s", slot, mid)
+        self._finish_confirm(conf, {"event": "confirmed", "slot": slot}, prefix=inject.CONFIRMED_PREFIX)
+
+    def _finish_confirm(self, conf: Confirm, event: dict, *, prefix: str | None) -> None:
+        """确认的终态：事件交给 CLI、关连接、移出确认中；发过测试消息且给了前缀就同 seq 更新（无按钮）+ clear。"""
+        if self._confirming.get(conf.slot) is conf:
+            del self._confirming[conf.slot]
+        self._send(conf.conn, event)
+        for c in list(self._clients.values()):
+            if c.confirm is conf:
+                c.confirm = None
+                self._drop_client(c)
+        if prefix is None or conf.msg_id is None or conf.rendered is None:
+            return
+        try:
+            resp = self.client.update(conf.topic, conf.msg_id, conf.rendered.body, title=prefix + conf.rendered.title)
+            self._own_ids[str(resp.get("id"))] = time.monotonic()
+        except (NtfyError, ValueError) as e:
+            LOG.warning("更新确认卡片失败 slot=%s id=%s：%s", conf.slot, conf.msg_id, type(e).__name__)
+        try:
+            resp = self.client.clear(conf.topic, conf.msg_id)
+            self._own_ids[str(resp.get("id"))] = time.monotonic()
+        except NtfyError as e:
+            LOG.warning("clear 确认卡片失败 slot=%s id=%s：%s", conf.slot, conf.msg_id, type(e).__name__)
+
+    def _cmd_add_slot(self) -> dict:
+        """新建一个槽位：池子 +1、新 topic 进钥匙串、订阅按新列表重连。新槽位默认未确认（谁都没订阅过）。"""
+        try:
+            slot = self._state().add_slot()
+        except StateError as e:
+            return {"event": "error", "kind": "state", "sent": False, "message": str(e)}
+        self.restart_subscription()
+        LOG.info("新建 slot=%s 池子=%s", slot, len(self._topics))
+        return {"event": "added", "slot": slot}
 
     def _publish_own(self, topic: str, message: str, *, title: str | None = None, actions=None) -> str:
         """所有由 daemon 自己发布的消息都走这里：返回的 id 登记进 _own_ids，订阅流回显它时才认得出不是回复。"""
@@ -651,6 +843,9 @@ class Daemon:
         for pend in [p for p in self._pending.values() if p.deadline <= now]:
             LOG.info("提问超时 slot=%s id=%s", pend.slot, pend.msg_id)
             self._finish(pend, {"event": "timeout"}, touch_card=True)
+        for conf in [c for c in self._confirming.values() if c.deadline <= now]:
+            LOG.info("确认超时 slot=%s id=%s", conf.slot, conf.msg_id)
+            self._finish_confirm(conf, {"event": "timeout"}, prefix=TIMEOUT_PREFIX)
         cutoff = now - 2 * DEFAULT_TIMEOUT
         self._own_ids = {k: v for k, v in self._own_ids.items() if v > cutoff}
 
@@ -689,7 +884,18 @@ class Daemon:
             # 自己生成的固定标记永远不交给 agent——不论作为回复还是注入。识别放在 pending 判断之前：
             # 回执 ①（无租约）发出后，新 agent 租到同一槽位并 ask，用户此时点旧回执的按钮，
             # 那串标记若走 pending 分支就成了 ask 的回复原文。槽位不符的标记当普通消息。
-            self._on_control(slot, mark[0], mid)
+            if mark[0] == "confirmed":
+                self._on_confirmed(slot, mid)
+            else:
+                self._on_control(slot, mark[0], mid)
+            return
+        conf = self._confirming.get(slot)
+        if conf is not None:
+            # 只有按钮点击算确认（要验的是整条通知链路）；此时没有目标 agent 可注，文字只能提醒 CLI——
+            # 测试消息还没发出（topic 段）时连提醒都没意义，只记日志
+            LOG.info("确认中收到文字 slot=%s id=%s，不算确认", slot, mid)
+            if conf.msg_id is not None:
+                self._send(conf.conn, {"event": "warning", "message": "收到了文字回复，但只有点按钮才算确认；请在通知栏点「我收到了」"})
             return
         pend = self._pending.get(slot)
         if pend is None:
@@ -790,6 +996,8 @@ class Daemon:
         """「释放这个槽位」的结果（Title 前缀, 一句话）。文案里不带本机路径：状态层的报错含租约文件路径，那不该上手机。"""
         if slot in self._pending:
             return inject.NOT_RELEASED_PREFIX, f"槽位 {slot} 正在使用中（有提问在等回复），未释放。"
+        if slot in self._confirming:
+            return inject.NOT_RELEASED_PREFIX, f"槽位 {slot} 正在做可达性确认，未释放。"
         try:
             if not self._state().slots().get(slot, {}).get("leased_by"):
                 return inject.NOT_RELEASED_PREFIX, f"槽位 {slot} 没有租约，无需释放。"
@@ -829,6 +1037,9 @@ class Daemon:
     def _warn_pending(self, message: str) -> None:
         for pend in list(self._pending.values()):
             self._send(pend.conn, {"event": "warning", "message": message})
+        for conf in list(self._confirming.values()):
+            if conf.msg_id is not None:  # 测试消息已发出、正等点击的才关心订阅断没断
+                self._send(conf.conn, {"event": "warning", "message": message})
 
     # ---------------------------------------------------------------- 订阅线程
 
