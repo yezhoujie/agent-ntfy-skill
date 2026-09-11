@@ -1,0 +1,11 @@
+# 任务过程文档：需求 / 设计 / 任务拆分 / 状态 / 派发说明 / worker 报告
+# 只在本机保留，不入仓
+task/
+
+# 多 agent 协作的运行时状态（花名册 / 落库基线 / 报告）
+.agents-orchestration/
+
+__pycache__/
+*.pyc
+.DS_Store
+.venv/
