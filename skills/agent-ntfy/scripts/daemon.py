@@ -12,8 +12,10 @@ socket 协议是 JSON Lines：客户端连上后发一行 {"cmd": ...}，daemon 
 ask 的连接保持到终态（reply / timeout / error）：daemon 若死了，连接当场断开，ask 立刻失败——这就是它的响亮信号；
 其余命令一问一答即关。error 事件必带 sent：调用方要据此知道消息发出去了没有。
 
-线程模型：主线程用 selectors 跑一切状态变化（socket、pending、active、租约）；订阅线程只把 ntfy 事件放进队列，
+线程模型：主线程用 selectors 跑一切状态变化（socket、pending、active、租约、回执）；订阅线程只把 ntfy 事件放进队列，
 再往唤醒管道写一个字节。游标（最后事件的 time + 边界秒内已见 id）由订阅线程独占，主线程只读它做 status。
+注入线程只跑 herdr 子进程（inject.deliver()）：主线程把「槽位 + 租约 + 正文」排进注入队列，结果作为 _delivered 事件回到
+主线程队列，回执发布 / 回执 id 记忆 / 租约释放仍只在主线程。一条注入线程串行处理全部投递：一个槽位同一时刻只处理一条、按到达顺序。
 选 selectors 不选 asyncio：ntfy 客户端是同步阻塞的，asyncio 也得把它塞进线程；一条线程 + 一把队列已经够，
 且不引入第二套并发模型。
 
@@ -35,6 +37,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import inject
 import render
 import validate
 from ntfyclient import NtfyClient, NtfyClosed, NtfyError
@@ -50,7 +53,10 @@ TIMEOUT_PREFIX = "⌛ 已超时 · "
 CANCELLED_PREFIX = "⚠️ 已取消 · "  # ask 那端先断开（Ctrl-C / 被 kill）：没人等了，卡片按超时同款收掉
 MAX_REQUEST_BYTES = 1024 * 1024  # 一行请求的上限：本地 0600 socket 威胁不大，但不能让一个不发换行的客户端把内存吃光
 SEND_TIMEOUT = 5.0  # 往客户端写事件的阻塞上限
+STOP_INJECT_GRACE = 2.0  # 关停时给在途的 herdr 调用这么久收尾（正常几十毫秒就回）；过了就按「无法确认」发回执
+STOP_RECEIPT_TIMEOUT = 5.0  # 关停路径上每张回执的发布上限：尽力而为，不用平时的 30 秒把 --stop 拖住
 LOG = logging.getLogger("agent-ntfy.daemon")
+LOG_ROOT = logging.getLogger("agent-ntfy")  # handler 挂这一级：注入层（agent-ntfy.inject）的日志才会一起进 daemon.log
 
 
 class DaemonError(Exception):
@@ -88,6 +94,15 @@ class Pending:
     msg_id: str
     deadline: float
     warned: bool = False
+
+
+@dataclass
+class Receipt:
+    """某槽位最近一条投递失败回执。存整个 Rendered：按钮被点后要拼「已释放 / 已忽略」态的更新，发完就丢就拼不出来了。只在内存里。"""
+
+    slot: str
+    msg_id: str
+    rendered: render.Rendered
 
 
 @dataclass
@@ -136,12 +151,13 @@ class Cursor:
 
 class Daemon:
     def __init__(self, home: Path = HOME_DIR, *, client: NtfyClient | None = None, store: SecretStore | None = None,
-                 pool_size: int | None = None, log_to_stderr: bool = False,
+                 pool_size: int | None = None, log_to_stderr: bool = False, herdr: inject.Runner | None = None,
                  backoff_base: float = BACKOFF_BASE, backoff_max: float = BACKOFF_MAX,
                  warn_after_failures: int = WARN_AFTER_FAILURES, warn_after_seconds: float = WARN_AFTER_SECONDS):
         self.home = Path(home)
         self.paths = paths(self.home)
         self.client = client or NtfyClient()
+        self._herdr: inject.Runner = herdr or inject.run_herdr
         self._store = store
         self._pool_size = pool_size
         self.log_to_stderr = log_to_stderr
@@ -152,6 +168,10 @@ class Daemon:
         self._slot_of: dict[str, str] = {}
         self._pending: dict[str, Pending] = {}  # slot → Pending；键集合就是「活跃」
         self._own_ids: dict[str, float] = {}  # 我们自己发布的消息 id → 发布时刻；订阅流会回显它们，不是回复
+        self._receipts: dict[str, Receipt] = {}  # slot → 最近一条投递失败回执；按钮被点后用它做同 seq 更新 + clear
+        self._inject_q: queue.Queue = queue.Queue()  # 主线程 → 注入线程：(slot, leased_by, 消息 id, 正文)；None 是收工
+        self._inject_thread: threading.Thread | None = None
+        self._inflight: dict[str, str] = {}  # 消息 id → slot：排进注入队列、尚未回到主线程的投递（只在主线程改；关停时靠它发回执）
         self._clients: dict[int, Client] = {}
         self._events: queue.Queue = queue.Queue()
         self._cursor = Cursor()
@@ -206,6 +226,8 @@ class Daemon:
                 signal.signal(sig, lambda *_: self.stop())
         self._thread = threading.Thread(target=self._subscribe_loop, name="ntfy-subscriber", daemon=True)
         self._thread.start()
+        self._inject_thread = threading.Thread(target=self._inject_loop, name="herdr-inject", daemon=True)
+        self._inject_thread.start()
         LOG.info("daemon 启动 pid=%s 槽位=%s", os.getpid(), len(self._topics))
         try:
             self._loop()
@@ -222,7 +244,7 @@ class Daemon:
         self._wake()
 
     def _setup_logging(self) -> None:
-        LOG.setLevel(logging.INFO)
+        LOG_ROOT.setLevel(logging.INFO)
         fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
         os.close(os.open(self.paths["log"], os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600))  # 先以 0600 建好再交给 FileHandler
         handlers: list[logging.Handler] = [logging.FileHandler(self.paths["log"], encoding="utf-8")]
@@ -230,7 +252,7 @@ class Daemon:
             handlers.append(logging.StreamHandler(sys.stderr))
         for h in handlers:
             h.setFormatter(fmt)
-            LOG.addHandler(h)
+            LOG_ROOT.addHandler(h)
         self._log_handlers = handlers
 
     def _init_state(self) -> None:
@@ -305,6 +327,7 @@ class Daemon:
             sub = self._sub
         if sub is not None:
             sub.close()
+        self._stop_injections()
         if self._listener is not None and self._sel is not None:
             self._sel.unregister(self._listener)
             self._listener.close()
@@ -318,6 +341,42 @@ class Daemon:
         LOG.info("daemon 已退出")
         self._teardown_logging()
         self._close_fds()
+
+    def _stop_injections(self) -> None:
+        """关停时还没投出去的消息不能静默消失（消息已从订阅流消费、冷启动不回放）：留痕 + 尽力发回执。
+
+        排队中的：从没尝试过，回执说「未送达」。在途的：给 herdr 一个宽限期正常收尾；等不到就按「无法确认」发回执。
+        回执每张最多等 STOP_RECEIPT_TIMEOUT，失败只记日志——关停路径上不能被网络拖死。
+        """
+        self.client.timeout = STOP_RECEIPT_TIMEOUT  # 从这里起发的每张回执 / 更新都是尽力而为
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(1.0)  # 流已关：让订阅线程把手上最后几条推完，别在下面排空的时候还往里塞
+        self._drain_events()  # 主循环退出后、流关闭前订阅线程推进来的消息：已从流里消费、冷启动不回放，按原路过一遍（进注入队列 / 控制标记）
+        queued: list[tuple[str, str]] = []
+        while True:
+            try:
+                slot, _, mid, _ = self._inject_q.get_nowait()
+            except queue.Empty:
+                break
+            queued.append((slot, mid))
+            LOG.warning("关停，丢弃未投递的消息 slot=%s id=%s", slot, mid)
+        self._inject_q.put(None)  # 注入线程收工
+        if self._inject_thread is not None and self._inject_thread.is_alive():
+            self._inject_thread.join(STOP_INJECT_GRACE)
+        self._drain_events()  # 宽限期内回来的结果照常落地（失败照常发回执）
+        LOG.info("关停时注入中 injecting=%s（排队 %s，在途未归 %s）", len(self._inflight), len(queued), len(self._inflight) - len(queued))
+        queued_ids = {mid for _, mid in queued}
+        for mid, slot in list(self._inflight.items()):
+            uncertain = mid not in queued_ids
+            if uncertain:
+                LOG.warning("关停，在途投递等不到结果 slot=%s id=%s", slot, mid)
+            try:
+                topic = self._state().topic_of(slot)
+                r = inject.render_stopping_receipt(slot, reply_url=self.client.topic_url(topic), uncertain=uncertain)
+                self._publish_own(topic, r.message, title=r.title, actions=r.actions)
+            except (NtfyError, StateError) as e:
+                LOG.warning("关停回执发布失败 slot=%s id=%s：%s", slot, mid, type(e).__name__)
+        self._inflight.clear()
 
     def _close_fds(self) -> None:
         if self._sel is not None:
@@ -333,7 +392,7 @@ class Daemon:
 
     def _teardown_logging(self) -> None:
         for h in self._log_handlers:
-            LOG.removeHandler(h)
+            LOG_ROOT.removeHandler(h)
             h.close()
         self._log_handlers = []
 
@@ -469,7 +528,8 @@ class Daemon:
         return {"event": "status", "pid": os.getpid(), "subscribed": self._connected,
                 "disconnected_for": None if self._connected or self._disconnected_since is None
                 else round(time.monotonic() - self._disconnected_since, 1),
-                "pending": len(self._pending), "pool": len(self._topics), "cursor": self._cursor.since()}
+                "pending": len(self._pending), "pool": len(self._topics), "cursor": self._cursor.since(),
+                "injecting": len(self._inflight)}
 
     def _cmd_release(self, req: dict) -> dict:
         slot = req.get("slot")
@@ -609,6 +669,8 @@ class Daemon:
                 self._on_disconnected(ev)
             elif kind == "message":
                 self._on_message(ev)
+            elif kind == "_delivered":
+                self._on_delivered(ev)
             # open / keepalive / message_clear / message_delete 等不需要处理
 
     def _on_message(self, ev: dict) -> None:
@@ -619,19 +681,124 @@ class Daemon:
         if slot is None:
             LOG.info("收到不在池子里的 topic 的消息 id=%s，丢弃", mid)
             return
+        text = ev.get("message")
+        if not isinstance(text, str):
+            text = ""
+        mark = inject.parse_control_mark(text)
+        if mark is not None and mark[1] == slot:
+            # 自己生成的固定标记永远不交给 agent——不论作为回复还是注入。识别放在 pending 判断之前：
+            # 回执 ①（无租约）发出后，新 agent 租到同一槽位并 ask，用户此时点旧回执的按钮，
+            # 那串标记若走 pending 分支就成了 ask 的回复原文。槽位不符的标记当普通消息。
+            self._on_control(slot, mark[0], mid)
+            return
         pend = self._pending.get(slot)
         if pend is None:
             self.deliver(slot, ev)
             return
-        text = ev.get("message")
-        if not isinstance(text, str):
-            text = ""
         LOG.info("回复到达 slot=%s id=%s", slot, mid)
         self._finish(pend, {"event": "reply", "text": text}, touch_card=True)
 
+    # ---------------------------------------------------------------- 无 pending：注入 / 回执 / 控制按钮
+
     def deliver(self, slot: str, event: dict) -> None:
-        """该槽位没有提问在等：这是用户的主动指令。目前只记日志并丢弃，注入与投递失败回执由注入层提供。"""
-        LOG.info("无 pending 的消息 slot=%s id=%s（丢弃）", slot, event.get("id"))
+        """该槽位没有提问在等：这是用户的主动指令，排给注入线程。租约在这里（主线程）读，注入线程不碰状态。"""
+        text = event.get("message")
+        if not isinstance(text, str):
+            text = ""
+        mid = str(event.get("id"))
+        try:
+            leased_by = self._state().slots().get(slot, {}).get("leased_by")
+        except StateError as e:
+            # 租约文件坏了不能让一条手机消息把 daemon 打死；回执也不带本机路径
+            LOG.error("读租约失败 slot=%s id=%s：%s", slot, mid, e)
+            self._settle(slot, mid, inject.Outcome(False, "error", None, None, "读取租约失败（状态文件损坏或不可读）。"))
+            return
+        LOG.info("无 pending 的消息 slot=%s id=%s，排队注入 target=%s", slot, mid, leased_by)
+        self._inflight[mid] = slot
+        self._inject_q.put((slot, leased_by, mid, text))
+
+    def _inject_loop(self) -> None:
+        """注入线程：只跑 herdr 子进程，结果作为 _delivered 事件回主线程。串行——一个槽位同一时刻只处理一条、按到达顺序。"""
+        while True:
+            job = self._inject_q.get()
+            if job is None:
+                return
+            slot, leased_by, mid, text = job
+            try:  # 关停中也照跑：这条是与主线程的排空竞争到的，跑完在宽限期内回来就能正常落地
+                outcome = inject.deliver(slot, leased_by, text, run=self._herdr)
+            except Exception as e:  # 注入层不该抛；真抛了也不能让线程死掉、让后面的投递永远排队
+                LOG.error("注入异常 slot=%s id=%s：%s", slot, mid, type(e).__name__, exc_info=True)
+                outcome = inject.Outcome(False, "error", leased_by, None, f"注入过程出错（{type(e).__name__}）。")
+            self._push({"event": "_delivered", "slot": slot, "id": mid, "outcome": outcome})
+
+    def _on_delivered(self, ev: dict) -> None:
+        self._inflight.pop(ev["id"], None)
+        self._settle(ev["slot"], ev["id"], ev["outcome"])
+
+    def _settle(self, slot: str, mid: str, outcome: inject.Outcome) -> None:
+        """一次投递的结局落地：送达只记日志；没送达就发回执，并把该槽位上一张还开着的回执关掉。"""
+        if outcome.delivered:
+            LOG.info("已注入 slot=%s id=%s target=%s cli=%s", slot, mid, outcome.target, outcome.cli)
+            return
+        LOG.warning("投递失败 slot=%s id=%s reason=%s target=%s", slot, mid, outcome.reason, outcome.target)
+        topic = self._state().topic_of(slot)
+        rendered = inject.render_receipt(slot, outcome, reply_url=self.client.topic_url(topic))
+        try:
+            receipt_id = self._publish_own(topic, rendered.message, title=rendered.title, actions=rendered.actions)  # 不走它会成环：回执回显 → 无 pending → 再回执
+        except NtfyError as e:
+            LOG.warning("回执发布失败 slot=%s id=%s：%s", slot, mid, type(e).__name__)
+            return
+        old = self._receipts.pop(slot, None)
+        if old is not None:
+            # 旧回执的按钮不能继续亮着：标记只带槽位不带回执 id，点旧卡会改到新卡；关掉它，手机上只剩最新那张是活的
+            self._close_receipt(topic, old, inject.SUPERSEDED_PREFIX, "同一槽位有了新的回执，请看最新那条。")
+        self._receipts[slot] = Receipt(slot=slot, msg_id=receipt_id, rendered=rendered)
+        LOG.info("回执已发 slot=%s id=%s", slot, receipt_id)
+
+    def _close_receipt(self, topic: str, receipt: Receipt, prefix: str, result: str) -> None:
+        """同 seq 更新成无按钮的关闭态，再 clear 通知栏；两个返回 id 都登记，回显时才认得出不是回复。"""
+        closed = inject.render_receipt_closed(receipt.rendered, prefix=prefix, result=result)
+        try:
+            resp = self.client.update(topic, receipt.msg_id, closed.message, title=closed.title)
+            self._own_ids[str(resp.get("id"))] = time.monotonic()
+        except (NtfyError, ValueError) as e:
+            LOG.warning("更新回执失败 slot=%s id=%s：%s", receipt.slot, receipt.msg_id, type(e).__name__)
+        try:
+            resp = self.client.clear(topic, receipt.msg_id)  # 不论 update 成败都清通知栏
+            self._own_ids[str(resp.get("id"))] = time.monotonic()
+        except NtfyError as e:
+            LOG.warning("clear 回执失败 slot=%s id=%s：%s", receipt.slot, receipt.msg_id, type(e).__name__)
+
+    def _on_control(self, slot: str, action: str, mid: str) -> None:
+        """控制按钮被点：释放 / 忽略。回执在内存里就原地更新它（同 seq）+ clear；不在（daemon 重启过）就发一条无按钮的说明，不能静默。"""
+        LOG.info("控制标记 slot=%s id=%s action=%s", slot, mid, action)
+        if action == "release":
+            prefix, result = self._release_by_button(slot)
+        else:
+            prefix, result = inject.IGNORED_PREFIX, "已忽略，槽位保持原样。"
+        receipt = self._receipts.pop(slot, None)
+        topic = self._state().topic_of(slot)
+        if receipt is None:
+            try:
+                self._publish_own(topic, result, title=f"{prefix}[{slot}] {inject.RECEIPT_TITLE}")
+            except NtfyError as e:
+                LOG.warning("控制结果发布失败 slot=%s：%s", slot, type(e).__name__)
+            return
+        self._close_receipt(topic, receipt, prefix, result)
+
+    def _release_by_button(self, slot: str) -> tuple[str, str]:
+        """「释放这个槽位」的结果（Title 前缀, 一句话）。文案里不带本机路径：状态层的报错含租约文件路径，那不该上手机。"""
+        if slot in self._pending:
+            return inject.NOT_RELEASED_PREFIX, f"槽位 {slot} 正在使用中（有提问在等回复），未释放。"
+        try:
+            if not self._state().slots().get(slot, {}).get("leased_by"):
+                return inject.NOT_RELEASED_PREFIX, f"槽位 {slot} 没有租约，无需释放。"
+            self._state().release(slot, self._active())
+        except StateError as e:
+            LOG.error("按钮释放失败 slot=%s：%s", slot, e)
+            return inject.NOT_RELEASED_PREFIX, f"槽位 {slot} 未释放：状态文件读写失败，看 daemon 日志。"
+        LOG.info("释放 slot=%s（手机控制按钮）", slot)
+        return inject.RELEASED_PREFIX, f"槽位 {slot} 已释放，可以租给下一个目标。"
 
     def _on_connected(self) -> None:
         was_down = self._warned_disconnect

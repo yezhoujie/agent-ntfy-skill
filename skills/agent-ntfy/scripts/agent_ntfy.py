@@ -272,12 +272,12 @@ def daemon_stop(home: Path) -> int:
     except OSError as e:
         err(f"向 pid {pid} 发 SIGTERM 失败：{e}")
         return 1
-    for _ in range(100):
+    for _ in range(300):  # 关停最坏拖 2 + 5×N 秒（在途注入的宽限期 + 每张未送达回执的发布上限）
         if daemon.pid_alive(home / "daemon.pid") is None:
             print(f"daemon：pid {pid} 已停")
             return 0
         time.sleep(0.1)
-    err(f"daemon pid {pid} 10 秒内没退出")
+    err(f"daemon pid {pid} 30 秒内没退出")
     return 1
 
 
