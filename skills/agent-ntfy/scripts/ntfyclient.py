@@ -314,7 +314,8 @@ class NtfyClient:
         调用方据此以最后消费的 id 作 since 重连，已处理的消息不会重放。
         不想再收了就 Subscription.close()（任何线程都可以），正阻塞的迭代立刻以 NtfyClosed 结束。
         参数校验与建连在这里就做（不等第一次 next）。
-        ⚠️ 服务端把消息写进缓存有约 1 秒延迟：发布后立刻 poll 可能还看不到刚发的那条（实测）。
+        ⚠️ 服务端把消息写进缓存有延迟，实测从 1 秒到数分钟不等（同一天里两次测量分别约 1s 与约 3min）：
+        发布后立刻 poll 可能还看不到刚发的那条；实时流的投递不受影响，始终即时。
         """
         names = [topics] if isinstance(topics, str) else list(topics)
         if not names:

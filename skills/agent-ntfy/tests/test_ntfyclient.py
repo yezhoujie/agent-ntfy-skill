@@ -41,17 +41,31 @@ class NoNetworkClient(NtfyClient):
         raise AssertionError(f"不该建连：GET {path}")
 
 
-def messages(client, topics, since, want, timeout=15):
-    """poll 直到收到 want 条 message 事件（或超时），只返回 message 事件。
+REPLAY_TIMEOUT = 180  # 服务端把消息写进缓存的延迟实测从 1 秒到数分钟不等，回放类用例要等它
+REPLAY_INTERVAL = 5  # 轮询别太密：ntfy.sh 的请求桶 60 个、每 5 秒补 1 个
 
-    服务端把消息写进缓存有约 1 秒延迟：发布后立刻 poll 可能还看不到刚发的那条（实测），所以要重试。
-    """
-    deadline = time.monotonic() + timeout
+
+def messages(client, topics, since, want):
+    """poll 直到收到 want 条 message 事件，只返回 message 事件；等不到就响亮失败，不 skip。"""
+    deadline = time.monotonic() + REPLAY_TIMEOUT
     while True:
         got = [e for e in client.subscribe(topics, since=since, poll=True) if e["event"] == "message"]
-        if len(got) >= want or time.monotonic() > deadline:
+        if len(got) >= want:
             return got
-        time.sleep(1)
+        if time.monotonic() > deadline:
+            raise AssertionError(f"ntfy.sh 缓存回放未在 {REPLAY_TIMEOUT}s 内出现（期望 {want} 条，拿到 {len(got)} 条），"
+                                 "是服务端条件不是代码错")
+        time.sleep(REPLAY_INTERVAL)
+
+
+def live_messages(sub, want):
+    """从一条已收到 open 事件的实时流里读 want 条 message 事件（其余事件跳过），读完由调用方 close()。"""
+    got = []
+    while len(got) < want:
+        ev = next(sub)
+        if ev["event"] == "message":
+            got.append(ev)
+    return got
 
 
 class CannedClient(NtfyClient):
@@ -342,20 +356,24 @@ class RealNtfyTest(unittest.TestCase):
         got = messages(self.client, [topic], m1["id"], want=1)
         self.assertEqual([e["id"] for e in got], [m2["id"]])
 
-    # 单连接订阅多 topic（逗号分隔），返回的消息带 topic 字段可用于路由
+    # 单连接订阅多 topic（逗号分隔），返回的消息带 topic 字段可用于路由——走实时流（daemon 的真实路径）
     def test_subscribe_multiple_topics_routes_by_topic_field(self):
         ta, tb = topic_for("multi-a"), topic_for("multi-b")
-        ma = self.client.publish(ta, "给 a")
-        mb = self.client.publish(tb, "给 b")
-        got = messages(self.client, [ta, tb], "all", want=2)
+        with self.client.subscribe([ta, tb]) as sub:
+            self.assertEqual(next(sub)["event"], "open")
+            ma = self.client.publish(ta, "给 a")
+            mb = self.client.publish(tb, "给 b")
+            got = live_messages(sub, want=2)
         by_id = {e["id"]: e["topic"] for e in got}
         self.assertEqual(by_id, {ma["id"]: ta, mb["id"]: tb})
 
-    # 订阅列表里含不存在的 topic → 不影响整条连接
+    # 订阅列表里含不存在的 topic → 不影响整条连接——走实时流
     def test_subscribe_with_unknown_topic_still_delivers(self):
         ta = topic_for("known")
-        ma = self.client.publish(ta, "只有这个 topic 有消息")
-        got = messages(self.client, [ta, topic_for("never-published")], "all", want=1)
+        with self.client.subscribe([ta, topic_for("never-published")]) as sub:
+            self.assertEqual(next(sub)["event"], "open")
+            ma = self.client.publish(ta, "只有这个 topic 有消息")
+            got = live_messages(sub, want=1)
         self.assertEqual([e["id"] for e in got], [ma["id"]])
 
     # 网络中断后重连，带上次消费的消息 id → 不重放已处理消息
