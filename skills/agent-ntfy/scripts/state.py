@@ -45,6 +45,7 @@ TOPIC_RANDOM_LEN = 20
 TOPIC_PREFIX_RE = re.compile(r"^[A-Za-z0-9_-]{1,40}$")
 SLOT_RE = re.compile(r"^slot([1-9][0-9]*)$")
 # 服务名 / 账户名进 security 的参数，也进错误提示；只放行这些字符，免得提示里混进换行或引号
+# 三个正则都用 fullmatch：match() 的 $ 会放过末尾换行
 KEYCHAIN_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 # security 出错时会把它收到的参数回显到 stderr；密码载荷是一长串十六进制，进错误消息前先抹掉
 HEX_RUN_RE = re.compile(r"[0-9a-fA-F]{32,}")
@@ -114,7 +115,7 @@ class KeychainStore(SecretStore):
 
     def __init__(self, service=KEYCHAIN_SERVICE, account=KEYCHAIN_ACCOUNT):
         for label, value in (("服务名", service), ("账户名", account)):
-            if not KEYCHAIN_NAME_RE.match(value or ""):
+            if not KEYCHAIN_NAME_RE.fullmatch(value or ""):
                 raise StateError(f"钥匙串{label}不合法：{value!r}（只能用字母、数字、. _ -）")
         self.service = service
         self.account = account
@@ -154,7 +155,7 @@ class KeychainStore(SecretStore):
 
 def _slot_index(slot):
     """'slot3' -> 3；形态不对抛 StateError。"""
-    m = SLOT_RE.match(slot or "")
+    m = SLOT_RE.fullmatch(slot or "")
     if not m:
         raise StateError(f"槽位名不合法：{slot!r}（应形如 slot1）")
     return int(m.group(1))
@@ -197,7 +198,7 @@ class State:
 
     def __init__(self, store: SecretStore, leases_path: Path = LEASES_PATH, *,
                  prefix: str = DEFAULT_PREFIX, pool_size: int = DEFAULT_POOL_SIZE):
-        if not TOPIC_PREFIX_RE.match(prefix):
+        if not TOPIC_PREFIX_RE.fullmatch(prefix):
             raise StateError(f"topic 前缀不合法：{prefix!r}（只能用字母、数字、- 和 _，最长 40 位）")
         if pool_size < 1:
             raise StateError(f"池子至少要有 1 个槽位，给的是 {pool_size}")

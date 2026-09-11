@@ -66,6 +66,15 @@ class StateTest(unittest.TestCase):
         with self.assertRaises(state.StateError):
             State(MemoryStore(), Path(self.tmp.name) / "bad.json", pool_size=0)
 
+    # 末尾带换行的名字一律拒绝：re.match 配 $ 会放过 "xxx\n"，而它会原样进 topic 名 / 钥匙串参数
+    def test_names_with_trailing_newline_rejected(self):
+        with self.assertRaises(state.StateError):
+            State(MemoryStore(), Path(self.tmp.name) / "bad.json", prefix="agent-ntfy\n")
+        with self.assertRaises(state.StateError):
+            self.state.slot_state("slot1\n")
+        with self.assertRaises(state.StateError):
+            state.KeychainStore(service="AGENT_NTFY_TOPICS\n")
+
     # 租约三态判定正确
     def test_three_slot_states(self):
         self.assertEqual(self.state.slot_state("slot1"), SlotState.UNASSIGNED)
