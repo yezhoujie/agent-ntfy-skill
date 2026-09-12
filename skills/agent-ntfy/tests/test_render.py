@@ -8,6 +8,7 @@ import unittest
 
 import ntfyclient
 import render
+import texts
 from ntfyclient import NtfyClient
 from render import Rendered
 
@@ -67,7 +68,7 @@ def with_options(n):
 
 class RenderQuestionTest(unittest.TestCase):
     def setUp(self):
-        self.r = render.render_question(SAMPLE, tag="wD", reply_url=REPLY_URL)
+        self.r = render.render_question(SAMPLE, tag="wD", reply_url=REPLY_URL, lang="zh")
 
     # 六段齐全且顺序固定：正在做 / 背景 / 卡点 / 选项 / 我的建议 / 要你定
     def test_six_sections_in_fixed_order(self):
@@ -88,17 +89,17 @@ class RenderQuestionTest(unittest.TestCase):
         self.assertIn("  1. 留固定目录（推荐）→ " + SAMPLE["options"][0]["consequence"], self.r.message)
         self.assertIn("  2. 用完即删 → " + SAMPLE["options"][1]["consequence"], self.r.message)
         self.assertEqual(self.r.message.count("（推荐）"), 1)
-        five = render.render_question(with_options(5), tag="wD", reply_url=REPLY_URL)
+        five = render.render_question(with_options(5), tag="wD", reply_url=REPLY_URL, lang="zh")
         for i in range(5):
             self.assertIn(f"  {i + 1}. 选项{i}", five.message)
         # 推荐项在最后一个
-        last = render.render_question({**with_options(5), "recommend": "o4"}, tag="wD", reply_url=REPLY_URL)
+        last = render.render_question({**with_options(5), "recommend": "o4"}, tag="wD", reply_url=REPLY_URL, lang="zh")
         self.assertIn("  5. 选项4（推荐）→ 后果4", last.message)
         self.assertEqual(last.message.count("（推荐）"), 1)
         self.assertEqual(last.actions[0]["body"], "选项4")
         # recommend 缺失 + 某项缺 id：谁都不该被标成推荐
         none = render.render_question({**with_options(2), "recommend": None, "options": [{"label": "无 id", "consequence": "x"}, with_options(2)["options"][1]]},
-                                      tag="wD", reply_url=REPLY_URL)
+                                      tag="wD", reply_url=REPLY_URL, lang="zh")
         self.assertNotIn("（推荐）", none.message)
 
     # 固定提示出现在正文末尾，不在开头
@@ -124,7 +125,7 @@ class RenderQuestionTest(unittest.TestCase):
     def test_button_body_is_recommended_label(self):
         self.assertEqual(self.r.actions[0]["body"], "留固定目录")
         self.assertNotEqual(self.r.actions[0]["body"], self.r.actions[0]["label"])
-        other = render.render_question({**SAMPLE, "recommend": "temp"}, tag="wD", reply_url=REPLY_URL)
+        other = render.render_question({**SAMPLE, "recommend": "temp"}, tag="wD", reply_url=REPLY_URL, lang="zh")
         self.assertEqual(other.actions[0]["body"], "用完即删")
 
     # 按钮有且只有 1 个，回传到调用方给的地址
@@ -132,7 +133,7 @@ class RenderQuestionTest(unittest.TestCase):
         self.assertEqual(len(self.r.actions), 1)
         self.assertEqual(self.r.actions[0]["action"], "http")
         self.assertEqual(self.r.actions[0]["url"], REPLY_URL)
-        self.assertEqual(len(render.render_question(with_options(5), tag="wD", reply_url=REPLY_URL).actions), 1)
+        self.assertEqual(len(render.render_question(with_options(5), tag="wD", reply_url=REPLY_URL, lang="zh").actions), 1)
 
     # 输出为纯文本，不含 Markdown 标记
     def test_plain_text_without_markdown(self):
@@ -143,16 +144,17 @@ class RenderQuestionTest(unittest.TestCase):
     # 通知 Title = [<tag>] <title>，tag 由调用方给
     def test_title_carries_tag(self):
         self.assertEqual(self.r.title, "[wD] " + SAMPLE["title"])
-        self.assertEqual(render.render_question(SAMPLE, tag="slot3", reply_url=REPLY_URL).title, "[slot3] " + SAMPLE["title"])
+        self.assertEqual(render.render_question(SAMPLE, tag="slot3", reply_url=REPLY_URL, lang="zh").title, "[slot3] " + SAMPLE["title"])
 
-    # tag 的预算 = 1024 − 已回复前缀 − title 上限 − 「[] 」三字节 = 44；超出就是调用方的错，当场抛
+    # tag 的预算 = 1024 − 会拼到提问 Title 前的最长前缀（只取已回复 / 超时 / 取消三个，两种语言里最长是「⚠️ 已取消 · 」20；
+    # 「已被新回执取代 · 」25 字节刻意不算：它只拼在回执的固定短 Title 前）− title 上限 − 「[] 」三字节 = 41；超出就是调用方的错，当场抛
     def test_tag_over_budget_raises(self):
-        self.assertEqual(render.TAG_MAX_BYTES, 44)
-        self.assertEqual(render.render_title(SAMPLE, "t" * 44), "[" + "t" * 44 + "] " + SAMPLE["title"])
+        self.assertEqual(render.TAG_MAX_BYTES, 41)
+        self.assertEqual(render.render_title(SAMPLE, "t" * 41), "[" + "t" * 41 + "] " + SAMPLE["title"])
         with self.assertRaises(ValueError):
-            render.render_title(SAMPLE, "t" * 45)
+            render.render_title(SAMPLE, "t" * 42)
         with self.assertRaises(ValueError):
-            render.render_question(SAMPLE, tag="标" * 15, reply_url=REPLY_URL)  # 45 字节
+            render.render_question(SAMPLE, tag="标" * 14, reply_url=REPLY_URL, lang="zh")  # 42 字节
 
     # 渲染结果能被 NtfyClient.publish() 直接消费
     def test_consumable_by_publish(self):
@@ -167,12 +169,12 @@ class RenderQuestionTest(unittest.TestCase):
         self.assertEqual(render.REPLY_RESERVE_BYTES, 512)
         self.assertEqual(render.QUESTION_MAX_BYTES, 3584)
         self.assertEqual(render.TITLE_MAX_BYTES, 960)  # ntfy title 硬顶 1 KB，扣掉已回复前缀与 [tag] 的余量
-        self.assertEqual(render.message_bytes(SAMPLE), len(self.r.message.encode("utf-8")))
+        self.assertEqual(render.message_bytes(SAMPLE, "zh"), len(self.r.message.encode("utf-8")))
 
 
 class RenderAnsweredTest(unittest.TestCase):
     def setUp(self):
-        self.q = render.render_question(SAMPLE, tag="wD", reply_url=REPLY_URL)
+        self.q = render.render_question(SAMPLE, tag="wD", reply_url=REPLY_URL, lang="zh")
 
     # 已回复态：Title 加前缀、正文 = 回复 + 原提问、actions 为空、不含末尾提示
     def test_answered_rendering(self):
@@ -192,7 +194,7 @@ class RenderAnsweredTest(unittest.TestCase):
 
     # 原提问正文本身已超预算（没过校验就来）：不能静默产出一条「已截断」却一字回复都没有的消息
     def test_answered_refuses_oversized_question(self):
-        huge = Rendered(title="[wD] x", message="", actions=[], body="字" * 1400)  # 4200 字节
+        huge = Rendered(title="[wD] x", message="", actions=[], body="字" * 1400, lang="zh")  # 4200 字节
         with self.assertRaises(ValueError):
             render.render_answered(huge, "ok")
 
@@ -207,9 +209,9 @@ class RenderAnsweredTest(unittest.TestCase):
     def test_long_reply_is_truncated_but_question_kept(self):
         # 把提问撑到接近上限（校验放行的最大形态），再给一条很长的回复
         big = dict(SAMPLE)
-        while render.message_bytes(big) <= render.QUESTION_MAX_BYTES - 300:
+        while render.message_bytes(big, "zh") <= render.QUESTION_MAX_BYTES - 300:
             big["description"] += "补充背景。"
-        q = render.render_question(big, tag="wD", reply_url=REPLY_URL)
+        q = render.render_question(big, tag="wD", reply_url=REPLY_URL, lang="zh")
         self.assertLessEqual(len(q.message.encode("utf-8")), render.QUESTION_MAX_BYTES)
         reply = "这是一条很长的回复，" * 200
         a = render.render_answered(q, reply)
@@ -217,14 +219,14 @@ class RenderAnsweredTest(unittest.TestCase):
         self.assertIn(q.body, a.message)
         head, _, _ = a.message.partition("\n──────────\n")
         self.assertTrue(head.startswith("【你的回复】"))
-        self.assertTrue(head.endswith(render.TRUNCATED_MARK))
-        kept = head[len("【你的回复】"):-len(render.TRUNCATED_MARK)]
+        self.assertTrue(head.endswith(texts.t("reply.truncated", "zh")))
+        kept = head[len("【你的回复】"):-len(texts.t("reply.truncated", "zh"))]
         self.assertTrue(reply.startswith(kept))  # 截的是尾巴，没有截坏多字节字符
         self.assertGreater(len(kept), 100)
         # 不超预算就一个字不动
         short = render.render_answered(q, "留固定目录")
         self.assertIn("【你的回复】留固定目录\n", short.message)
-        self.assertNotIn(render.TRUNCATED_MARK, short.message)
+        self.assertNotIn(texts.t("reply.truncated", "zh"), short.message)
 
 
 if __name__ == "__main__":

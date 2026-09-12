@@ -30,6 +30,10 @@ ask 的退出码（三种结局不能都表现为空输出）:
 
 环境变量: AGENT_NTFY_HOME（默认 ~/.agent-ntfy）· HERDR_PANE_ID / HERDR_ENV（在 herdr 里时自动带上窗格标识）
           AGENT_NTFY_TARGET（不在 herdr 里时指定「我是谁」，同一个值复用同一个槽位）
+          AGENT_NTFY_LANG（固定文案的语言 zh / en；ask 的 JSON 里给了 lang 以它为准；都没有就 en）
+
+固定文案的语言只在这里解析一次（ask：JSON lang → AGENT_NTFY_LANG → en；其余子命令：AGENT_NTFY_LANG → en），
+随请求交给 daemon；深层模块不读环境变量。
 """
 
 import argparse
@@ -43,6 +47,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 
+import texts
 import validate
 
 PROG = "agent-ntfy"
@@ -53,17 +58,40 @@ EXIT_REPLY, EXIT_INVALID, EXIT_TIMEOUT, EXIT_CHANNEL, EXIT_NEEDS_HUMAN, EXIT_INT
 EXIT_BY_KIND = {"invalid_input": EXIT_INVALID, "unknown_slot": EXIT_INVALID, "busy": EXIT_NEEDS_HUMAN, "no_free_slot": EXIT_NEEDS_HUMAN,
                 "unconfirmed": EXIT_NEEDS_HUMAN}  # 其余 kind（state / publish_failed / daemon_stopping / bad_request …）都是通道故障 3
 CONFIRM_TIMEOUT = 600  # 与 daemon.CONFIRM_TIMEOUT 同步（这里刻意不 import daemon）
-TOPIC_HINT = ("topic 名只在你自己的终端里显示：请在你自己的终端跑  agent-ntfy confirm-sub {slot}\n"
-              "  用户已经在手机上订阅过就加 --subscribed（不显示 topic，非终端也能跑）；只想看 topic 名用 --show-topic（会进调用方的输出）")
-SUBSCRIBE_GUIDE = "在手机 ntfy app 里订阅上面这个 topic；订阅好后按回车，我会发一条带按钮的测试通知——看到它弹出来、点按钮，确认就完成了。"
-START_HINT = ("daemon 没在跑。启动方式：\n"
-              "  herdr 内 ：另开一个 pane 跑  agent-ntfy daemon      （可见、herdr 管生命周期）\n"
-              "  非 herdr ：agent-ntfy daemon --detach              （脱离会话，靠 --status / --stop 管）\n"
-              "  ⚠️ 别用 agent 自己内部的 shell 或后台任务起它——agent 一退出它就跟着没了")
+STATE_KEYS = ("unassigned", "idle", "active", "confirming")  # daemon 的 slots 事件里 state_key 的取值；显示文案按语言取
 
 
 def err(msg: str) -> None:
     print(f"{PROG}: {msg}", file=sys.stderr)
+
+
+class ProtocolError(ValueError):
+    """daemon 回的东西不合协议；文案由 CLI 按语言取（cli.protocol.<key>）。"""
+
+    def __init__(self, key: str):
+        super().__init__(key)
+        self.key = key
+
+
+class BadEnvLang(ValueError):
+    """AGENT_NTFY_LANG 给了却不是 zh / en。响亮失败，不静默回退——语言错了整个进程的文案都会错。"""
+
+
+def env_lang() -> str:
+    """进程入口解析一次：AGENT_NTFY_LANG → en。ask 再拿 JSON 里的 lang 压过它。空串当没给；给了非法值抛 BadEnvLang。"""
+    value = os.environ.get(texts.ENV_VAR)
+    if value and not texts.is_lang(value):
+        raise BadEnvLang(value)
+    return texts.resolve(None, value)
+
+
+def describe(e: BaseException, lang: str) -> str:
+    """异常进人读文案：协议错按语言取表，其余（OSError 之类）原样。"""
+    return texts.t(f"cli.protocol.{e.key}", lang) if isinstance(e, ProtocolError) else str(e)
+
+
+def start_hint(lang: str) -> None:
+    print(texts.t("cli.start_hint", lang), file=sys.stderr)
 
 
 # ---------------------------------------------------------------- socket 协议（客户端侧）
@@ -101,7 +129,7 @@ def read_events(sock: socket.socket) -> Iterator[dict]:
                 continue
             ev = json.loads(line.decode("utf-8"))
             if not isinstance(ev, dict):
-                raise ValueError("daemon 回的不是 JSON 对象")
+                raise ProtocolError("not_object")
             yield ev
 
 
@@ -126,46 +154,47 @@ def identity() -> tuple[str, str | None]:
 def cmd_ask(args) -> int:
     home = Path(args.home)
     text = sys.stdin.read()
-    payload, problems = validate.check_json(text)
+    payload, problems, lang = validate.check_json(text, env_lang())  # 报错与这张卡片都用同一个语言：JSON lang → 环境 → en
     if problems:
-        sys.stderr.write(validate.format_problems(problems))
+        sys.stderr.write(validate.format_problems(problems, lang))
         return EXIT_INVALID
     leased_by, tag = identity()
     try:
         sock = connect(home)
     except OSError as e:
-        err(f"连不上 daemon（{sock_path(home)}：{e.strerror or e}）。消息未发送。")
-        print(START_HINT, file=sys.stderr)
+        err(texts.t("cli.connect_failed.not_sent", lang, path=sock_path(home), error=e.strerror or e))
+        start_hint(lang)
         return EXIT_CHANNEL
     sent = False
     try:
-        send_request(sock, {"cmd": "ask", "payload": payload, "leased_by": leased_by, "tag": tag, "timeout": args.timeout})
+        send_request(sock, {"cmd": "ask", "payload": payload, "leased_by": leased_by, "tag": tag, "timeout": args.timeout, "lang": lang})
         for ev in read_events(sock):
             kind = ev.get("event")
             if kind == "sent":
                 sent = True
             elif kind == "warning":
-                err(f"提醒：{ev.get('message')}")
+                err(texts.t("cli.reminder", lang, message=ev.get("message")))
             elif kind == "reply":
                 sys.stdout.write(str(ev.get("text", "")) + "\n")
                 return EXIT_REPLY
             elif kind == "timeout":
-                err(f"{args.timeout} 秒内没有收到回复（消息已发送，用户之后的回复会以指令形式送达）")
+                err(texts.t("cli.ask.timeout", lang, seconds=args.timeout))
                 return EXIT_TIMEOUT
             elif kind == "error":
                 sent = bool(ev.get("sent", sent))
-                err((f"消息已发送，但 {ev.get('message')}" if sent else f"消息未发送：{ev.get('message')}"))
+                err(texts.t("cli.ask.error_sent" if sent else "cli.ask.error_not_sent", lang, message=ev.get("message")))
                 if ev.get("kind") == "no_free_slot":
                     for cand in ev.get("candidates") or []:
-                        err(f"  可替换：{cand['slot']}（{'已过闸' if cand.get('subscribed') else '未过闸，选它要再动一次手机'}）")
+                        gate = texts.t("cli.ask.candidate.confirmed" if cand.get("subscribed") else "cli.ask.candidate.unconfirmed", lang)
+                        err(texts.t("cli.ask.candidate", lang, slot=cand["slot"], gate=gate))
                 return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
-        err("daemon 连接中断" + ("（消息已发送，回复无法再送回本次调用）" if sent else "（消息未发送）"))
+        err(texts.t("cli.ask.disconnected", lang) + texts.t("cli.ask.disconnected.sent" if sent else "cli.ask.disconnected.not_sent", lang))
         return EXIT_CHANNEL
     except (OSError, ValueError) as e:
-        err(f"与 daemon 通信失败：{e}" + ("（消息已发送）" if sent else "（消息未发送）"))
+        err(texts.t("cli.ask.comm_failed", lang, error=describe(e, lang)) + texts.t("cli.ask.comm_failed.sent" if sent else "cli.ask.disconnected.not_sent", lang))
         return EXIT_CHANNEL
     except KeyboardInterrupt:
-        err("已中断" + ("（消息已发送；用户之后的回复会以指令形式送达）" if sent else "（消息未发送）"))
+        err(texts.t("cli.ask.interrupted", lang) + texts.t("cli.ask.interrupted.sent" if sent else "cli.ask.disconnected.not_sent", lang))
         return EXIT_INTERRUPTED
     finally:
         sock.close()
@@ -173,41 +202,45 @@ def cmd_ask(args) -> int:
 
 # ---------------------------------------------------------------- 一问一答的命令
 
-def request(home: Path, req: dict) -> dict | None:
-    """发一个一问一答的命令，返回第一条事件；连不上 daemon 返回 None（已打印提示）。"""
+def request(home: Path, req: dict, lang: str) -> dict | None:
+    """发一个一问一答的命令（带上语言），返回第一条事件；连不上 daemon 返回 None（已打印提示）。"""
     try:
         with connect(home) as s:
-            send_request(s, req)
-            return next(read_events(s), {"event": "error", "kind": "protocol", "sent": False, "message": "daemon 没有回应"})
+            send_request(s, {**req, "lang": lang})
+            return next(read_events(s), {"event": "error", "kind": "protocol", "sent": False, "message": texts.t("cli.no_response", lang)})
     except OSError as e:
-        err(f"连不上 daemon（{sock_path(home)}：{e.strerror or e}）")
-        print(START_HINT, file=sys.stderr)
+        err(texts.t("cli.connect_failed", lang, path=sock_path(home), error=e.strerror or e))
+        start_hint(lang)
         return None
 
 
 def cmd_slots(args) -> int:
-    ev = request(Path(args.home), {"cmd": "slots"})
+    lang = env_lang()
+    ev = request(Path(args.home), {"cmd": "slots"}, lang)
     if ev is None:
         return EXIT_CHANNEL
     if ev.get("event") != "slots":
         err(str(ev.get("message")))
         return EXIT_CHANNEL
+    width = max(8, *(len(texts.t(f"cli.slots.state.{k}", lang)) for k in STATE_KEYS))  # 列宽装得下该语言最长的状态词
     for slot, rec in ev["slots"].items():
-        gate = "已过闸" if rec.get("subscribed") else "未过闸"
-        who = f"  {rec['leased_by']}  自 {rec['leased_at']}" if rec.get("leased_by") else ""
-        print(f"{slot:<7} {rec['state']:<8} {gate}{who}")
+        gate = texts.t("cli.slots.gate.confirmed" if rec.get("subscribed") else "cli.slots.gate.unconfirmed", lang)
+        who = texts.t("cli.slots.since", lang, leased_by=rec["leased_by"], leased_at=rec["leased_at"]) if rec.get("leased_by") else ""
+        state = texts.t(f"cli.slots.state.{rec['state_key']}", lang) if rec.get("state_key") in STATE_KEYS else rec["state"]
+        print(f"{slot:<7} {state:<{width}} {gate}{who}")
     return 0
 
 
 def cmd_release(args) -> int:
+    lang = env_lang()
     req = {"cmd": "release", "slot": args.slot} if args.slot else {"cmd": "release", "leased_by": identity()[0]}
-    ev = request(Path(args.home), req)
+    ev = request(Path(args.home), req, lang)
     if ev is None:
         return EXIT_CHANNEL
     if ev.get("event") != "released":
         err(str(ev.get("message")))
         return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
-    print(f"已释放 {ev['slot']}")
+    print(texts.t("cli.released", lang, slot=ev["slot"]))
     return 0
 
 
@@ -217,43 +250,43 @@ def cmd_confirm_sub(args) -> int:
     topic 名就是密码：默认只在 stdout 是终端时才显示，agent 代跑（stdout 被捕获）时退出 4 让它转告用户；
     用户已订阅过时 agent 可以带 --subscribed 代跑（不经过显示 topic 那段）。
     """
-    home, slot = Path(args.home), args.slot
+    home, slot, lang = Path(args.home), args.slot, env_lang()
     if args.show_topic:
-        ev = request(home, {"cmd": "confirm-sub", "slot": slot, "show_topic": True})
+        ev = request(home, {"cmd": "confirm-sub", "slot": slot, "show_topic": True}, lang)
         if ev is None:
             return EXIT_CHANNEL
         if ev.get("event") != "topic":
             err(str(ev.get("message")))
             return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
-        print(f"{slot} 的 topic：{ev['topic']}\n订阅地址：{ev['url']}")
+        print(texts.t("cli.confirm.topic", lang, slot=slot, topic=ev["topic"], url=ev["url"]))
         return 0
     if not args.subscribed and not sys.stdout.isatty():
-        err(TOPIC_HINT.format(slot=slot))
+        err(texts.t("cli.confirm.topic_hint", lang, slot=slot))
         return EXIT_NEEDS_HUMAN
     try:
         sock = connect(home)
     except OSError as e:
-        err(f"连不上 daemon（{sock_path(home)}：{e.strerror or e}）")
-        print(START_HINT, file=sys.stderr)
+        err(texts.t("cli.connect_failed", lang, path=sock_path(home), error=e.strerror or e))
+        start_hint(lang)
         return EXIT_CHANNEL
     sent = False
     try:
-        send_request(sock, {"cmd": "confirm-sub", "slot": slot, "again": args.again, "subscribed": args.subscribed, "timeout": args.timeout})
+        send_request(sock, {"cmd": "confirm-sub", "slot": slot, "again": args.again, "subscribed": args.subscribed, "timeout": args.timeout, "lang": lang})
         for ev in read_events(sock):
             kind = ev.get("event")
             if kind == "already_confirmed":
-                print(f"{slot} 已经确认过手机收得到通知，不用再做；换了手机要重新确认就加 --again")
+                print(texts.t("cli.confirm.already", lang, slot=slot))
                 return 0
             elif kind == "topic":
                 if args.subscribed:
-                    err("协议错误：说了 --subscribed 却收到 topic 事件；不打印它。daemon 与 CLI 版本可能不一致")  # 两端各守一道
+                    err(texts.t("cli.confirm.protocol", lang))  # 两端各守一道
                     return EXIT_CHANNEL
-                print(f"{slot} 的 topic：{ev['topic']}\n订阅地址：{ev['url']}\n{SUBSCRIBE_GUIDE}")
+                print(texts.t("cli.confirm.topic", lang, slot=slot, topic=ev["topic"], url=ev["url"]) + "\n" + texts.t("cli.confirm.guide", lang))
                 try:
-                    input("订阅好了就按回车…")
+                    input(texts.t("cli.confirm.enter", lang))
                 except EOFError:
                     # stdin 到头（< /dev/null 之类）：没等到回车就不能发——先发再订阅正是两段式要避免的
-                    err("没等到回车（stdin 已到头），确认取消。请在你自己的终端交互式地跑；用户已订阅过就用 --subscribed")
+                    err(texts.t("cli.confirm.no_enter", lang))
                     return EXIT_NEEDS_HUMAN
                 try:
                     send_request(sock, {"ready": True})
@@ -261,41 +294,39 @@ def cmd_confirm_sub(args) -> int:
                     pass  # 等回车期间 daemon 已经收掉这条（超时 / 停止）：真实终态还在缓冲区里，继续读它，别报成通道故障
             elif kind == "sent":
                 sent = True
-                err(f"测试通知已发出，请在手机通知栏点「我收到了」（{args.timeout:g} 秒内）…")  # 进度走 stderr：stdout 只在退出 0 时有内容
+                err(texts.t("cli.confirm.sent", lang, button=texts.t("confirm.button", lang), seconds=f"{args.timeout:g}"))  # 进度走 stderr：stdout 只在退出 0 时有内容
             elif kind == "warning":
-                err(f"提醒：{ev.get('message')}")
+                err(texts.t("cli.reminder", lang, message=ev.get("message")))
             elif kind == "confirmed":
-                print(f"✅ {slot} 已确认：手机收得到通知，之后 agent 可以用它提问了")
+                print(texts.t("cli.confirm.done", lang, slot=slot))
                 return 0
             elif kind == "timeout":
-                if sent:
-                    err(f"{args.timeout:g} 秒内没有收到按钮点击，确认未完成。通知没弹出来？按 README 的排查清单检查后再跑一次")
-                else:
-                    err(f"{args.timeout:g} 秒内没等到回车，确认未完成；测试通知还没发出。订阅好之后再跑一次")
+                err(texts.t("cli.confirm.timeout" if sent else "cli.confirm.timeout_no_enter", lang, seconds=f"{args.timeout:g}"))
                 return EXIT_TIMEOUT
             elif kind == "error":
                 err(str(ev.get("message")))
                 return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
-        err("daemon 连接中断，确认未完成")
+        err(texts.t("cli.confirm.disconnected", lang))
         return EXIT_CHANNEL
     except (OSError, ValueError) as e:
-        err(f"与 daemon 通信失败：{e}")
+        err(texts.t("cli.confirm.comm_failed", lang, error=describe(e, lang)))
         return EXIT_CHANNEL
     except KeyboardInterrupt:
-        err("已中断，确认未完成")
+        err(texts.t("cli.confirm.interrupted", lang))
         return EXIT_INTERRUPTED
     finally:
         sock.close()
 
 
 def cmd_add_slot(args) -> int:
-    ev = request(Path(args.home), {"cmd": "add-slot"})
+    lang = env_lang()
+    ev = request(Path(args.home), {"cmd": "add-slot"}, lang)
     if ev is None:
         return EXIT_CHANNEL
     if ev.get("event") != "added":
         err(str(ev.get("message")))
         return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
-    print(f"已新建 {ev['slot']}（还没确认过手机收得到通知）。下一步：在你自己的终端跑  agent-ntfy confirm-sub {ev['slot']}")
+    print(texts.t("cli.add_slot.done", lang, slot=ev["slot"]))
     return 0
 
 
@@ -304,71 +335,71 @@ def cmd_add_slot(args) -> int:
 def cmd_daemon(args) -> int:
     import daemon  # 只有这一支需要它（连带钥匙串与租约文件）
 
-    home = Path(args.home)
+    home, lang = Path(args.home), env_lang()
     if args.status:
-        return daemon_status(home)
+        return daemon_status(home, lang)
     if args.stop:
-        return daemon_stop(home)
+        return daemon_stop(home, lang)
     if args.detach:
-        return daemon_detach(home)
+        return daemon_detach(home, lang)
     try:
-        daemon.Daemon(home, log_to_stderr=True).run()
+        daemon.Daemon(home, log_to_stderr=True, lang=lang).run()  # daemon 自己的语言在这里解析一次，之后不再看环境
     except daemon.DaemonError as e:
-        err(str(e))
+        err(e.text(lang))
         return EXIT_CHANNEL
     return 0
 
 
-def daemon_status(home: Path) -> int:
+def daemon_status(home: Path, lang: str) -> int:
     import daemon
     pid = daemon.pid_alive(home / "daemon.pid")
     if not pid:
-        print("daemon：未运行")
+        print(texts.t("cli.status.not_running", lang))
         return 1
-    ev = request(home, {"cmd": "status"})
+    ev = request(home, {"cmd": "status"}, lang)
     if ev is None or ev.get("event") != "status":
-        print(f"daemon：pid {pid} 活着，但 socket 无回应")
+        print(texts.t("cli.status.no_socket", lang, pid=pid))
         return 1
     if ev["subscribed"]:
-        sub = "已连上"
+        sub = texts.t("cli.status.sub.connected", lang)
     elif ev["disconnected_for"] is None:
-        sub = "连接中"  # 刚起来还没连上，或从没连上过
+        sub = texts.t("cli.status.sub.connecting", lang)  # 刚起来还没连上，或从没连上过
     else:
-        sub = f"断开 {ev['disconnected_for']} 秒"
-    print(f"daemon：pid {ev['pid']}  订阅：{sub}  等待中的提问：{ev['pending']}  确认中：{ev.get('confirming', 0)}  槽位：{ev['pool']}")
+        sub = texts.t("cli.status.sub.disconnected", lang, seconds=ev["disconnected_for"])
+    print(texts.t("cli.status.line", lang, pid=ev["pid"], sub=sub, pending=ev["pending"], confirming=ev.get("confirming", 0), pool=ev["pool"]))
     return 0
 
 
-def daemon_stop(home: Path) -> int:
+def daemon_stop(home: Path, lang: str) -> int:
     import daemon
     pid = daemon.pid_alive(home / "daemon.pid")
     if not pid:
-        print("daemon：未运行")
+        print(texts.t("cli.status.not_running", lang))
         return 0
     # pid 文件可能是残留而 pid 被别的进程复用：先经 socket 问一声，对得上再发信号
-    ev = request(home, {"cmd": "status"})
+    ev = request(home, {"cmd": "status"}, lang)
     if ev is None or ev.get("pid") != pid:
-        err(f"pid 文件指向 {pid}，但 socket 上的 daemon 不是它（{ev.get('pid') if ev else '无回应'}），不发信号；请手动核实")
+        err(texts.t("cli.stop.pid_mismatch", lang, pid=pid, other=ev.get("pid") if ev else texts.t("cli.stop.no_response", lang)))
         return 1
     try:
         os.kill(pid, signal.SIGTERM)
     except OSError as e:
-        err(f"向 pid {pid} 发 SIGTERM 失败：{e}")
+        err(texts.t("cli.stop.signal_failed", lang, pid=pid, error=e))
         return 1
     for _ in range(300):  # 关停最坏拖 2 + 5×N 秒（在途注入的宽限期 + 每张未送达回执的发布上限）
         if daemon.pid_alive(home / "daemon.pid") is None:
-            print(f"daemon：pid {pid} 已停")
+            print(texts.t("cli.stop.done", lang, pid=pid))
             return 0
         time.sleep(0.1)
-    err(f"daemon pid {pid} 30 秒内没退出")
+    err(texts.t("cli.stop.timeout", lang, pid=pid))
     return 1
 
 
-def daemon_detach(home: Path) -> int:
-    """脱离会话起 daemon：新会话、stdio 接 /dev/null；起来后核一次 socket 能连上才算成功。"""
+def daemon_detach(home: Path, lang: str) -> int:
+    """脱离会话起 daemon：新会话、stdio 接 /dev/null；起来后核一次 socket 能连上才算成功。子进程继承环境，语言由它自己再解析。"""
     import daemon
     if daemon.pid_alive(home / "daemon.pid"):
-        err("已有 daemon 在跑")
+        err(texts.t("cli.detach.already", lang))
         return EXIT_CHANNEL
     # --home 是顶层选项，必须放在子命令前面
     proc = subprocess.Popen([sys.executable, os.path.abspath(__file__), "--home", str(home), "daemon"],
@@ -376,7 +407,7 @@ def daemon_detach(home: Path) -> int:
     for _ in range(50):
         time.sleep(0.1)
         if proc.poll() is not None:
-            err(f"daemon 没有起来（退出码 {proc.poll()}），看 {home / 'daemon.log'}")
+            err(texts.t("cli.detach.died", lang, rc=proc.poll(), log=home / "daemon.log"))
             return EXIT_CHANNEL
         try:
             with connect(home) as s:  # 判据是它在 socket 上报出自己的 pid，不是 socket 文件出现
@@ -385,54 +416,66 @@ def daemon_detach(home: Path) -> int:
         except (OSError, ValueError):
             continue
         if ev and ev.get("event") == "status" and ev.get("pid") == proc.pid:
-            print(f"daemon：已在后台启动，pid {proc.pid}（日志 {home / 'daemon.log'}）")
+            print(texts.t("cli.detach.started", lang, pid=proc.pid, log=home / "daemon.log"))
             return 0
-    err(f"daemon（pid {proc.pid}）5 秒内还没就绪，仍在启动（钥匙串弹窗？）；稍后用 agent-ntfy daemon --status 看，日志 {home / 'daemon.log'}")
+    err(texts.t("cli.detach.not_ready", lang, pid=proc.pid, log=home / "daemon.log"))
     return EXIT_CHANNEL
 
 
 # ---------------------------------------------------------------- 入口
 
-def positive_seconds(text: str) -> float:
-    try:
-        value = float(text)
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"不是数字：{text!r}")
-    if value <= 0:
-        raise argparse.ArgumentTypeError(f"要大于 0 秒：{text}")
-    return value
+def positive_seconds_in(lang: str):
+    """argparse 的 --timeout 类型：报错文案按语言。"""
+    def positive_seconds(text: str) -> float:
+        try:
+            value = float(text)
+        except ValueError:
+            raise argparse.ArgumentTypeError(texts.t("help.timeout.not_number", lang, text=repr(text))) from None
+        if value <= 0:
+            raise argparse.ArgumentTypeError(texts.t("help.timeout.not_positive", lang, text=text))
+        return value
+    return positive_seconds
 
 
-def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog=PROG, description="经 ntfy.sh 把需要人拍板的事推到手机，并把裁决带回来")
-    p.add_argument("--home", default=str(HOME), help=f"状态目录（默认 {HOME}）")
+def build_parser(lang: str) -> argparse.ArgumentParser:
+    """--help 的文案也按进程入口解析出的语言取。"""
+    def h(key: str, **fmt) -> str:
+        return texts.t(f"help.{key}", lang, **fmt)
+
+    p = argparse.ArgumentParser(prog=PROG, description=h("prog"))
+    p.add_argument("--home", default=str(HOME), help=h("home", home=HOME))
     sub = p.add_subparsers(dest="cmd", required=True)
-    a = sub.add_parser("ask", help="阻塞提问，JSON 从 stdin 读")
-    a.add_argument("--timeout", type=positive_seconds, default=DEFAULT_TIMEOUT, help="等回复的秒数（默认 12 小时）")
+    a = sub.add_parser("ask", help=h("ask"))
+    a.add_argument("--timeout", type=positive_seconds_in(lang), default=DEFAULT_TIMEOUT, help=h("ask.timeout"))
     a.set_defaults(fn=cmd_ask)
-    d = sub.add_parser("daemon", help="常驻订阅进程")
+    d = sub.add_parser("daemon", help=h("daemon"))
     g = d.add_mutually_exclusive_group()
-    g.add_argument("--detach", action="store_true", help="脱离会话在后台跑")
-    g.add_argument("--status", action="store_true")
-    g.add_argument("--stop", action="store_true")
+    g.add_argument("--detach", action="store_true", help=h("daemon.detach"))
+    g.add_argument("--status", action="store_true", help=h("daemon.status"))
+    g.add_argument("--stop", action="store_true", help=h("daemon.stop"))
     d.set_defaults(fn=cmd_daemon)
-    sub.add_parser("slots", help="看槽位池与租约").set_defaults(fn=cmd_slots)
-    r = sub.add_parser("release", help="释放租约")
-    r.add_argument("slot", nargs="?")
+    sub.add_parser("slots", help=h("slots")).set_defaults(fn=cmd_slots)
+    r = sub.add_parser("release", help=h("release"))
+    r.add_argument("slot", nargs="?", help=h("release.slot"))
     r.set_defaults(fn=cmd_release)
-    c = sub.add_parser("confirm-sub", help="可达性确认闸：验该槽位手机收得到通知（默认要在终端跑，会显示 topic 名）")
-    c.add_argument("slot")
-    c.add_argument("--again", action="store_true", help="已确认过的槽位重新确认（换手机后）")
-    c.add_argument("--subscribed", action="store_true", help="用户已订阅：不显示 topic，直接发测试通知（非终端也能跑）")
-    c.add_argument("--show-topic", action="store_true", help="只打印 topic 名就退出，不发测试通知（会进调用方的输出）")
-    c.add_argument("--timeout", type=positive_seconds, default=CONFIRM_TIMEOUT, help="等按钮点击的秒数（默认 600）")
+    c = sub.add_parser("confirm-sub", help=h("confirm"))
+    c.add_argument("slot", help=h("confirm.slot"))
+    c.add_argument("--again", action="store_true", help=h("confirm.again"))
+    c.add_argument("--subscribed", action="store_true", help=h("confirm.subscribed"))
+    c.add_argument("--show-topic", action="store_true", help=h("confirm.show_topic"))
+    c.add_argument("--timeout", type=positive_seconds_in(lang), default=CONFIRM_TIMEOUT, help=h("confirm.timeout"))
     c.set_defaults(fn=cmd_confirm_sub)
-    sub.add_parser("add-slot", help="新建一个槽位").set_defaults(fn=cmd_add_slot)
+    sub.add_parser("add-slot", help=h("add_slot")).set_defaults(fn=cmd_add_slot)
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    try:
+        lang = env_lang()  # 先于一切：语言错了连 --help 都会错
+    except BadEnvLang as e:
+        err(texts.t("cli.bad_env_lang", texts.DEFAULT_LANG, value=str(e)))
+        return EXIT_INVALID
+    args = build_parser(lang).parse_args(argv)
     return args.fn(args)
 
 

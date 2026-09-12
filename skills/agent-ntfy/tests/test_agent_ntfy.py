@@ -13,14 +13,20 @@ from unittest import mock
 
 import agent_ntfy
 import inject
+import texts
 from tests.test_daemon import Harness, wait_until
 from tests.test_render import SAMPLE
 
 
+def Z(key, **fmt):
+    return texts.t(key, "zh", **fmt)
+
+
 def run(argv, stdin_text="", env=None):
-    """跑 main()，返回 (退出码, stdout, stderr)。"""
+    """跑 main()，返回 (退出码, stdout, stderr)。缺省把固定文案定成 zh（既有用例断言的都是中文）；env 里给 AGENT_NTFY_LANG 可覆盖。"""
     out, errbuf = io.StringIO(), io.StringIO()
-    environ = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_")}
+    environ = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_") and k != "AGENT_NTFY_LANG"}
+    environ["AGENT_NTFY_LANG"] = "zh"
     environ.update(env or {})
     with mock.patch.dict(os.environ, environ, clear=True), mock.patch("sys.stdin", io.StringIO(stdin_text)), \
             contextlib.redirect_stdout(out), contextlib.redirect_stderr(errbuf):
@@ -240,7 +246,8 @@ class ConfirmSubTest(unittest.TestCase):
         reader = threading.Thread(target=pump, daemon=True)
         reader.start()
         errbuf = io.StringIO()
-        environ = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_")}
+        environ = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_") and k != "AGENT_NTFY_LANG"}
+        environ["AGENT_NTFY_LANG"] = "zh"
         try:
             with mock.patch.dict(os.environ, environ, clear=True), mock.patch("sys.stdin", stdin or io.StringIO(stdin_text)), \
                     mock.patch("sys.stdout", tty_out), contextlib.redirect_stderr(errbuf):
@@ -270,7 +277,7 @@ class ConfirmSubTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn(h.topic("slot4"), out)  # topic 名只在这里出现
         self.assertIn(h.client.topic_url(h.topic("slot4")), out)
-        self.assertIn(agent_ntfy.SUBSCRIBE_GUIDE, out)
+        self.assertIn(Z("cli.confirm.guide"), out)
         self.assertIn("✅", out)
         self.assertTrue(h.state.slots()["slot4"]["subscribed"])
         self.assertEqual(h.client.published[0]["title"], "[slot4] 确认你能收到通知")

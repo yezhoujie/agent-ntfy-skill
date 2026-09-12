@@ -28,6 +28,8 @@ import threading
 import urllib.error
 import urllib.parse
 import urllib.request
+
+import texts
 from collections.abc import Iterable
 
 BASE_URL = os.environ.get("AGENT_NTFY_URL", "https://ntfy.sh").rstrip("/")
@@ -43,11 +45,24 @@ TOPIC_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
 class NtfyError(Exception):
-    """可预期错误：参数非法、连不上、HTTP 非 2xx、响应对不上、订阅流断开。"""
+    """可预期错误：参数非法、连不上、HTTP 非 2xx、响应对不上、订阅流断开。
+
+    文案在 texts 表里（ntfy.<key>）：str(e) 是中文（日志用），text(lang) 按语言取——它会作为 {error} 进回执与 CLI 文案。
+    """
+
+    def __init__(self, key: str, **fmt):
+        self.key, self.fmt = key, fmt
+        super().__init__(self.text("zh"))
+
+    def text(self, lang: str) -> str:
+        return texts.t(f"ntfy.{self.key}", lang, **self.fmt)
 
 
 class NtfyClosed(NtfyError):
     """订阅被本进程主动关掉（Subscription.close()），不是网络故障——调用方据此决定不重连。"""
+
+    def __init__(self):
+        super().__init__("closed")
 
 
 class NtfyRateLimited(NtfyError):
@@ -60,46 +75,50 @@ def http_action(label: str, url: str, body: str, *, method: str = "POST") -> dic
     把 url 指回同一个 topic（topic_url()），点击就等于用户往这个 topic 回了一条正文为 body 的消息。
     """
     if not label or not url:
-        raise NtfyError("按钮的 label 与 url 都不能为空")
+        raise NtfyError("action.empty")
     return {"action": "http", "label": label, "url": url, "method": method, "body": body}
 
 
+NAME_KINDS = {"topic": "name.kind.topic", "sequence ID": "name.kind.seq"}
+
+
 def _check_name(kind: str, value: str) -> str:
-    """topic 名就是密码：不合法时只报长度与违规类别，不回显它。"""
+    """topic 名就是密码：不合法时只报长度与违规类别，不回显它。kind 是 "topic" / "sequence ID"。"""
+    kind_ref = texts.Ref(f"ntfy.{NAME_KINDS[kind]}")
     if not isinstance(value, str):
-        raise NtfyError(f"{kind}不是字符串（{type(value).__name__}）")
+        raise NtfyError("name.not_string", kind=kind_ref, type=type(value).__name__)
     if TOPIC_RE.fullmatch(value):  # match() 的 $ 会放过末尾换行
         return value
     if not value:
-        why = "为空"
+        why = "empty"
     elif len(value) > 64:
-        why = "超长"
+        why = "too_long"
     elif any(c in string.whitespace for c in value):
-        why = "含空白字符"
+        why = "whitespace"
     else:
-        why = "含非法字符"
-    raise NtfyError(f"{kind}不合法：{why}（长度 {len(value)}）。只能用字母、数字、- 和 _，1~64 位")
+        why = "illegal"
+    raise NtfyError("name.invalid", kind=kind_ref, why=texts.Ref(f"ntfy.name.why.{why}"), n=len(value))
 
 
 def _check_message(message: str) -> bytes:
     data = message.encode("utf-8")
     if not data:
-        raise NtfyError("正文不能为空")
+        raise NtfyError("message.empty")
     if len(data) > MAX_MESSAGE_BYTES:
-        raise NtfyError(f"正文 {len(data)} 字节，超过 {MAX_MESSAGE_BYTES} 字节 ntfy 会把它转成附件而不是当消息推送")
+        raise NtfyError("message.too_long", n=len(data), limit=MAX_MESSAGE_BYTES)
     return data
 
 
 def _check_actions(actions: Iterable[dict] | None) -> list[dict]:
     actions = list(actions or [])
     if len(actions) > MAX_ACTIONS:
-        raise NtfyError(f"按钮 {len(actions)} 个，ntfy 最多允许 {MAX_ACTIONS} 个")
+        raise NtfyError("actions.too_many", n=len(actions), limit=MAX_ACTIONS)
     for a in actions:
         if not isinstance(a, dict):
-            raise NtfyError(f"按钮不是对象（{type(a).__name__}）")
+            raise NtfyError("action.not_object", type=type(a).__name__)
         if not a.get("action") or not a.get("label"):
             # 只报字段名：url / body 里常带着 topic
-            raise NtfyError(f"按钮格式不对，至少要有 action 与 label，现有字段：{sorted(a)}")
+            raise NtfyError("action.malformed", fields=sorted(a))
     return actions
 
 
@@ -112,7 +131,7 @@ def _header_value(text: str) -> str:
     ntfy 用 Go 的 mime.WordDecoder 解码，它不限单个 word 的长度（104 字符的中文标题实测原样回显）。
     """
     if "\r" in text or "\n" in text:
-        raise NtfyError("标题不能含换行")
+        raise NtfyError("title.newline")
     if text.isascii():
         return text
     return "=?UTF-8?B?" + base64.b64encode(text.encode("utf-8")).decode("ascii") + "?="
@@ -133,13 +152,13 @@ def _same_text(sent: str | None, got) -> bool:
 def _check_echo(resp: dict, topic: str, title: str | None, action_count: int) -> None:
     """发出去的和服务端记下的必须一致，不一致就是走错了端点或编码坏了——这两种失败 HTTP 都是 200。"""
     if resp.get("topic") != topic:
-        raise NtfyError(f"服务端记的 topic 与发出的不一致：{_brief(resp)}")
+        raise NtfyError("echo.topic", brief=_brief(resp))
     if title and not _same_text(title, resp.get("title")):
-        raise NtfyError(f"标题回显不一致，发的是 {title!r}，服务端记的是 {resp.get('title')!r}")
+        raise NtfyError("echo.title", sent=repr(title), got=repr(resp.get("title")))
     if len(resp.get("actions") or []) != action_count:
-        raise NtfyError(f"服务端回显了 {len(resp.get('actions') or [])} 个按钮，发出的是 {action_count} 个——JSON 没被当 JSON 解析（发布走错了端点？）：{_brief(resp)}")
+        raise NtfyError("echo.actions", got=len(resp.get("actions") or []), sent=action_count, brief=_brief(resp))
     if "attachment" in resp:
-        raise NtfyError(f"正文被服务端转成了附件而不是消息（正文太长？）：{_brief(resp)}")
+        raise NtfyError("echo.attachment", brief=_brief(resp))
 
 
 class Subscription:
@@ -176,7 +195,7 @@ class Subscription:
         with self._lock:
             if self._finished:
                 if self._closed:
-                    raise NtfyClosed("订阅已被本进程关闭")
+                    raise NtfyClosed()
                 raise StopIteration
             while True:
                 try:
@@ -184,23 +203,23 @@ class Subscription:
                 except (OSError, ValueError, http.client.HTTPException) as e:
                     self._release()
                     if self._closed:
-                        raise NtfyClosed("订阅已被本进程关闭") from None
-                    raise NtfyError(f"订阅流断开：{e}") from e
+                        raise NtfyClosed() from None
+                    raise NtfyError("stream.broken", error=e) from e
                 if not raw:
                     # 流到头了。poll 模式是回放完的正常结束；长连接则是断线——http.client 在 chunk 边界上
                     # 遇到连接丢失会当成 EOF 而不是报错（_peek_chunked 吞掉 IncompleteRead），不在这里补一刀，
                     # daemon 就会在某次静默结束后永远等一条不会来的回复，且没有任何报错
                     self._release()
                     if self._closed:
-                        raise NtfyClosed("订阅已被本进程关闭")
+                        raise NtfyClosed()
                     if self._poll:
                         raise StopIteration
-                    raise NtfyError("订阅流被对端关闭（未超时、无异常），需要重连")
+                    raise NtfyError("stream.eof")
                 try:
                     line = raw.decode("utf-8").strip()
                 except UnicodeDecodeError:
                     self._release()
-                    raise NtfyError(f"订阅流里有一行不是 UTF-8（{len(raw)} 字节）") from None
+                    raise NtfyError("stream.not_utf8", n=len(raw)) from None
                 if not line:
                     continue
                 try:
@@ -208,10 +227,10 @@ class Subscription:
                 except json.JSONDecodeError:
                     self._release()
                     # 不带行内容：半截的 message 事件里就有 topic 名
-                    raise NtfyError(f"订阅流里有一行不是 JSON（{len(line)} 字节）") from None
+                    raise NtfyError("stream.not_json", n=len(line)) from None
                 if not isinstance(event, dict):
                     self._release()
-                    raise NtfyError(f"订阅流里有一行不是 JSON 对象（{len(line)} 字节）")
+                    raise NtfyError("stream.not_object", n=len(line))
                 return event
 
     def close(self) -> None:
@@ -283,7 +302,7 @@ class NtfyClient:
             req.add_header("Title", _header_value(title))
         resp = self._call(req)
         if resp.get("sequence_id") != seq_id:
-            raise NtfyError(f"服务端返回的 sequence_id 不是 {seq_id!r}，这条没有挂到原消息上：{_brief(resp)}")
+            raise NtfyError("update.seq_mismatch", seq=repr(seq_id), brief=_brief(resp))
         _check_echo(resp, topic, title, 0)
         return resp
 
@@ -294,9 +313,9 @@ class NtfyClient:
         req = urllib.request.Request(f"{self.base_url}/{topic}/{seq_id}/clear", method="PUT")
         resp = self._call(req)
         if resp.get("event") != "message_clear":
-            raise NtfyError(f"服务端没有返回 message_clear 事件：{_brief(resp)}")
+            raise NtfyError("clear.no_event", brief=_brief(resp))
         if resp.get("sequence_id") != seq_id:
-            raise NtfyError(f"清除事件挂在了别的 sequence 上，不是 {seq_id!r}：{_brief(resp)}")
+            raise NtfyError("clear.seq_mismatch", seq=repr(seq_id), brief=_brief(resp))
         return resp
 
     # -------- 订阅
@@ -319,7 +338,7 @@ class NtfyClient:
         """
         names = [topics] if isinstance(topics, str) else list(topics)
         if not names:
-            raise NtfyError("至少要订阅一个 topic")
+            raise NtfyError("subscribe.empty")
         for t in names:
             _check_name("topic", t)
         path = f"/{','.join(names)}/json"
@@ -357,14 +376,14 @@ class NtfyClient:
             conn.request("GET", u.path + path, headers={"Accept": "application/x-ndjson"})
             sock = conn.sock  # 建连后立刻拿；getresponse() 之后它可能已经是 None
             if sock is None:
-                raise NtfyError("建连后拿不到 socket")
+                raise NtfyError("connect.no_socket")
             resp = conn.getresponse()
             if resp.status != 200:
                 body = resp.read().decode("utf-8", "replace")
                 raise self._status_error(resp.status, resp.reason, body)
         except (OSError, http.client.HTTPException) as e:
             conn.close()
-            raise NtfyError(f"连不上 {self.base_url}：{e}") from e
+            raise NtfyError("connect.failed", url=self.base_url, error=e) from e
         except NtfyError:
             conn.close()
             raise
@@ -377,13 +396,13 @@ class NtfyClient:
         except urllib.error.HTTPError as e:
             raise self._http_error(e) from e
         except (OSError, http.client.HTTPException) as e:
-            raise NtfyError(f"连不上 {self.base_url}：{e}") from e
+            raise NtfyError("connect.failed", url=self.base_url, error=e) from e
         try:
             data = json.loads(payload)
         except json.JSONDecodeError as e:
-            raise NtfyError(f"服务端返回的不是 JSON：{payload[:200]!r}") from e
+            raise NtfyError("response.not_json", payload=repr(payload[:200])) from e
         if not isinstance(data, dict):
-            raise NtfyError(f"服务端返回的不是 JSON 对象：{payload[:200]!r}")
+            raise NtfyError("response.not_object", payload=repr(payload[:200]))
         return data
 
     def _http_error(self, e: urllib.error.HTTPError) -> NtfyError:
@@ -395,12 +414,13 @@ class NtfyClient:
 
     def _status_error(self, status: int, reason: str, body: str) -> NtfyError:
         """ntfy 的错误体是 {"code": 40018, "http": 400, "error": "..."}；带上它的 code，排查时能对官方错误码表。"""
+        detail: object
         try:
             err = json.loads(body)
-            detail = f"{err.get('error', '')}（ntfy code {err.get('code')}）"
+            detail = texts.Ref("ntfy.http.ntfy_code", error=err.get("error", ""), code=err.get("code"))
         except Exception:
             detail = body[:200]
-        msg = f"HTTP {status} {reason}" + (f"：{detail}" if detail else "")
+        msg = texts.Ref("ntfy.http.detail", status=status, reason=reason, detail=detail) if detail else texts.Ref("ntfy.http", status=status, reason=reason)
         if status == 429:
-            return NtfyRateLimited(msg + "。这是限流，不是代码错")
-        return NtfyError(msg)
+            return NtfyRateLimited("http.rate_limited", msg=msg)
+        return NtfyError(msg.key.removeprefix("ntfy."), **msg.fmt)

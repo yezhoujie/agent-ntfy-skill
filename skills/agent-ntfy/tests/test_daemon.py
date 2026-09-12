@@ -18,6 +18,7 @@ import render
 from ntfyclient import NtfyClient, NtfyClosed, NtfyError
 from state import State
 import inject
+import texts
 from tests.test_inject import FakeHerdr, herdr_error
 from tests.test_render import SAMPLE
 from tests.test_state import MemoryStore
@@ -40,7 +41,7 @@ class FakeSubscription:
     def __next__(self):
         item = self.q.get()
         if item is CLOSE:
-            raise NtfyClosed("订阅已被本进程关闭")
+            raise NtfyClosed()
         if isinstance(item, BaseException):
             raise item
         return item
@@ -65,7 +66,7 @@ class FakeNtfyClient(NtfyClient):
         self.updates = []
         self.clears = []
         self.subscriptions = []
-        self.fail_publish: str | None = None
+        self.fail_publish: NtfyError | str | None = None
         self.fail_update: str | None = None
         self.fail_subscribe = 0  # 接下来这么多次 subscribe() 抛 NtfyError（模拟网络不通、连不上）
         self.subscribe_gate: threading.Event | None = None  # 设了就让 subscribe() 卡在建连中，直到测试放行
@@ -82,7 +83,7 @@ class FakeNtfyClient(NtfyClient):
 
     def publish(self, topic, message, *, title=None, actions=None):
         if self.fail_publish:
-            raise NtfyError(self.fail_publish)
+            raise self.fail_publish if isinstance(self.fail_publish, NtfyError) else NtfyError("connect.failed", url=self.base_url, error=self.fail_publish)
         mid = self._next_id()
         self.published.append({"topic": topic, "message": message, "title": title, "actions": list(actions or []), "id": mid,
                                "timeout": self.timeout})
@@ -91,7 +92,7 @@ class FakeNtfyClient(NtfyClient):
 
     def update(self, topic, seq_id, message, *, title=None):
         if self.fail_update:
-            raise NtfyError(self.fail_update)
+            raise NtfyError("connect.failed", url=self.base_url, error=self.fail_update)
         self.updates.append({"topic": topic, "seq": seq_id, "message": message, "title": title})
         return {"id": self._next_id(), "sequence_id": seq_id, "time": int(time.time()), "event": "message", "topic": topic,
                 "title": title, "message": message}
@@ -103,7 +104,7 @@ class FakeNtfyClient(NtfyClient):
     def subscribe(self, topics, *, since=None, poll=False):  # type: ignore[override]  # 替身按鸭子类型交 FakeSubscription
         if self.fail_subscribe > 0:
             self.fail_subscribe -= 1
-            raise NtfyError("连不上")
+            raise NtfyError("connect.failed", url=self.base_url, error="连不上")
         if self.subscribe_gate is not None:
             self.subscribe_gate.wait(5)
         sub = FakeSubscription(topics, since)
@@ -129,7 +130,11 @@ class FakeNtfyClient(NtfyClient):
         return ev
 
     def drop(self, why="断线"):
-        self.subscriptions[-1].q.put(NtfyError(why))
+        self.subscriptions[-1].q.put(NtfyError("stream.broken", error=why))
+
+
+def Z(key, **fmt):
+    return texts.t(key, "zh", **fmt)
 
 
 def wait_until(cond, timeout=5, what="条件"):
@@ -143,7 +148,7 @@ def wait_until(cond, timeout=5, what="条件"):
 class Harness:
     """临时 home 里起一个 daemon（后台线程），用真实的 unix socket 协议与它说话。"""
 
-    def __init__(self, case, *, subscribed=("slot1", "slot2", "slot3", "slot4", "slot5"), pool_size=5, **kw):
+    def __init__(self, case, *, subscribed=("slot1", "slot2", "slot3", "slot4", "slot5"), pool_size=5, lang="zh", **kw):
         self.tmp = tempfile.TemporaryDirectory()
         case.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name) / "home"
@@ -154,7 +159,7 @@ class Harness:
             self.state.mark_subscribed(slot)
         self.client = FakeNtfyClient()
         self.herdr = kw.pop("herdr", None) or FakeHerdr()  # 替身：任何用例都不许碰真 herdr（往活着的 pane 注会打扰它）
-        self.daemon = daemon.Daemon(self.home, client=self.client, store=self.store, pool_size=pool_size, herdr=self.herdr, **kw)
+        self.daemon = daemon.Daemon(self.home, client=self.client, store=self.store, pool_size=pool_size, herdr=self.herdr, lang=lang, **kw)  # 显式 zh：既有用例断言的都是中文文案
         self.thread = threading.Thread(target=self.daemon.run, daemon=True)
         self.thread.start()
         case.addCleanup(self.stop)
@@ -185,7 +190,7 @@ class Harness:
         events = agent_ntfy.read_events(sock)
         return sock, next(events), events
 
-    def ask(self, *, leased_by="wD:p1", tag: str | None = "wD:p1", timeout=30, payload=None):
+    def ask(self, *, leased_by="wD:p1", tag: str | None = "wD:p1", timeout: float = 30, payload=None):
         """发 ask 并读到 sent（或首个终态事件），把连接交回去继续读。"""
         sock = self.connect()
         agent_ntfy.send_request(sock, {"cmd": "ask", "payload": payload or SAMPLE, "leased_by": leased_by, "tag": tag, "timeout": timeout})
@@ -206,6 +211,7 @@ class AskFlowTest(unittest.TestCase):
         self.assertEqual(pub["title"], "[wD:p1] " + SAMPLE["title"])
         self.assertEqual(pub["actions"][0]["url"], h.client.topic_url(h.topic("slot1")))
         self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot1"]["state"], "已租用·活跃")
+        self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot1"]["state_key"], "active")
         # 手机回复
         h.client.message(h.topic("slot1"), "留固定目录")
         reply = next(events)
@@ -216,9 +222,10 @@ class AskFlowTest(unittest.TestCase):
         # 立刻移出 active；卡片 update + clear
         wait_until(lambda: len(h.client.clears) == 1, what="clear 被调用")
         self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot1"]["state"], "已租用·空闲")
+        self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot1"]["state_key"], "idle")
         upd = h.client.updates[-1]
         self.assertEqual(upd["seq"], pub["id"])
-        self.assertEqual(upd["title"], render.ANSWERED_PREFIX + pub["title"])
+        self.assertEqual(upd["title"], Z("prefix.answered") + pub["title"])
         self.assertTrue(upd["message"].startswith("【你的回复】留固定目录\n"))
         self.assertEqual(h.client.clears[-1]["seq"], pub["id"])
 
@@ -346,9 +353,9 @@ class AskFlowTest(unittest.TestCase):
 
     def test_tag_is_truncated_not_rejected(self):
         h = Harness(self)
-        sock, first, events = h.ask(tag="标" * 20)  # 60 字节，预算 44
+        sock, first, events = h.ask(tag="标" * 20)  # 60 字节，预算 41 ⇒ 截到 13 个字（39 字节）
         self.assertEqual(first["event"], "sent")
-        self.assertTrue(h.client.published[-1]["title"].startswith("[" + "标" * 14 + "] "))
+        self.assertTrue(h.client.published[-1]["title"].startswith("[" + "标" * 13 + "] "))
         sock.close()
 
     def test_tag_defaults_to_slot_name_outside_herdr(self):
@@ -404,6 +411,7 @@ class CommandsTest(unittest.TestCase):
         wait_until(lambda: len(h.client.clears) == 1)
         self.assertEqual(h.request(cmd="release", leased_by="wD:p1")[0], {"event": "released", "slot": "slot1"})
         self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot1"]["state"], "未分配")
+        self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot1"]["state_key"], "unassigned")
         st = h.request(cmd="status")[0]
         self.assertEqual(st["event"], "status")
         self.assertEqual(st["pid"], os.getpid())
@@ -625,7 +633,7 @@ class SubscriptionTest(unittest.TestCase):
 
         class BrokenStore(MemoryStore):
             def load(self):
-                raise StateError("读钥匙串条目失败（rc=1）")
+                raise StateError("keychain.read_failed", service="x", rc=1, detail="")
 
         d = daemon.Daemon(home, client=FakeNtfyClient(), store=BrokenStore())
         with self.assertRaises(daemon.DaemonError) as cm:
@@ -716,9 +724,9 @@ class ConfirmTest(unittest.TestCase):
         pub = h.client.published[-1]
         self.assertEqual(sent, {"event": "sent", "slot": "slot4", "id": pub["id"]})
         self.assertEqual(pub["title"], "[slot4] 确认你能收到通知")
-        self.assertEqual([a["label"] for a in pub["actions"]], [inject.CONFIRM_LABEL])
+        self.assertEqual([a["label"] for a in pub["actions"]], [Z("confirm.button")])
         self.assertEqual(pub["actions"][0]["body"], "__agent-ntfy:confirmed:slot4__")
-        self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot4"]["state"], "确认中")
+        self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot4"]["state_key"], "confirming")
         self.assertEqual(h.request(cmd="status")[0]["confirming"], 1)
         # 手机点按钮
         h.client.message(h.topic("slot4"), inject.control_mark("confirmed", "slot4"))
@@ -729,7 +737,7 @@ class ConfirmTest(unittest.TestCase):
         wait_until(lambda: len(h.client.clears) == 1, what="卡片 clear")
         self.assertTrue(h.state.slots()["slot4"]["subscribed"])
         upd = h.client.updates[-1]
-        self.assertEqual((upd["seq"], upd["title"]), (pub["id"], inject.CONFIRMED_PREFIX + pub["title"]))
+        self.assertEqual((upd["seq"], upd["title"]), (pub["id"], Z("prefix.confirmed") + pub["title"]))
         self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot4"]["state"], "未分配")  # 确认不租用
         self.assertEqual(h.request(cmd="status")[0]["confirming"], 0)
         self.assertEqual(h.herdr.calls, [])  # 标记不注入
@@ -818,7 +826,7 @@ class ConfirmTest(unittest.TestCase):
         self.assertIn("按钮", warn["message"])
         self.assertFalse(h.state.slots()["slot4"]["subscribed"])
         self.assertEqual(h.herdr.calls, [])  # 没有目标 agent 可注
-        self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot4"]["state"], "确认中")
+        self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot4"]["state_key"], "confirming")
         h.client.message(h.topic("slot4"), inject.control_mark("confirmed", "slot4"))
         self.assertEqual(next(events)["event"], "confirmed")
         sock.close()
@@ -829,7 +837,7 @@ class ConfirmTest(unittest.TestCase):
         self.assertEqual(next(events), {"event": "timeout"})
         sock.close()
         wait_until(lambda: len(h.client.clears) == 1)
-        self.assertEqual(h.client.updates[-1]["title"], daemon.TIMEOUT_PREFIX + "[slot4] 确认你能收到通知")
+        self.assertEqual(h.client.updates[-1]["title"], Z("prefix.timeout") + "[slot4] 确认你能收到通知")
         self.assertFalse(h.state.slots()["slot4"]["subscribed"])
         self.assertEqual(h.request(cmd="status")[0]["confirming"], 0)
 
@@ -846,7 +854,7 @@ class ConfirmTest(unittest.TestCase):
         sock, events, sent = self.start(h, "slot4")
         sock.close()
         wait_until(lambda: len(h.client.clears) == 1, what="卡片 clear")
-        self.assertEqual(h.client.updates[-1]["title"], daemon.CANCELLED_PREFIX + "[slot4] 确认你能收到通知")
+        self.assertEqual(h.client.updates[-1]["title"], Z("prefix.cancelled") + "[slot4] 确认你能收到通知")
         self.assertEqual(h.request(cmd="status")[0]["confirming"], 0)
         # 之后到达的标记已无效：丢弃、不注入、不改状态
         h.client.message(h.topic("slot4"), inject.control_mark("confirmed", "slot4"))
@@ -864,7 +872,7 @@ class ConfirmTest(unittest.TestCase):
         self.assertIn("确认", ev["message"])
         # 手机上的「释放这个槽位」同样拒绝
         h.client.message(h.topic("slot1"), inject.control_mark("release", "slot1"))
-        wait_until(lambda: any(p["title"].startswith(inject.NOT_RELEASED_PREFIX) for p in h.client.published), what="未释放说明")
+        wait_until(lambda: any(p["title"].startswith(Z("prefix.not_released")) for p in h.client.published), what="未释放说明")
         self.assertEqual(h.state.slots()["slot1"]["leased_by"], "wD:p1")
         sock.close()
 
@@ -927,7 +935,7 @@ class ConfirmTest(unittest.TestCase):
     def test_mark_subscribed_failure_is_an_error_and_card_is_closed(self):
         h = Harness(self, subscribed=())
         sock, events, sent = self.start(h, "slot4")
-        h.daemon.state.mark_subscribed = lambda slot: (_ for _ in ()).throw(daemon.StateError("磁盘满"))  # type: ignore[union-attr]
+        h.daemon.state.mark_subscribed = lambda slot: (_ for _ in ()).throw(daemon.StateError("leases.write_failed", path="x", error="磁盘满"))  # type: ignore[union-attr]
         h.client.message(h.topic("slot4"), inject.control_mark("confirmed", "slot4"))
         ev = next(events)
         self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "state", True))
@@ -967,7 +975,7 @@ class ConfirmTest(unittest.TestCase):
         def fail_once(*a, **k):  # 第一次发失败、第二次能成——同包里的第二个 ready 不能再发一张没人等的卡片
             if h.client.fail_publish:
                 h.client.fail_publish = None
-                raise NtfyError("暂时不通")
+                raise NtfyError("connect.failed", url="x", error="暂时不通")
             return orig(*a, **k)
 
         h.client.fail_publish = "暂时不通"
@@ -1010,7 +1018,7 @@ class ConfirmTest(unittest.TestCase):
         ev = next(events)
         self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "daemon_stopping", True))
         sock.close()
-        self.assertEqual(h.client.updates[-1]["title"], daemon.CANCELLED_PREFIX + "[slot4] 确认你能收到通知")
+        self.assertEqual(h.client.updates[-1]["title"], Z("prefix.cancelled") + "[slot4] 确认你能收到通知")
         self.assertEqual(h.client.clears[-1]["seq"], sent["id"])
 
     def test_unconfirmed_and_full_messages_follow_the_agreed_wording(self):
@@ -1052,7 +1060,7 @@ class InjectTest(unittest.TestCase):
         pub = h.client.published[0]
         self.assertEqual(pub["topic"], h.topic("slot4"))
         self.assertEqual(pub["title"], "[slot4] 消息未送达")
-        self.assertEqual([a["label"] for a in pub["actions"]], [inject.IGNORE_LABEL])
+        self.assertEqual([a["label"] for a in pub["actions"]], [Z("receipt.button.ignore")])
         self.assertEqual(pub["actions"][0]["body"], "__agent-ntfy:ignore:slot4__")
         self.assertNotIn("没人租", pub["message"])
         self.assertEqual(h.herdr.calls, [])  # 没租约：herdr 一次都没调
@@ -1069,9 +1077,9 @@ class InjectTest(unittest.TestCase):
         wait_until(lambda: len(h.client.published) == 1, what="回执发出")
         pub = h.client.published[0]
         self.assertEqual(pub["title"], f"[{slot}] 消息未送达")
-        self.assertEqual([a["label"] for a in pub["actions"]], [inject.RELEASE_LABEL, inject.IGNORE_LABEL])
+        self.assertEqual([a["label"] for a in pub["actions"]], [Z("receipt.button.release"), Z("receipt.button.ignore")])
         self.assertIn("wX:p9", pub["message"])
-        self.assertIn(inject.NOT_DELIVERED_LINE, pub["message"])
+        self.assertIn(Z("receipt.not_delivered"), pub["message"])
         self.assertEqual([c[1:3] for c in h.herdr.calls], [["pane", "list"]])  # 核实存在性，但没 prompt
         # 点「释放这个槽位」
         h.client.message(h.topic(slot), inject.control_mark("release", slot))
@@ -1079,7 +1087,7 @@ class InjectTest(unittest.TestCase):
         self.assertIsNone(h.state.slots()[slot]["leased_by"])
         upd = h.client.updates[-1]
         self.assertEqual(upd["seq"], pub["id"])
-        self.assertEqual(upd["title"], inject.RELEASED_PREFIX + pub["title"])
+        self.assertEqual(upd["title"], Z("prefix.released") + pub["title"])
         self.assertEqual(h.client.clears[-1]["seq"], pub["id"])
         self.assertEqual(len(h.client.published), 1)  # 标记本身没有变成新回执，也没被注入
         self.assertEqual([c[1:3] for c in h.herdr.calls], [["pane", "list"]])
@@ -1095,7 +1103,7 @@ class InjectTest(unittest.TestCase):
         wait_until(lambda: len(h.client.clears) == 1, what="回执被 clear")
         self.assertEqual(h.state.slots()[slot]["leased_by"], "wX:p9")
         upd = h.client.updates[-1]
-        self.assertEqual((upd["seq"], upd["title"]), (pub["id"], inject.IGNORED_PREFIX + pub["title"]))
+        self.assertEqual((upd["seq"], upd["title"]), (pub["id"], Z("prefix.ignored") + pub["title"]))
         self.assertEqual(len(h.daemon._own_ids), known + 2)  # update 与 clear 各返回一个新 id，都要登记：回显时才认得出不是回复
 
     def test_mark_for_another_slot_is_a_plain_message(self):
@@ -1116,7 +1124,7 @@ class InjectTest(unittest.TestCase):
         wait_until(lambda: len(h.client.published) == 2, what="无按钮的说明发出（内存里没有这条回执）")
         notice = h.client.published[-1]
         self.assertEqual(notice["actions"], [])
-        self.assertTrue(notice["title"].startswith(inject.NOT_RELEASED_PREFIX), notice["title"])
+        self.assertTrue(notice["title"].startswith(Z("prefix.not_released")), notice["title"])
         self.assertEqual(h.request(cmd="slots")[0]["slots"][slot]["state"], "已租用·活跃")
         # ask 仍在等；真回复到达才结束
         h.client.message(h.topic(slot), "真回复")
@@ -1135,7 +1143,7 @@ class InjectTest(unittest.TestCase):
         h.client.message(h.topic(slot), inject.control_mark("release", slot))
         wait_until(lambda: len(h.client.clears) == 1, what="回执更新并 clear")
         upd = h.client.updates[-1]
-        self.assertEqual((upd["seq"], upd["title"]), (pub["id"], inject.NOT_RELEASED_PREFIX + pub["title"]))
+        self.assertEqual((upd["seq"], upd["title"]), (pub["id"], Z("prefix.not_released") + pub["title"]))
         self.assertIn("正在使用中", upd["message"])
         self.assertEqual(h.state.slots()[slot]["leased_by"], "wD:p1")
         h.client.message(h.topic(slot), "真回复")
@@ -1150,7 +1158,7 @@ class InjectTest(unittest.TestCase):
         wait_until(lambda: len(h.client.published) == 1, what="无按钮的说明发出")
         notice = h.client.published[0]
         self.assertEqual(notice["actions"], [])
-        self.assertTrue(notice["title"].startswith(inject.RELEASED_PREFIX))
+        self.assertTrue(notice["title"].startswith(Z("prefix.released")))
         self.assertIsNone(h.state.slots()[slot]["leased_by"])
         self.assertEqual(h.client.updates, [])
         self.assertIn(notice["id"], h.daemon._own_ids)
@@ -1160,7 +1168,7 @@ class InjectTest(unittest.TestCase):
         h.client.message(h.topic("slot4"), inject.control_mark("release", "slot4"))
         wait_until(lambda: len(h.client.published) == 1)
         notice = h.client.published[0]
-        self.assertTrue(notice["title"].startswith(inject.NOT_RELEASED_PREFIX), notice["title"])
+        self.assertTrue(notice["title"].startswith(Z("prefix.not_released")), notice["title"])
         self.assertIn("没有租约", notice["message"])
 
     def test_prompt_failure_receipt_carries_code(self):
@@ -1172,7 +1180,7 @@ class InjectTest(unittest.TestCase):
         pub = h.client.published[0]
         self.assertIn("agent_blocked", pub["message"])
         self.assertNotIn("在吗", pub["message"])
-        self.assertEqual([a["label"] for a in pub["actions"]], [inject.RELEASE_LABEL, inject.IGNORE_LABEL])
+        self.assertEqual([a["label"] for a in pub["actions"]], [Z("receipt.button.release"), Z("receipt.button.ignore")])
 
     def test_kimi_wake_failure_receipt_has_only_ignore(self):
         h = Harness(self)
@@ -1181,7 +1189,7 @@ class InjectTest(unittest.TestCase):
         h.client.message(h.topic(slot), "在吗")
         wait_until(lambda: len(h.client.published) == 1, what="回执发出")
         pub = h.client.published[0]
-        self.assertEqual([a["label"] for a in pub["actions"]], [inject.IGNORE_LABEL])
+        self.assertEqual([a["label"] for a in pub["actions"]], [Z("receipt.button.ignore")])
         self.assertIn("agent_not_found", pub["message"])
         self.assertEqual([c[1:3] for c in h.herdr.calls], [["pane", "list"], ["agent", "prompt"], ["agent", "send-keys"]])
 
@@ -1227,7 +1235,7 @@ class InjectTest(unittest.TestCase):
         wait_until(lambda: len(h.client.clears) == 1, what="第一张回执被 clear")
         upd = h.client.updates[-1]
         self.assertEqual(upd["seq"], first["id"])
-        self.assertEqual(upd["title"], inject.SUPERSEDED_PREFIX + first["title"])
+        self.assertEqual(upd["title"], Z("prefix.superseded") + first["title"])
         self.assertEqual(h.client.clears[-1]["seq"], first["id"])
         # 之后点「忽略」改的是第二张
         second = h.client.published[1]
@@ -1258,7 +1266,7 @@ class InjectTest(unittest.TestCase):
         inflight = by_title[f"[{slot}] 消息可能未送达"]
         self.assertIn("无法确认", inflight["message"])
         for p in pubs:
-            self.assertEqual([a["label"] for a in p["actions"]], [inject.IGNORE_LABEL])
+            self.assertEqual([a["label"] for a in p["actions"]], [Z("receipt.button.ignore")])
             self.assertEqual(p["timeout"], daemon.STOP_RECEIPT_TIMEOUT)  # 关停路径每条最多等 5 秒，不用 30 秒
             self.assertNotIn("排队的", p["message"])
         log = (h.home / "daemon.log").read_text(encoding="utf-8")
@@ -1282,8 +1290,8 @@ class InjectTest(unittest.TestCase):
         h.stop()
         pubs = h.client.published
         self.assertEqual(len(pubs), 1, [p["title"] for p in pubs])
-        self.assertEqual((pubs[0]["title"], pubs[0]["message"]), (f"[{slot}] 消息未送达", inject.STOPPING_LINE))
-        self.assertEqual([a["label"] for a in pubs[0]["actions"]], [inject.IGNORE_LABEL])
+        self.assertEqual((pubs[0]["title"], pubs[0]["message"]), (f"[{slot}] 消息未送达", Z("receipt.stopping")))
+        self.assertEqual([a["label"] for a in pubs[0]["actions"]], [Z("receipt.button.ignore")])
         self.assertEqual(pubs[0]["timeout"], daemon.STOP_RECEIPT_TIMEOUT)
         log = (h.home / "daemon.log").read_text(encoding="utf-8")
         self.assertRegex(log, r"WARNING .*id=late-x")
@@ -1336,7 +1344,7 @@ class InjectTest(unittest.TestCase):
         h.client.message(h.topic("slot1"), "在吗")
         wait_until(lambda: len(h.client.published) == 1, what="回执发出")
         pub = h.client.published[0]
-        self.assertIn(inject.UNCERTAIN_LINE, pub["message"])
+        self.assertIn(Z("receipt.uncertain"), pub["message"])
         self.assertNotIn(str(h.home), pub["message"])  # 本机路径不上手机
         self.assertEqual(h.request(cmd="status")[0]["event"], "status")  # daemon 还活着
 

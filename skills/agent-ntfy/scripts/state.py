@@ -32,6 +32,8 @@ from datetime import datetime
 from enum import Enum
 from pathlib import Path
 
+import texts
+
 KEYCHAIN_SERVICE = os.environ.get("AGENT_NTFY_KEYCHAIN", "AGENT_NTFY_TOPICS")
 KEYCHAIN_ACCOUNT = "agent-ntfy"  # 钥匙串条目的 -a，只是标识，不参与任何逻辑
 DEFAULT_PREFIX = os.environ.get("AGENT_NTFY_TOPIC_PREFIX", "agent-ntfy")
@@ -52,7 +54,17 @@ HEX_RUN_RE = re.compile(r"[0-9a-fA-F]{32,}")
 
 
 class StateError(Exception):
-    """状态层的可预期错误：槽位不存在、状态不允许该操作、密钥存储读写失败。"""
+    """状态层的可预期错误：槽位不存在、状态不允许该操作、密钥存储读写失败。
+
+    文案在 texts 表里（state.<key>）：str(e) 是中文（日志用），text(lang) 按语言取——这些报错会经 daemon 到 CLI 给人看。
+    """
+
+    def __init__(self, key: str, **fmt):
+        self.key, self.fmt = key, fmt
+        super().__init__(self.text("zh"))
+
+    def text(self, lang: str) -> str:
+        return texts.t(f"state.{self.key}", lang, **self.fmt)
 
 
 class NeedsUserDecision(StateError):
@@ -64,7 +76,10 @@ class NeedsUserDecision(StateError):
 
     def __init__(self, candidates):
         self.candidates = list(candidates)
-        super().__init__(f"全部槽位已租用，可替换的空闲槽位：{self.candidates or '无'}")
+        super().__init__("all_leased")
+
+    def text(self, lang: str) -> str:
+        return texts.t("state.all_leased", lang, candidates=str(self.candidates) if self.candidates else texts.t("state.none", lang))
 
 
 class SlotState(Enum):
@@ -114,9 +129,9 @@ class KeychainStore(SecretStore):
     NOT_FOUND_RC = 44
 
     def __init__(self, service=KEYCHAIN_SERVICE, account=KEYCHAIN_ACCOUNT):
-        for label, value in (("服务名", service), ("账户名", account)):
+        for label, value in (("service", service), ("account", account)):
             if not KEYCHAIN_NAME_RE.fullmatch(value or ""):
-                raise StateError(f"钥匙串{label}不合法：{value!r}（只能用字母、数字、. _ -）")
+                raise StateError("keychain.bad_name", label=texts.Ref(f"state.keychain.label.{label}"), value=repr(value))
         self.service = service
         self.account = account
 
@@ -125,20 +140,20 @@ class KeychainStore(SecretStore):
 
     def _fail(self, what, r):
         detail = HEX_RUN_RE.sub("<hex>", r.stderr.strip().splitlines()[0] if r.stderr.strip() else "")
-        raise StateError(f"{what}钥匙串条目 '{self.service}' 失败（rc={r.returncode}）：{detail}")
+        raise StateError(what, service=self.service, rc=r.returncode, detail=detail)
 
     def load(self):
         r = self._run(["security", "find-generic-password", "-a", self.account, "-s", self.service, "-w"])
         if r.returncode == self.NOT_FOUND_RC:
             return None
         if r.returncode != 0:
-            self._fail("读", r)
+            self._fail("keychain.read_failed", r)
         try:
             topics = json.loads(r.stdout.strip())
         except json.JSONDecodeError as e:
-            raise StateError(f"钥匙串条目 '{self.service}' 里的内容不是 JSON 数组：{e}") from e
+            raise StateError("keychain.not_json", service=self.service, error=e) from e
         if not isinstance(topics, list) or not all(isinstance(t, str) for t in topics):
-            raise StateError(f"钥匙串条目 '{self.service}' 里的内容不是字符串数组")
+            raise StateError("keychain.not_str_array", service=self.service)
         return topics
 
     def save(self, topics):
@@ -146,9 +161,9 @@ class KeychainStore(SecretStore):
         payload = json.dumps(topics).encode("utf-8").hex()
         r = self._run(["security", "add-generic-password", "-U", "-a", self.account, "-s", self.service, "-X", payload])
         if r.returncode != 0:
-            self._fail("写", r)
+            self._fail("keychain.write_failed", r)
         if self.load() != topics:
-            raise StateError(f"钥匙串条目 '{self.service}' 写入后回读与写入内容不一致，池子未更新")
+            raise StateError("keychain.readback_mismatch", service=self.service)
 
 
 # ---------------------------------------------------------------- 状态
@@ -157,7 +172,7 @@ def _slot_index(slot):
     """'slot3' -> 3；形态不对抛 StateError。"""
     m = SLOT_RE.fullmatch(slot or "")
     if not m:
-        raise StateError(f"槽位名不合法：{slot!r}（应形如 slot1）")
+        raise StateError("slot.bad_name", slot=repr(slot))
     return int(m.group(1))
 
 
@@ -173,7 +188,7 @@ def _now():
 def _require(leases, slot):
     if slot not in leases:
         _slot_index(slot)  # 形态不对先报形态
-        raise StateError(f"槽位 {slot} 不存在（池子里只有 {len(leases)} 个）")
+        raise StateError("slot.missing", slot=slot, n=len(leases))
 
 
 def _state_of(rec, is_active):
@@ -186,7 +201,7 @@ def _check_active(leases, active):
     """活跃 = 有提问挂着等回复，前提是有租约；活跃集合里出现未分配或不存在的槽位，说明调用方的状态和文件已经对不上。"""
     for slot in active:
         if slot not in leases or not leases[slot]["leased_by"]:
-            raise StateError(f"活跃槽位 {slot} 在租约文件里不是已租用状态，状态不一致，拒绝操作")
+            raise StateError("active.not_leased", slot=slot)
 
 
 class State:
@@ -199,9 +214,9 @@ class State:
     def __init__(self, store: SecretStore, leases_path: Path = LEASES_PATH, *,
                  prefix: str = DEFAULT_PREFIX, pool_size: int = DEFAULT_POOL_SIZE):
         if not TOPIC_PREFIX_RE.fullmatch(prefix):
-            raise StateError(f"topic 前缀不合法：{prefix!r}（只能用字母、数字、- 和 _，最长 40 位）")
+            raise StateError("prefix.bad", prefix=repr(prefix))
         if pool_size < 1:
-            raise StateError(f"池子至少要有 1 个槽位，给的是 {pool_size}")
+            raise StateError("pool.too_small", pool_size=pool_size)
         self.store = store
         self.leases_path = Path(leases_path)
         self.prefix = prefix
@@ -234,7 +249,7 @@ class State:
         topics = self.topics()
         i = _slot_index(slot)
         if i > len(topics):
-            raise StateError(f"槽位 {slot} 不存在（池子里只有 {len(topics)} 个）")
+            raise StateError("slot.missing", slot=slot, n=len(topics))
         return topics[i - 1]
 
     def add_slot(self):
@@ -254,9 +269,9 @@ class State:
             try:
                 data = json.loads(self.leases_path.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as e:
-                raise StateError(f"读租约文件 {self.leases_path} 失败：{e}") from e
+                raise StateError("leases.read_failed", path=self.leases_path, error=e) from e
             if not isinstance(data, dict):
-                raise StateError(f"租约文件 {self.leases_path} 不是 JSON 对象")
+                raise StateError("leases.not_object", path=self.leases_path)
         leases = {}
         for slot in self.slot_names():
             rec = _empty_record()
@@ -279,7 +294,7 @@ class State:
                 fh.write("\n")
             os.replace(tmp, self.leases_path)
         except OSError as e:
-            raise StateError(f"写租约文件 {self.leases_path} 失败：{e}") from e
+            raise StateError("leases.write_failed", path=self.leases_path, error=e) from e
 
     # -------- 查询
 
@@ -319,14 +334,14 @@ class State:
         _check_active(leases, active)
         st = _state_of(leases[slot], slot in active)
         if st is SlotState.ACTIVE:
-            raise StateError(f"槽位 {slot} 正有提问等回复，不能替换")
+            raise StateError("replace.active", slot=slot)
         if st is SlotState.UNASSIGNED:
-            raise StateError(f"槽位 {slot} 没有租约，直接 acquire 即可，不需要替换")
+            raise StateError("replace.unassigned", slot=slot)
         return self._grant(leases, slot, leased_by)
 
     def _grant(self, leases, slot, leased_by):
         if not leased_by:
-            raise StateError("leased_by 不能为空（要写清楚谁在用这个槽位）")
+            raise StateError("grant.empty_owner")
         leases[slot]["leased_by"] = leased_by
         leases[slot]["leased_at"] = _now()
         self._save_leases(leases)
@@ -342,9 +357,9 @@ class State:
         _require(leases, slot)
         _check_active(leases, active)
         if slot in active:
-            raise StateError(f"槽位 {slot} 正有提问等回复，不能释放")
+            raise StateError("release.active", slot=slot)
         if not leases[slot]["leased_by"]:
-            raise StateError(f"槽位 {slot} 没有租约，无需释放")
+            raise StateError("release.unassigned", slot=slot)
         leases[slot]["leased_by"] = None
         leases[slot]["leased_at"] = None
         self._save_leases(leases)
