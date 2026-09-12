@@ -15,7 +15,7 @@
     add-slot                新建一个槽位（之后要 confirm-sub）
 
 confirm-sub / release / add-slot 的退出码: 0 成功 / 1 槽位名不对 / 2 超时没点按钮（confirm-sub）/ 3 通道故障（daemon 没跑、状态文件读写失败、发布失败）
-    / 4 需要人介入（confirm-sub 在非终端且没给 --subscribed；槽位正忙）/ 130 被 Ctrl-C 中断
+    / 4 需要人介入（confirm-sub 在非终端且没给 --subscribed；confirm-sub 的槽位正忙）/ 130 被 Ctrl-C 中断；release 撞上活跃槽位或无租约是 3
 
 ask 的退出码（三种结局不能都表现为空输出）:
     0  拿到回复，stdout 是回复原文（末尾一个换行）
