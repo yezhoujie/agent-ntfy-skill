@@ -16,7 +16,7 @@
 5. 第一条提问，从头到尾
 6. 手机不弹通知怎么办（Android / MIUI 排查清单）
 7. 安全须知
-8. 已知边界
+8. 已知边界（8.1 支持哪些 agent CLI）
 9. 环境变量
 10. 已知行为
 11. CLI 参考
@@ -33,7 +33,7 @@ agent ──ask（stdin 里的 JSON）──▶ agent-ntfy ──unix socket─�
 ```
 
 - agent 交来一段含 8 个必填字段的 JSON；CLI 把它渲染成固定版式的卡片、**只带一个按钮**（「采纳推荐」）并推送。agent 阻塞等你点按钮或打字，你的回复原样返回给它。
-- 常驻 **daemon** 是唯一的 ntfy 订阅者。没有提问在等的时候你发的任何内容，会作为一句普通指令注入 agent 的会话（这一步需要 [herdr](https://herdr.dev)；没装的话你会在手机上收到一条「未送达」回执）。
+- 常驻 **daemon** 是唯一的 ntfy 订阅者。没有提问在等的时候你发的任何内容，会作为一句普通指令注入 agent 的会话（只有这一步需要 herdr；不装时哪些能用见 §2）。
 - 每个 agent（一个 herdr 窗格，或你配置的目标标识）租用一个**槽位** = 池子里的一个随机 ntfy topic，池子存在 macOS 钥匙串里。回复按 topic 路由。
 - 通路只搬运文字：不解释、不代答、不去重。
 
@@ -42,8 +42,22 @@ agent ──ask（stdin 里的 JSON）──▶ agent-ntfy ──unix socket─�
 - macOS（topic 池存钥匙串；暂无 Linux 后端）
 - Python 3.10 或更新——只用标准库，不用 `pip install` 任何东西
 - 手机上装 [ntfy app](https://ntfy.sh)；不需要 ntfy.sh 账号。实测环境是 Android（MIUI）；ntfy 也有 iOS 版，本项目未测
-- 可选：[herdr](https://herdr.dev)，要「手机 → agent」下指令才需要；没有它，「agent → 手机」的提问照常可用
 - 能出站 HTTPS 访问 `ntfy.sh`（或你自建的实例）。daemon **不读** `http_proxy` / `https_proxy` 与系统代理；对进程透明的 TUN 型 VPN 可以
+- [herdr](https://herdr.dev)，推荐——见下
+
+### herdr：能装就先装；不装的话哪些能用、哪些不能
+
+[herdr](https://herdr.dev) 是本 skill 用来把文字送*进* agent 会话的终端复用器（`brew install herdr`；文档 https://herdr.dev）。它是唯一可选的一环，不装时留下什么、失去什么如下：
+
+| 不装 herdr 也能用 | 必须有 herdr |
+|---|---|
+| `ask` 整条链路：手机上出卡片 → 点按钮或打字 → 回复回到 stdout → 退出码 | 手机 → agent 的消息：没有提问在等时你主动发的指令，或者回一张已经超时 / 已取消的旧卡片 |
+| daemon 与其余全部子命令：`confirm-sub`、`slots`、`release`、`add-slot` | |
+| 提问方身份用 `AGENT_NTFY_TARGET`（没设就是主机名 + 会话 id）而不是 herdr 窗格 id，卡片标题里的 `[tag]` 是槽位名而不是窗格 id | |
+
+这种消息不会静默丢掉。daemon 会在手机上回一张回执，标题「[slotN] 消息未送达」，正文是「这个槽位绑定的目标 <target> 不在 herdr 里（<why>），无法注入。」加一行「你刚才发的内容没有送达任何 agent。」，带「释放这个槽位」/「忽略」两个按钮。
+
+为什么非 herdr 不可：注入就是往目标 agent 的终端（PTY）里写一行文本，`herdr agent prompt` 是对任何 agent CLI 都通用的唯一办法；本 skill 没有别的兜底机制。
 
 ## 3. 安装
 
@@ -151,7 +165,16 @@ JSON
 - ntfy.sh 缓存消息 12 小时；手机离线超过这个时长就收不到。`ask` 默认超时也是 12 小时，同一个理由。
 - 一张卡片一个按钮，2–5 个选项，正文 ≤ 3584 字节，title ≤ 960 字节。超限会带着实际数字被拒绝，不截断。
 - daemon 不认代理环境变量（见 §2）。
-- 手机 → agent 的注入需要 herdr。它不判断 agent 忙不忙（你的 CLI 自己排队），但会核实那个窗格还在。
+- 手机 → agent 的注入需要 herdr（§2）。它不判断 agent 忙不忙（你的 CLI 自己排队），但会核实那个窗格还在。
+
+### 8.1 支持哪些 agent CLI
+
+两个方向，两个不同的答案。
+
+- **提问侧（agent → 手机 → agent）**：任何能跑 shell 命令的 agent CLI 都行，机器上有 Python 3.10 或更新即可。没有名单；skill 只依赖 stdin、stdout 和退出码。
+- **注入侧（手机 → agent，需要 herdr）**：herdr 能托管的 agent 种类。herdr 0.9.0 的 `herdr agent start --help` 列了 23 种：pi、claude、codex、gemini、cursor、devin、agy、cline、omp、mastracode、opencode、copilot、kimi、kiro、droid、amp、grok、hermes、kilo、qodercli、qwen、maki、muse。daemon 读窗格的 agent 种类、按种类唤醒目标：`claude` 只发 `herdr agent prompt`（文本并进它当前那一轮）；`kimi` 先 `prompt` 再补 `ctrl+s`（不补这一下它只排队、忙着时不读）；其余种类只发 `prompt`，**未实测**。
+
+真机实测过的：**claude**（提问与注入，含断网后回放、daemon 重启后注入）与 **kimi**（注入与唤醒；`ask` 验证到租到槽位那一步）。其它种类按 herdr 文档理论可用，未实际跑过。
 
 ## 9. 环境变量
 

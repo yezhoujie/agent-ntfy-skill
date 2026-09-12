@@ -18,7 +18,7 @@ you never need to explain the tool to it.
 5. First question, end to end
 6. If nothing pops up on the phone (Android / MIUI checklist)
 7. Security
-8. Known limits
+8. Known limits (8.1 which agent CLIs work)
 9. Environment variables
 10. Known behaviours
 11. CLI reference
@@ -35,7 +35,7 @@ agent ──ask (JSON on stdin)──▶ agent-ntfy ──unix socket──▶ d
 ```
 
 - The agent hands over a JSON with eight required fields; the CLI renders it into a fixed card with **one** button ("Accept recommended") and pushes it. The agent blocks until you tap or type; your reply is returned verbatim.
-- A resident **daemon** is the only ntfy subscriber. Anything you send while no question is pending is injected into the agent's session as a plain instruction (this needs [herdr](https://herdr.dev); without it you get a "not delivered" receipt on the phone instead).
+- A resident **daemon** is the only ntfy subscriber. Anything you send while no question is pending is injected into the agent's session as a plain instruction (this is the one part that needs herdr; §2 lists what works without it).
 - Each agent (a herdr pane, or a configured target id) leases one **slot** = one random ntfy topic out of a pool kept in the macOS keychain. Replies are routed by topic.
 - The channel carries text; it never interprets it, never answers for you, never dedupes.
 
@@ -44,8 +44,22 @@ agent ──ask (JSON on stdin)──▶ agent-ntfy ──unix socket──▶ d
 - macOS (the topic pool lives in the keychain; there is no Linux backend yet)
 - Python 3.10 or newer — standard library only, nothing to `pip install`
 - The [ntfy app](https://ntfy.sh) on your phone; no ntfy.sh account needed. Tested on Android (MIUI); ntfy also ships an iOS app, untested here
-- Optional: [herdr](https://herdr.dev) if you want phone → agent instructions; without it, agent → phone questions still work
 - Outbound HTTPS to `ntfy.sh` (or your own instance). The daemon does **not** read `http_proxy` / `https_proxy` or the system proxy; a TUN-style VPN that is transparent to processes is fine
+- [herdr](https://herdr.dev), recommended — see below
+
+### herdr: install it first if you can, and what works without it
+
+[herdr](https://herdr.dev) is the terminal multiplexer this skill uses to deliver text *into* an agent's session (`brew install herdr`; docs at https://herdr.dev). It is the only piece that is optional, and this is exactly what you keep and lose without it:
+
+| works without herdr | needs herdr |
+|---|---|
+| The whole `ask` round trip: card on the phone → tap or type → reply on stdout → exit code | Phone → agent messages when no question is waiting: an instruction you send on your own initiative, or a reply to a card that has already timed out or been cancelled |
+| The daemon and every other subcommand: `confirm-sub`, `slots`, `release`, `add-slot` | |
+| The asking agent is identified by `AGENT_NTFY_TARGET` (unset: hostname + session id) instead of a herdr pane id, and the `[tag]` in card titles is the slot name rather than the pane id | |
+
+Such a message is never dropped silently. The daemon answers on the phone with a receipt titled `[slotN] Message not delivered` whose body is `This slot's target <target> is not inside herdr (<why>); nothing to inject into.` followed by `What you just sent did not reach any agent.`, with `Release slot` / `Ignore` buttons.
+
+Why herdr and nothing else: injecting means writing a line of text into the target agent's terminal (its PTY), and `herdr agent prompt` is the one generic way to do that for any agent CLI; this skill has no fallback mechanism.
 
 ## 3. Install
 
@@ -160,7 +174,16 @@ Other Android ROMs have the same switches under different names; only MIUI has b
 - Messages are cached 12 hours on ntfy.sh; a phone offline longer than that misses them. The default `ask` timeout is 12 hours for the same reason.
 - One button per card, 2–5 options, body ≤ 3584 bytes, title ≤ 960 bytes. Over-length input is rejected with the exact numbers, never truncated.
 - The daemon ignores proxy environment variables (see §2).
-- Phone → agent injection needs herdr. It never checks whether the agent is busy (your CLI queues input); it does check that the pane still exists.
+- Phone → agent injection needs herdr (§2). It never checks whether the agent is busy (your CLI queues input); it does check that the pane still exists.
+
+### 8.1 Which agent CLIs work
+
+Two sides, two different answers.
+
+- **Asking (agent → phone → agent)**: any agent CLI that can run a shell command, with Python 3.10 or newer on the machine. There is no list; the skill only needs stdin, stdout and an exit code.
+- **Injection (phone → agent, needs herdr)**: whichever agent kinds herdr can host. On herdr 0.9.0 `herdr agent start --help` lists 23: pi, claude, codex, gemini, cursor, devin, agy, cline, omp, mastracode, opencode, copilot, kimi, kiro, droid, amp, grok, hermes, kilo, qodercli, qwen, maki, muse. The daemon reads the pane's agent kind and wakes the target accordingly: `claude` gets `herdr agent prompt` only (the text joins its current turn); `kimi` gets `prompt` followed by `ctrl+s` (without the key press it queues the text and does not read it while busy); every other kind gets `prompt` only, **untested**.
+
+Tested on real sessions: **claude** (asking and injection, including replay after a network outage and injection after a daemon restart) and **kimi** (injection with wake-up; `ask` verified as far as leasing a slot). All other kinds are expected to work per herdr's documentation but have not been exercised.
 
 ## 9. Environment variables
 
