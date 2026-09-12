@@ -137,6 +137,27 @@ Same table as README §9, kept here so the agent need not open the README.
 
 `--home <dir>` on the command line overrides `AGENT_NTFY_HOME` and must come before the subcommand.
 
+### The per-project state file: `<project root>/.agent-ntfy/state.json`
+
+Written by the CLI, read by the agent (and by whatever rule the user keeps about remote mode). Project
+root is the git toplevel, or the cwd when not in a git repository; a worktree or a submodule is its own
+root and gets its own file. The directory carries its own
+`.gitignore` (`*`), so git never sees it and the project's own `.gitignore` is not touched.
+
+| field | written by | meaning |
+|---|---|---|
+| `away` | `away on` / `away off` | the human is away and wants decisions on the phone |
+| `slot` | `ask` (on `sent` or on the unconfirmed-slot error), `confirm-sub`, `release` (sets `null`) | the slot this project currently leases |
+| `confirmed` | same commands | whether that slot has passed `confirm-sub` |
+| `target` | `away on`, `ask` | identity of whoever last ran `away on` or `ask` here (pane id inside herdr, otherwise `AGENT_NTFY_TARGET` / host + session id); informational, `release` leaves it |
+| `updated` | every write | local time, ISO 8601 |
+
+`away on` creates the directory; the other commands only update the file when the directory already
+exists, so projects that never enabled remote mode get no directory. `release <slot>` and
+`confirm-sub <slot>` touch the file only when that slot is the one recorded there. Writes are
+atomic but unlocked: two simultaneous writers are last-writer-wins. `away status` prints it in words,
+`away status --json` verbatim. The topic name is never written here.
+
 ## 8. Language of the fixed wording
 
 Resolution, highest first: the `lang` field of the `ask` JSON (that card and all its later updates) →

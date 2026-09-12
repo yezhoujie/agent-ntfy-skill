@@ -18,6 +18,7 @@
 7. 安全须知
 8. 已知边界（8.1 支持哪些 agent CLI）
 9. 环境变量
+9.1 远程模式与项目级状态文件
 10. 已知行为
 11. CLI 参考
 
@@ -190,6 +191,24 @@ JSON
 
 命令行的 `--home <目录>`（放在子命令前面）覆盖 `AGENT_NTFY_HOME`。
 
+### 9.1 远程模式与项目级状态文件
+
+skill 不决定 agent **什么时候**该往手机问——那是你的策略（写在你 agent 的配置 / 规则里）。skill 给这条策略的是一个开关和一个能读的落点：
+
+```
+agent-ntfy away on        # 我走了：要拍板的事推到手机
+agent-ntfy away off       # 我回来了
+agent-ntfy away status    # 人读；加 --json 打印原文
+```
+
+`away on` 在 `<项目根>/.agent-ntfy/` 建目录（项目根 = git 仓根，不在仓里就是当前目录），目录自带 `.gitignore`（内容 `*`，git 看不到它，你仓里的 `.gitignore` 不动），内有 `state.json`：
+
+```json
+{"away": true, "slot": "slot2", "confirmed": true, "target": "wG:p1", "updated": "2026-09-12T21:04:11+08:00"}
+```
+
+`slot` / `confirmed` / `target` 由 `ask`、`confirm-sub`、`release` 顺手刷新——但**只在目录已存在的项目里**，没启用过远程模式的项目不会被建目录。topic 名永远不写进去。一条典型的规则是：*`.agent-ntfy/state.json` 里 `away: true` ⇒ 一切要我拍板的事用 `agent-ntfy ask`；后台跑（前台工具调用几分钟就会被杀、卡片作废）；做完 `release`。*
+
 ## 10. 已知行为
 
 真机观察到的，都不是 bug。
@@ -208,13 +227,13 @@ JSON
 
 ```
 usage: agent-ntfy [-h] [--home HOME]
-                  {ask,daemon,slots,release,confirm-sub,add-slot} ...
+                  {ask,daemon,slots,release,confirm-sub,add-slot,away} ...
 
 Push decisions that need a human to your phone via ntfy.sh, and bring the
 verdict back
 
 positional arguments:
-  {ask,daemon,slots,release,confirm-sub,add-slot}
+  {ask,daemon,slots,release,confirm-sub,add-slot,away}
     ask                 block and ask: reads the question JSON from stdin
     daemon              the resident subscriber process
     slots               show the slot pool and leases
@@ -223,6 +242,9 @@ positional arguments:
                         notifications for this slot (run it in a terminal by
                         default; it shows the topic name)
     add-slot            add a slot
+    away                remote-mode switch: writes .agent-ntfy/state.json at
+                        the project root for the agent to read (no topic name
+                        in it)
 
 options:
   -h, --help            show this help message and exit
@@ -247,6 +269,9 @@ usage: agent-ntfy confirm-sub [-h] [--again] [--subscribed] [--show-topic] [--ti
   --timeout TIMEOUT  seconds to wait for the button tap (default 600)
 
 usage: agent-ntfy release [-h] [slot]     slot to release; omit to release the one leased by the current target
+
+usage: agent-ntfy away [-h] [--json] {on,off,status}     on / off / status
+  --json      with status: print state.json verbatim (for the agent)
 ```
 
 `ask` 的退出码：0 回复在 stdout · 1 输入不合格，什么都没发 · 2 超时 · 3 通道故障（daemon 没跑、连接断开、发布失败；stderr 写明消息发没发出去）· 4 需要人介入（槽位未确认、槽位全被租用、该目标已有提问在等）· 130 Ctrl-C。`confirm-sub`：0 已确认 · 1 槽位名不对 · 2 没按时点按钮 · 3 通道故障 · 4 不在终端里（且没给 `--subscribed`）或槽位正忙。各种情况的 stderr 原文见 [references/failures.md](references/failures.md)（英文）。

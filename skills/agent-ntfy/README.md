@@ -20,6 +20,7 @@ you never need to explain the tool to it.
 7. Security
 8. Known limits (8.1 which agent CLIs work)
 9. Environment variables
+9.1 Remote mode and the per-project state file
 10. Known behaviours
 11. CLI reference
 
@@ -199,6 +200,30 @@ Tested on real sessions: **claude** (asking and injection, including replay afte
 
 `--home <dir>` on the command line (before the subcommand) overrides `AGENT_NTFY_HOME`.
 
+### 9.1 Remote mode and the per-project state file
+
+The skill does not decide *when* the agent should ask on the phone; that is your policy (a rule in
+your agent's configuration). What the skill gives that policy is a switch and a place to read it:
+
+```
+agent-ntfy away on        # you are leaving: decisions should go to the phone
+agent-ntfy away off       # you are back
+agent-ntfy away status    # in words; add --json for the raw file
+```
+
+`away on` creates `<project root>/.agent-ntfy/` (project root = the git toplevel, else the current
+directory) with a self-ignoring `.gitignore` and a `state.json`:
+
+```json
+{"away": true, "slot": "slot2", "confirmed": true, "target": "wG:p1", "updated": "2026-09-12T21:04:11+08:00"}
+```
+
+`slot` / `confirmed` / `target` are refreshed by `ask`, `confirm-sub` and `release` — but only in
+projects where the directory already exists, so nothing is written into projects that never enabled
+remote mode. The topic name is never stored there. A typical rule reads: *if `.agent-ntfy/state.json`
+says `away: true`, use `agent-ntfy ask` for anything that needs my decision; run it in the background
+(a foreground tool call is killed after minutes and the card is cancelled); `release` when done.*
+
 ## 10. Known behaviours
 
 Observed on a real phone; none is a bug.
@@ -215,13 +240,13 @@ Observed on a real phone; none is a bug.
 
 ```
 usage: agent-ntfy [-h] [--home HOME]
-                  {ask,daemon,slots,release,confirm-sub,add-slot} ...
+                  {ask,daemon,slots,release,confirm-sub,add-slot,away} ...
 
 Push decisions that need a human to your phone via ntfy.sh, and bring the
 verdict back
 
 positional arguments:
-  {ask,daemon,slots,release,confirm-sub,add-slot}
+  {ask,daemon,slots,release,confirm-sub,add-slot,away}
     ask                 block and ask: reads the question JSON from stdin
     daemon              the resident subscriber process
     slots               show the slot pool and leases
@@ -230,6 +255,9 @@ positional arguments:
                         notifications for this slot (run it in a terminal by
                         default; it shows the topic name)
     add-slot            add a slot
+    away                remote-mode switch: writes .agent-ntfy/state.json at
+                        the project root for the agent to read (no topic name
+                        in it)
 
 options:
   -h, --help            show this help message and exit
@@ -254,6 +282,9 @@ usage: agent-ntfy confirm-sub [-h] [--again] [--subscribed] [--show-topic] [--ti
   --timeout TIMEOUT  seconds to wait for the button tap (default 600)
 
 usage: agent-ntfy release [-h] [slot]     slot to release; omit to release the one leased by the current target
+
+usage: agent-ntfy away [-h] [--json] {on,off,status}     on / off / status
+  --json      with status: print state.json verbatim (for the agent)
 ```
 
 Exit codes of `ask`: 0 reply on stdout · 1 invalid input, nothing sent · 2 timeout · 3 channel failure (daemon not running, connection lost, publish failed; stderr says whether the message went out) · 4 a human must act (unconfirmed slot, all slots leased, target already waiting) · 130 Ctrl-C. `confirm-sub`: 0 confirmed · 1 unknown slot · 2 no tap in time · 3 channel failure · 4 not a terminal (and no `--subscribed`) or slot busy. The stderr text for each case is in [references/failures.md](references/failures.md).

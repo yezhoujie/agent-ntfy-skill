@@ -704,7 +704,7 @@ class Daemon:
             self._reply_once(c, {"event": "error", "kind": "busy", "sent": False, "message": texts.t("daemon.busy.confirming", lang, slot=lease.slot)})
             return
         if not lease.subscribed:
-            self._reply_once(c, {"event": "error", "kind": "unconfirmed", "sent": False, "message": texts.t("daemon.unconfirmed", lang, slot=lease.slot)})
+            self._reply_once(c, {"event": "error", "kind": "unconfirmed", "sent": False, "slot": lease.slot, "message": texts.t("daemon.unconfirmed", lang, slot=lease.slot)})
             return
         if not isinstance(tag, str) or not tag:
             tag = lease.slot

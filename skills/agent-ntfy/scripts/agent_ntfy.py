@@ -47,6 +47,7 @@ import time
 from collections.abc import Iterator
 from pathlib import Path
 
+import projstate
 import texts
 import validate
 
@@ -172,6 +173,7 @@ def cmd_ask(args) -> int:
             kind = ev.get("event")
             if kind == "sent":
                 sent = True
+                projstate.note(slot=ev.get("slot"), confirmed=True, target=leased_by)  # 发出去了 ⇒ 这个槽位已过闸
             elif kind == "warning":
                 err(texts.t("cli.reminder", lang, message=ev.get("message")))
             elif kind == "reply":
@@ -183,6 +185,8 @@ def cmd_ask(args) -> int:
             elif kind == "error":
                 sent = bool(ev.get("sent", sent))
                 err(texts.t("cli.ask.error_sent" if sent else "cli.ask.error_not_sent", lang, message=ev.get("message")))
+                if ev.get("kind") == "unconfirmed" and ev.get("slot"):
+                    projstate.note(slot=ev["slot"], confirmed=False, target=leased_by)  # 租到了但没过闸：让 agent 知道该确认哪个
                 if ev.get("kind") == "no_free_slot":
                     for cand in ev.get("candidates") or []:
                         gate = texts.t("cli.ask.candidate.confirmed" if cand.get("subscribed") else "cli.ask.candidate.unconfirmed", lang)
@@ -241,6 +245,7 @@ def cmd_release(args) -> int:
         err(str(ev.get("message")))
         return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
     print(texts.t("cli.released", lang, slot=ev["slot"]))
+    projstate.note_released(ev["slot"], explicit=bool(args.slot))
     return 0
 
 
@@ -276,6 +281,7 @@ def cmd_confirm_sub(args) -> int:
             kind = ev.get("event")
             if kind == "already_confirmed":
                 print(texts.t("cli.confirm.already", lang, slot=slot))
+                projstate.note_confirmed(slot)
                 return 0
             elif kind == "topic":
                 if args.subscribed:
@@ -299,6 +305,7 @@ def cmd_confirm_sub(args) -> int:
                 err(texts.t("cli.reminder", lang, message=ev.get("message")))
             elif kind == "confirmed":
                 print(texts.t("cli.confirm.done", lang, slot=slot))
+                projstate.note_confirmed(slot)
                 return 0
             elif kind == "timeout":
                 err(texts.t("cli.confirm.timeout" if sent else "cli.confirm.timeout_no_enter", lang, seconds=f"{args.timeout:g}"))
@@ -327,6 +334,46 @@ def cmd_add_slot(args) -> int:
         err(str(ev.get("message")))
         return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
     print(texts.t("cli.add_slot.done", lang, slot=ev["slot"]))
+    return 0
+
+
+# ---------------------------------------------------------------- away：项目级状态文件
+
+def cmd_away(args) -> int:
+    """远程交互模式开关。状态落在项目根 .agent-ntfy/state.json（不含 topic 名），给 agent 在任何会话里读。"""
+    lang = env_lang()
+    try:
+        root = projstate.project_root()
+        if args.action in ("on", "off"):
+            if args.action == "off" and not projstate.exists(root):
+                print(texts.t("cli.away.not_enabled", lang))  # 没开过就没什么可关的，也不留目录
+                return 0
+            st = projstate.save(root, away=(args.action == "on"), target=identity()[0])
+            print(texts.t("cli.away.state.on" if st["away"] else "cli.away.state.off", lang))
+            print(texts.t("cli.away.path", lang, path=projstate.state_path(root)))
+            return 0
+        enabled = projstate.exists(root)
+        st = projstate.load(root) if enabled else {}
+    except OSError as e:
+        err(texts.t("cli.away.io_failed", lang, error=describe(e, lang)))
+        return EXIT_CHANNEL
+    if args.json:
+        print(json.dumps(st, ensure_ascii=False))
+        return 0
+    if not enabled:
+        print(texts.t("cli.away.not_enabled", lang))
+        return 0
+    print(texts.t("cli.away.state.on" if st.get("away") else "cli.away.state.off", lang))
+    if st.get("slot"):
+        gate = texts.t("cli.slots.gate.confirmed" if st.get("confirmed") else "cli.slots.gate.unconfirmed", lang)
+        print(texts.t("cli.away.slot", lang, slot=st["slot"], gate=gate))
+    else:
+        print(texts.t("cli.away.slot.none", lang))
+    if st.get("target"):
+        print(texts.t("cli.away.target", lang, target=st["target"]))
+    if st.get("updated"):
+        print(texts.t("cli.away.updated", lang, updated=st["updated"]))
+    print(texts.t("cli.away.path", lang, path=projstate.state_path(root)))
     return 0
 
 
@@ -466,6 +513,10 @@ def build_parser(lang: str) -> argparse.ArgumentParser:
     c.add_argument("--timeout", type=positive_seconds_in(lang), default=CONFIRM_TIMEOUT, help=h("confirm.timeout"))
     c.set_defaults(fn=cmd_confirm_sub)
     sub.add_parser("add-slot", help=h("add_slot")).set_defaults(fn=cmd_add_slot)
+    w = sub.add_parser("away", help=h("away"))
+    w.add_argument("action", choices=("on", "off", "status"), help=h("away.action"))
+    w.add_argument("--json", action="store_true", help=h("away.json"))
+    w.set_defaults(fn=cmd_away)
     return p
 
 

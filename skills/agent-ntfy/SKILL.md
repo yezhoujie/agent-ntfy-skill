@@ -131,11 +131,28 @@ Anything the human types in the phone app while no question is pending is inject
 as a plain instruction (it is the user speaking; there is no prefix or envelope). You do nothing to
 receive it. If delivery is impossible, the human gets a receipt on the phone, not you.
 
+## Remote mode and the per-project state file
+
+Whether to route decisions to the phone is the caller's policy (a rule in the user's own config, not
+this skill). The switch and the current slot live in `<project root>/.agent-ntfy/state.json`
+(project root = the git toplevel, else the cwd), written by `away on|off`
+and refreshed by `ask` / `confirm-sub` / `release`. Read it with `away status --json`:
+
+```json
+{"away": true, "slot": "slot2", "confirmed": true, "target": "wG:p1", "updated": "2026-09-12T21:04:11+08:00"}
+```
+
+`away: true` means the human is away and expects decisions on the phone. `slot` is the lease this
+project currently holds (`null` until the first `ask`); `confirmed: false` means that slot still needs
+`confirm-sub`. The file never contains the topic name. If the directory is absent, the project has
+never enabled remote mode and nothing is written.
+
 ## Housekeeping
 
 - One target (your pane inside herdr; otherwise `AGENT_NTFY_TARGET` or host + session id) holds one
   slot, and one question at a time. Leases never expire on their own.
 - When your task ends, run `release` (no argument releases your own slot). `slots` shows the pool.
+- `release` also clears `slot` in the state file; `away off` is the human's call, not yours.
 
 ## References
 
