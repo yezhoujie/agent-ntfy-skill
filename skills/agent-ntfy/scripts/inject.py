@@ -1,10 +1,12 @@
-"""注入层：把用户从手机发来的话原样送进目标 agent 的窗格；送不到时说清为什么。
+"""注入层：把用户从手机发来的话送进目标 agent 的窗格；送不到时说清为什么。
 
-    手机 → topic → daemon（无 pending）→ deliver() ──herdr agent prompt <pane_id> '<原文>'──▶ 目标 agent
+    手机 → topic → daemon（无 pending）→ deliver() ──herdr agent prompt <pane_id> '[agent-ntfy remote] <原文>'──▶ 目标 agent
                                               └─ 送不到 → 回执（[<slot>] 消息未送达 + 控制按钮）→ 手机
 
-只做通路：正文一个字不改、不加前缀、不判断目标忙不忙（AI CLI 自己会排队）。要判断的只有「目标在不在」——
-租约是懒释放的，租约看着有效而它指向的 pane 早已消失是常态，不是边缘情况。
+只做通路：只加来源前缀（REMOTE_PREFIX，让 agent 知道这条来自远程通道），原文本身一个字不改、不判断目标忙不忙
+（AI CLI 自己会排队）。要判断的只有「目标在不在」——租约是懒释放的，租约看着有效而它指向的 pane 早已消失是常态，
+不是边缘情况。前缀是协议（与控制标记、[<tag>] 同类）：不翻译、不进文案表；刻意不用 `from:` 开头——那是多 agent 组队里
+成员消息的约定，用它会让统筹的那个 agent 把用户的话当成陌生成员的。
 
 能力判定按 herdr CLI 的调用结果，不按环境变量：daemon 可能是 --detach 起的、环境里没有 HERDR_*，
 但 herdr 本身在跑。实测（herdr 0.9.0）：`env -i PATH=… HOME=… herdr pane list` 照样 rc=0——
@@ -27,7 +29,10 @@ herdr 不认 `--` 分隔符（会把它当 TARGET）；TEXT 位置上以 `-` 开
 import json
 import logging
 import re
+import shlex
+import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -36,6 +41,7 @@ from ntfyclient import http_action
 from render import SEPARATOR, Rendered, bold_first_line
 
 HERDR = "herdr"
+REMOTE_PREFIX = "[agent-ntfy remote] "  # 注入正文前的来源标记（协议）
 # 三条命令都是本机 unix socket IPC，实测毫秒级返回；prompt 不带 --wait，提交即返回、不追踪回合。
 # 15 秒够熬过机器卡顿，又不至于让工作线程被一条投递挂死。
 HERDR_TIMEOUT = 15.0
@@ -99,7 +105,13 @@ def run_herdr(argv: list[str], *, timeout: float = HERDR_TIMEOUT) -> HerdrResult
     """跑一条 herdr 命令，不抛：命令不存在 → rc 127；超时 → rc 124 且 timed_out。正文只进 argv，不经 shell。
 
     stdin 接 /dev/null：daemon 前台跑时 stdin 是终端，子进程若继承它、又碰巧等输入，就会挂满整个超时。
+    win32 上先用 shutil.which 定位可执行名（herdr.exe / herdr.cmd），CreateProcess 不会自己补扩展名。
     """
+    if sys.platform == "win32" and argv and argv[0] == HERDR:
+        resolved = shutil.which(HERDR)
+        if resolved is None:
+            return HerdrResult(rc=RC_NOT_FOUND, stdout="", stderr=f"{HERDR}: command not found", timeout=timeout)
+        argv = [resolved, *argv[1:]]
     try:
         r = subprocess.run(argv, capture_output=True, text=True, errors="replace", timeout=timeout,
                            stdin=subprocess.DEVNULL)  # stderr 不是合法 UTF-8 也不抛
@@ -123,6 +135,33 @@ def parse_panes(stdout: str) -> list[dict] | None:
     return [p for p in panes if isinstance(p, dict)]
 
 
+# ---------------------------------------------------------------- 窗格（CLI 侧用：开确认窗格 / 起 daemon；daemon 不用）
+
+def split_pane(cwd: str, pane_id: str, *, run: Runner = run_herdr) -> str | None:
+    """在 pane_id 下方开一个新窗格（cwd 指定、不抢焦点），返回新窗格的 pane_id；开不出来（rc 非 0 / 输出不是预期形态）就 None。"""
+    r = run([HERDR, "pane", "split", "--pane", pane_id, "--direction", "down", "--cwd", cwd, "--no-focus"])
+    if not r.ok:
+        return None
+    try:
+        obj = json.loads(r.stdout)
+    except ValueError:
+        return None
+    result = obj.get("result") if isinstance(obj, dict) else None
+    pane = result.get("pane") if isinstance(result, dict) else None
+    new_id = pane.get("pane_id") if isinstance(pane, dict) else None
+    return new_id if isinstance(new_id, str) and new_id else None
+
+
+def run_in_pane(pane_id: str, argv: list[str], *, run: Runner = run_herdr) -> bool:
+    """往窗格里敲一条命令并回车。`pane run` 把各参数按空格拼接后原样敲进窗格 shell、不做任何引用（实测 herdr 0.9.0：
+    `x'y` 会挂在 quote>、`$HOME` 会被展开），所以 argv 逐个按该平台 shell 的规则引用、合成一个参数传过去。"""
+    def quote(a: str) -> str:
+        # 以 = 开头的词 shlex.quote 不加引号，而 zsh 会对它做等值展开（=ls → /bin/ls）：强制单引号包住
+        return "'" + a.replace("'", "'\\''") + "'" if a.startswith("=") else shlex.quote(a)
+    command = subprocess.list2cmdline(argv) if sys.platform == "win32" else " ".join(quote(a) for a in argv)
+    return run([HERDR, "pane", "run", pane_id, command]).ok
+
+
 # ---------------------------------------------------------------- 投递
 
 @dataclass(frozen=True)
@@ -140,32 +179,33 @@ class Outcome:
     lang: str  # 回执用的语言；必填，漏传在构造点就炸
 
 
-def deliver(slot: str, leased_by: str | None, text: str, *, run: Runner, lang: str) -> Outcome:
-    """把 text 注进 slot 的租约指向的 pane。同步、会阻塞在子进程上——调用方放工作线程里跑。lang 只管回执文案。"""
-    if not leased_by:
+def deliver(slot: str, pane: str | None, text: str, *, run: Runner, lang: str) -> Outcome:
+    """把 text 注进 slot 的租约记的窗格 pane。同步、会阻塞在子进程上——调用方放工作线程里跑。lang 只管回执文案。"""
+    if not pane:
         return Outcome(False, "no_lease", None, None, texts.t("receipt.no_lease", lang, slot=slot), lang)
     listing = run([HERDR, "pane", "list"])
     panes = parse_panes(listing.stdout) if listing.ok else None
     if panes is None:
         why = listing.summary(lang) if not listing.ok else texts.t("receipt.no_herdr.bad_output", lang)
-        return Outcome(False, "no_herdr", leased_by, None, texts.t("receipt.no_herdr", lang, target=leased_by, why=why), lang)
-    pane = next((p for p in panes if p.get("pane_id") == leased_by), None)
-    if pane is None:  # 租约指向的窗格关掉了，或这个目标本来就不是 herdr 窗格（非 herdr 身份 host:…|sid:…）——两种都送不到
-        return Outcome(False, "pane_missing", leased_by, None, texts.t("receipt.pane_missing", lang, target=leased_by), lang)
-    agent = pane.get("agent")
+        return Outcome(False, "no_herdr", pane, None, texts.t("receipt.no_herdr", lang, target=pane, why=why), lang)
+    found = next((p for p in panes if p.get("pane_id") == pane), None)
+    if found is None:  # 租约指向的窗格已经关掉了
+        return Outcome(False, "pane_missing", pane, None, texts.t("receipt.pane_missing", lang, target=pane), lang)
+    agent = found.get("agent")
     cli = agent if isinstance(agent, str) and agent else None
     if cli is None:
-        LOG.info("目标 %s 没有检测到 agent 种类，按只 prompt 处理", leased_by)
-    prompted = run([HERDR, "agent", "prompt", leased_by, text])  # TARGET 用 pane_id；正文原样、不加 from:（这条真的就是用户发的）
+        LOG.info("目标 %s 没有检测到 agent 种类，按只 prompt 处理", pane)
+    # TARGET 用 pane_id；正文只加来源前缀，原文本身一个字不改、不加 from:（这条真的就是用户发的）
+    prompted = run([HERDR, "agent", "prompt", pane, REMOTE_PREFIX + text])
     if prompted.timed_out:
-        return Outcome(False, "prompt_timeout", leased_by, cli, texts.t("receipt.prompt_timeout", lang, target=leased_by, why=prompted.summary(lang)), lang)
+        return Outcome(False, "prompt_timeout", pane, cli, texts.t("receipt.prompt_timeout", lang, target=pane, why=prompted.summary(lang)), lang)
     if not prompted.ok:
-        return Outcome(False, "prompt_failed", leased_by, cli, texts.t("receipt.prompt_failed", lang, target=leased_by, why=prompted.summary(lang)), lang)
+        return Outcome(False, "prompt_failed", pane, cli, texts.t("receipt.prompt_failed", lang, target=pane, why=prompted.summary(lang)), lang)
     if cli == "kimi":
-        woken = run([HERDR, "agent", "send-keys", leased_by, KIMI_WAKE_KEY])
+        woken = run([HERDR, "agent", "send-keys", pane, KIMI_WAKE_KEY])
         if not woken.ok:
-            return Outcome(False, "wake_failed", leased_by, cli, texts.t("receipt.wake_failed", lang, target=leased_by, why=woken.summary(lang)), lang)
-    return Outcome(True, "delivered", leased_by, cli, "", lang)
+            return Outcome(False, "wake_failed", pane, cli, texts.t("receipt.wake_failed", lang, target=pane, why=woken.summary(lang)), lang)
+    return Outcome(True, "delivered", pane, cli, "", lang)
 
 
 # ---------------------------------------------------------------- 控制标记

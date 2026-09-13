@@ -6,6 +6,7 @@ herdr 用可替换的调用器替身：记录 argv、按预置返回 rc / stdout
 
 import json
 import re
+import shlex
 import unittest
 
 import inject
@@ -29,6 +30,9 @@ def herdr_error(cmd: str, code: str, message: str = "") -> str:
     return json.dumps({"id": f"cli:{cmd}", "error": {"code": code, "message": message or code}})
 
 
+SPLIT_STDOUT = json.dumps({"id": "cli:pane:split", "result": {"pane": {"pane_id": "wD:p7", "workspace_id": "wD"}, "type": "pane_info"}})  # herdr 0.9.0 实物
+
+
 class FakeHerdr:
     """按子命令预置结果的调用器。calls 记录每次 argv，顺序就是调用顺序。"""
 
@@ -37,6 +41,8 @@ class FakeHerdr:
         self.list_result = HerdrResult(rc=0, stdout=panes_stdout, stderr="")
         self.prompt_result = HerdrResult(rc=0, stdout='{"id":"cli:agent:prompt","result":{"agent":{},"type":"agent_prompted"}}', stderr="")
         self.keys_result = HerdrResult(rc=0, stdout='{"id":"cli:agent:send-keys","result":{"agent":{},"type":"agent_keys_sent"}}', stderr="")
+        self.split_result = HerdrResult(rc=0, stdout=SPLIT_STDOUT, stderr="")
+        self.run_result = HerdrResult(rc=0, stdout="", stderr="")  # pane run 成功时 stdout 为空（实测）
 
     def __call__(self, argv: list[str]) -> HerdrResult:
         self.calls.append(list(argv))
@@ -47,6 +53,10 @@ class FakeHerdr:
             return self.prompt_result
         if sub == ("agent", "send-keys"):
             return self.keys_result
+        if sub == ("pane", "split"):
+            return self.split_result
+        if sub == ("pane", "run"):
+            return self.run_result
         raise AssertionError(f"没预置的 herdr 调用：{argv}")
 
     def subcommands(self) -> list[str]:
@@ -109,14 +119,17 @@ class DeliverTest(unittest.TestCase):
         self.assertEqual(out.reason, "pane_missing")
         self.assertIn("host:mac|sid:123 不在 herdr 的窗格列表里", out.detail)
 
-    def test_claude_gets_prompt_only_with_pane_id_and_raw_text(self):
+    def test_claude_gets_prompt_with_pane_id_and_prefixed_text(self):
         fake = FakeHerdr()
         out = inject.deliver("slot1", "wD:p1", TEXT, run=fake, lang="zh")
         self.assertTrue(out.delivered)
         self.assertEqual(out.reason, "delivered")
         self.assertEqual(out.cli, "claude")
         self.assertEqual(fake.subcommands(), ["pane list", "agent prompt"])
-        self.assertEqual(fake.calls[1], ["herdr", "agent", "prompt", "wD:p1", TEXT])  # TARGET 是 pane_id，正文原样、不加 from:
+        # TARGET 是 pane_id；正文只加来源前缀（协议，不翻译），原文一个字不改、不加 from:
+        self.assertEqual(inject.REMOTE_PREFIX, "[agent-ntfy remote] ")
+        self.assertEqual(fake.calls[1], ["herdr", "agent", "prompt", "wD:p1", "[agent-ntfy remote] " + TEXT])
+        self.assertEqual(fake.calls[1][4], inject.REMOTE_PREFIX + TEXT)
 
     def test_kimi_gets_prompt_then_ctrl_s_in_that_order(self):
         fake = FakeHerdr()
@@ -169,6 +182,53 @@ class DeliverTest(unittest.TestCase):
         self.assertIn("agent_not_found", out.detail)
         self.assertIn("再发一次", out.detail)
         self.assertEqual(fake.subcommands(), ["pane list", "agent prompt", "agent send-keys"])
+
+
+class PaneHelpersTest(unittest.TestCase):
+    """CLI 侧的两个 herdr helper：开一个新窗格、往窗格里敲一条命令。daemon 不用它们。"""
+
+    def test_split_pane_returns_new_pane_id(self):
+        fake = FakeHerdr()
+        self.assertEqual(inject.split_pane("/w/proj", "wD:p1", run=fake), "wD:p7")
+        self.assertEqual(fake.calls, [["herdr", "pane", "split", "--pane", "wD:p1", "--direction", "down", "--cwd", "/w/proj", "--no-focus"]])
+
+    def test_split_pane_failure_is_none(self):
+        fake = FakeHerdr()
+        fake.split_result = HerdrResult(rc=1, stdout="", stderr=herdr_error("pane:split", "pane_not_found"))
+        self.assertIsNone(inject.split_pane("/w/proj", "wX:p9", run=fake))
+        fake.split_result = HerdrResult(rc=0, stdout="not json", stderr="")
+        self.assertIsNone(inject.split_pane("/w/proj", "wD:p1", run=fake))
+        fake.split_result = HerdrResult(rc=0, stdout='{"id":"cli:pane:split","result":{"type":"pane_info"}}', stderr="")
+        self.assertIsNone(inject.split_pane("/w/proj", "wD:p1", run=fake))
+        fake.split_result = HerdrResult(rc=124, stdout="", stderr="", timed_out=True)
+        self.assertIsNone(inject.split_pane("/w/proj", "wD:p1", run=fake))
+
+    # pane run 把各参数按空格拼起来原样敲进窗格 shell、不做引用（实测）：argv 逐个 quote 后合成一个参数传过去
+    def test_run_in_pane_quotes_argv_into_one_shell_word_list(self):
+        fake = FakeHerdr()
+        argv = ["/usr/bin/python3", "/w/my proj/agent_ntfy.py", "--home", "/Users/x/.agent-ntfy", "confirm-sub", "slot2", "it's"]
+        self.assertTrue(inject.run_in_pane("wD:p7", argv, run=fake))
+        self.assertEqual(len(fake.calls), 1)
+        self.assertEqual(fake.calls[0][:4], ["herdr", "pane", "run", "wD:p7"])
+        self.assertEqual(len(fake.calls[0]), 5)  # 整条命令是一个参数
+        self.assertEqual(shlex.split(fake.calls[0][4]), argv)  # 经 shell 拆回来仍是原 argv：空格 / 单引号都没走样
+        self.assertNotIn("$", fake.calls[0][4])
+
+    # 以 = 开头的词 shlex.quote 不会加引号，而 zsh 会对它做等值展开（=ls → /bin/ls）：这类词强制用单引号包住
+    def test_run_in_pane_quotes_words_starting_with_equals(self):
+        fake = FakeHerdr()
+        self.assertTrue(inject.run_in_pane("wD:p7", ["echo", "=ls", "a=b", "=it's"], run=fake))
+        command = fake.calls[0][4]
+        self.assertIn("'=ls'", command)
+        self.assertIn(" a=b ", " " + command + " ")  # 不以 = 开头的照旧
+        self.assertEqual(shlex.split(command), ["echo", "=ls", "a=b", "=it's"])
+
+    def test_run_in_pane_failure_is_false(self):
+        fake = FakeHerdr()
+        fake.run_result = HerdrResult(rc=1, stdout="", stderr=herdr_error("pane:run", "pane_not_found"))
+        self.assertFalse(inject.run_in_pane("wX:p9", ["true"], run=fake))
+        fake.run_result = HerdrResult(rc=124, stdout="", stderr="", timed_out=True)
+        self.assertFalse(inject.run_in_pane("wD:p7", ["true"], run=fake))
 
 
 class ControlMarkTest(unittest.TestCase):

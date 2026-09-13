@@ -1255,7 +1255,7 @@ class InjectTest(unittest.TestCase):
         h.state.acquire("proj:/w/me", pane="wD:p1")
         h.client.message(h.topic("slot1"), "把 B 方案也列进去")
         wait_until(lambda: any(c[1:3] == ["agent", "prompt"] for c in h.herdr.calls), what="herdr agent prompt 被调用")
-        self.assertEqual(h.herdr.calls[-1], ["herdr", "agent", "prompt", "wD:p1", "把 B 方案也列进去"])
+        self.assertEqual(h.herdr.calls[-1], ["herdr", "agent", "prompt", "wD:p1", "[agent-ntfy remote] 把 B 方案也列进去"])
 
     def test_lease_without_pane_gets_receipt_without_touching_herdr(self):
         h = Harness(self)
@@ -1270,13 +1270,13 @@ class InjectTest(unittest.TestCase):
         self.assertEqual([a["label"] for a in pub["actions"]], [Z("receipt.button.release"), Z("receipt.button.ignore")])
         self.assertEqual(h.herdr.calls, [])  # 没有目标就不问 herdr
 
-    def test_message_is_injected_with_pane_id_and_raw_text(self):
+    def test_message_is_injected_with_pane_id_and_prefixed_text(self):
         h = Harness(self)
         slot = self.lease(h, "wD:p1")
         n = len(h.client.published)
         h.client.message(h.topic(slot), "把 B 方案也列进去")
         wait_until(lambda: any(c[1:3] == ["agent", "prompt"] for c in h.herdr.calls), what="herdr agent prompt 被调用")
-        self.assertEqual(h.herdr.calls[-1], ["herdr", "agent", "prompt", "wD:p1", "把 B 方案也列进去"])
+        self.assertEqual(h.herdr.calls[-1], ["herdr", "agent", "prompt", "wD:p1", "[agent-ntfy remote] 把 B 方案也列进去"])
         time.sleep(0.1)
         self.assertEqual(len(h.client.published), n)  # 送达了：没有回执
 
@@ -1339,7 +1339,7 @@ class InjectTest(unittest.TestCase):
         stray = inject.control_mark("release", "slot2")
         h.client.message(h.topic(slot), stray)
         wait_until(lambda: any(c[1:3] == ["agent", "prompt"] for c in h.herdr.calls), what="当普通消息注入")
-        self.assertEqual(h.herdr.calls[-1][-1], stray)
+        self.assertEqual(h.herdr.calls[-1][-1], inject.REMOTE_PREFIX + stray)
         self.assertEqual(h.state.slots()[slot]["leased_by"], "wD:p1")
 
     def test_release_mark_while_active_is_refused_and_not_taken_as_reply(self):
@@ -1448,7 +1448,7 @@ class InjectTest(unittest.TestCase):
         for i in range(3):
             h.client.message(h.topic(slot), f"第{i}条")
         wait_until(lambda: sum(c[1:3] == ["agent", "prompt"] for c in h.herdr.calls) == 3, what="三条都注入")
-        self.assertEqual([c[-1] for c in h.herdr.calls if c[1:3] == ["agent", "prompt"]], ["第0条", "第1条", "第2条"])
+        self.assertEqual([c[-1] for c in h.herdr.calls if c[1:3] == ["agent", "prompt"]], ["[agent-ntfy remote] 第0条", "[agent-ntfy remote] 第1条", "[agent-ntfy remote] 第2条"])
 
     def test_second_receipt_on_same_slot_closes_the_first(self):
         h = Harness(self)

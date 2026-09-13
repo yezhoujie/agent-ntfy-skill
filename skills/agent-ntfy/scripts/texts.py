@@ -141,14 +141,14 @@ TEXTS: dict[str, dict[str, str]] = {
         "help.slots": "看槽位池与租约",
         "help.release": "释放租约",
         "help.release.slot": "要释放的槽位；不给就释放当前目标租的那个",
-        "help.confirm": "可达性确认闸：验该槽位手机收得到通知（默认要在终端跑，会显示 topic 名）",
+        "help.confirm": "可达性确认闸：验该槽位手机收得到通知（在终端跑会显示 topic 名；agent 在 herdr 里代跑会自动开一个窗格让用户在那里做）",
         "help.confirm.slot": "要确认的槽位",
         "help.confirm.again": "已确认过的槽位重新确认（换手机后）",
         "help.confirm.subscribed": "用户已订阅：不显示 topic，直接发测试通知（非终端也能跑）",
         "help.confirm.show_topic": "只打印 topic 名就退出，不发测试通知（会进调用方的输出）",
         "help.confirm.timeout": "等按钮点击的秒数（默认 600）",
         "help.add_slot": "新建一个槽位",
-        "help.away": "远程交互模式开关：在项目根写 .agent-ntfy/state.json 给 agent 读（不含 topic 名）",
+        "help.away": "远程交互模式开关：on 一站式（起 daemon、保证有能用的槽位、再在项目根写 .agent-ntfy/state.json 给 agent 读，不含 topic 名）",
         "help.away.action": "on 开 / off 关 / status 看状态",
         "help.away.json": "status 时打印 state.json 原文（给 agent 读）",
         # ---- away：项目级状态文件
@@ -164,6 +164,18 @@ TEXTS: dict[str, dict[str, str]] = {
         "cli.away.unverified": "daemon 未运行，未校对（以上是状态文件里的记录）",
         "cli.away.corrected": "已按 daemon 的租约校正状态文件",
         "cli.away.unverified.error": "daemon 没能给出租约，未校对（以上是状态文件里的记录）",
+        # ---- away on 一站式（daemon 保障 → 槽位保障 → 写状态文件）
+        "cli.away.ready": "远程交互模式已开启，槽位 {slot} 就绪",
+        "cli.away.ready.lazy": "远程交互模式已开启；槽位首次提问时自动分配（池里有已过闸的空闲槽位）",
+        "cli.away.confirm_pane": ("远程交互模式已开启，但槽位 {slot} 还要过一次可达性闸：已在 herdr 窗格 {pane} 里开始确认。请转告用户：\n"
+                                  "  1. 看窗格 {pane}，在手机 ntfy app 里订阅它显示的 topic\n"
+                                  "  2. 订阅好后在该窗格按回车，会收到一条带按钮的测试通知\n"
+                                  "  3. 在手机通知栏点按钮——之后用 agent-ntfy slots 看它过没过闸"),
+        "cli.away.confirming": ("远程交互模式已开启；槽位 {slot} 正在确认中（已有一个确认窗格打开）：\n"
+                                "  让用户去那个窗格完成订阅并按回车，再在手机通知栏点按钮"),
+        "cli.away.daemon_failed": "daemon 没有起来（{seconds} 秒内探不到），远程交互模式未开启；看日志 {log}",
+        "cli.away.unwritable": "状态目录 {path} 不可写（已存在但不是目录，或没有写权限）",
+        "cli.away.pane_failed": "在 herdr 里开不出窗格（或命令没敲进去），daemon 没有起来，远程交互模式未开启；请在终端跑 agent-ntfy daemon --detach 后重试",
         "cli.slots.pane": "  窗格 {pane}",
         "cli.project.unresolved": "定不出当前项目（{error}）；换到一个存在的目录再跑",
         "cli.reminder": "提醒：{message}",
@@ -204,6 +216,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "cli.confirm.disconnected": "daemon 连接中断，确认未完成",
         "cli.confirm.comm_failed": "与 daemon 通信失败：{error}",
         "cli.confirm.interrupted": "已中断，确认未完成",
+        "cli.confirm.pane_opened": ("已在 herdr 窗格 {pane} 里开始 {slot} 的可达性确认。请转告用户：\n"
+                                    "  1. 看窗格 {pane}，在手机 ntfy app 里订阅它显示的 topic\n"
+                                    "  2. 订阅好后在该窗格按回车，会收到一条带按钮的测试通知\n"
+                                    "  3. 在手机通知栏点按钮——之后用 agent-ntfy slots 或 away status 看它过没过闸"),
         "cli.add_slot.done": "已新建 {slot}（还没确认过手机收得到通知）。下一步：在你自己的终端跑  agent-ntfy confirm-sub {slot}",
         "cli.status.not_running": "daemon：未运行",
         "cli.status.no_socket": "daemon：pid {pid} 活着，但 socket 无回应",
@@ -219,7 +235,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "cli.detach.already": "已有 daemon 在跑",
         "cli.detach.died": "daemon 没有起来（退出码 {rc}），看 {log}",
         "cli.detach.started": "daemon：已在后台启动，pid {pid}（日志 {log}）",
-        "cli.detach.not_ready": "daemon（pid {pid}）5 秒内还没就绪，仍在启动（钥匙串弹窗？）；稍后用 agent-ntfy daemon --status 看，日志 {log}",
+        "cli.detach.not_ready": "daemon（pid {pid}）5 秒内还没就绪，仍在启动；稍后用 agent-ntfy daemon --status 看，日志 {log}",
         # ---- 校验报错（validate）
         "validate.header": "agent-ntfy ask: 输入校验未通过（{n} 处），全部修正后重试，消息未发送。",
         "validate.field.body": "正文",
@@ -442,14 +458,14 @@ TEXTS: dict[str, dict[str, str]] = {
         "help.slots": "show the slot pool and leases",
         "help.release": "release a lease",
         "help.release.slot": "slot to release; omit to release the one leased by the current target",
-        "help.confirm": "reachability check: verify the phone gets notifications for this slot (run it in a terminal by default; it shows the topic name)",
+        "help.confirm": "reachability check: verify the phone gets notifications for this slot (shows the topic name when run in a terminal; when an agent runs it inside herdr it opens a pane for the user)",
         "help.confirm.slot": "slot to confirm",
         "help.confirm.again": "re-confirm an already confirmed slot (after changing phones)",
         "help.confirm.subscribed": "user already subscribed: skip showing the topic and send the test notification right away (works outside a terminal)",
         "help.confirm.show_topic": "only print the topic name and exit, send nothing (it will land in the caller's output)",
         "help.confirm.timeout": "seconds to wait for the button tap (default 600)",
         "help.add_slot": "add a slot",
-        "help.away": "remote-mode switch: writes .agent-ntfy/state.json at the project root for the agent to read (no topic name in it)",
+        "help.away": "remote-mode switch: on is one-stop (starts the daemon, makes sure a usable slot exists, then writes .agent-ntfy/state.json at the project root for the agent to read; no topic name in it)",
         "help.away.action": "on / off / status",
         "help.away.json": "with status: print state.json verbatim (for the agent)",
         # ---- away: per-project state file
@@ -465,6 +481,17 @@ TEXTS: dict[str, dict[str, str]] = {
         "cli.away.unverified": "daemon not running; not verified (the above is what the state file says)",
         "cli.away.corrected": "state file corrected from the daemon's leases",
         "cli.away.unverified.error": "the daemon could not report its leases; not verified (the above is what the state file says)",
+        "cli.away.ready": "remote mode is on; slot {slot} is ready",
+        "cli.away.ready.lazy": "remote mode is on; a slot is leased automatically on the first ask (the pool has a confirmed idle slot)",
+        "cli.away.confirm_pane": ("remote mode is on, but slot {slot} still needs its reachability check: started it in herdr pane {pane}. Tell the user:\n"
+                                  "  1. look at pane {pane} and subscribe to the topic it shows in the ntfy app\n"
+                                  "  2. once subscribed, press Enter in that pane — a test notification with a button arrives\n"
+                                  "  3. tap the button in the notification shade; then check agent-ntfy slots to see whether it is confirmed"),
+        "cli.away.confirming": ("remote mode is on; slot {slot} is being confirmed right now (a confirmation pane is already open):\n"
+                                "  have the user finish subscribing and press Enter in that pane, then tap the button on the phone"),
+        "cli.away.daemon_failed": "the daemon did not come up (not reachable within {seconds} s); remote mode NOT enabled. See the log {log}",
+        "cli.away.unwritable": "state directory {path} is not writable (exists but is not a directory, or no write permission)",
+        "cli.away.pane_failed": "could not open a herdr pane (or the command did not get typed in); the daemon was not started and remote mode is NOT enabled. Run agent-ntfy daemon --detach in a terminal, then retry",
         "cli.slots.pane": "  pane {pane}",
         "cli.project.unresolved": "cannot tell which project this is ({error}); run from a directory that exists",
         "cli.reminder": "note: {message}",
@@ -505,6 +532,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "cli.confirm.disconnected": "connection to the daemon lost; confirmation not completed",
         "cli.confirm.comm_failed": "talking to the daemon failed: {error}",
         "cli.confirm.interrupted": "interrupted; confirmation not completed",
+        "cli.confirm.pane_opened": ("Started the reachability check for {slot} in herdr pane {pane}. Tell the user:\n"
+                                    "  1. look at pane {pane} and subscribe to the topic it shows in the ntfy app\n"
+                                    "  2. once subscribed, press Enter in that pane — a test notification with a button arrives\n"
+                                    "  3. tap the button in the notification shade; then check agent-ntfy slots or away status to see whether it is confirmed"),
         "cli.add_slot.done": "added {slot} (not yet confirmed to reach the phone). Next: run  agent-ntfy confirm-sub {slot}  in your own terminal",
         "cli.status.not_running": "daemon: not running",
         "cli.status.no_socket": "daemon: pid {pid} is alive but the socket does not answer",
@@ -520,7 +551,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "cli.detach.already": "a daemon is already running",
         "cli.detach.died": "the daemon did not come up (exit code {rc}), see {log}",
         "cli.detach.started": "daemon: started in the background, pid {pid} (log {log})",
-        "cli.detach.not_ready": "daemon (pid {pid}) not ready within 5 s, still starting (keychain prompt?); check later with agent-ntfy daemon --status, log {log}",
+        "cli.detach.not_ready": "daemon (pid {pid}) not ready within 5 s, still starting; check later with agent-ntfy daemon --status, log {log}",
         "validate.header": "agent-ntfy ask: input validation failed ({n} issue(s)); fix them all and retry. Message NOT sent.",
         "validate.field.body": "body",
         "validate.hint.title": "the one-line hook shown in the notification shade — the preview shows nothing else",

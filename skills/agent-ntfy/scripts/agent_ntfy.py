@@ -8,7 +8,7 @@
                             常驻订阅进程（唯一的 ntfy 订阅者）：前台跑 / 脱离会话跑 / 看状态 / 停掉
     slots                   看槽位池与租约状态
     release [<槽位>]        释放租约；不给槽位就释放本项目租的那个
-    confirm-sub <槽位>      可达性确认闸：验「手机收得到通知」（要用户自己在终端跑：会显示 topic 名）
+    confirm-sub <槽位>      可达性确认闸：验「手机收得到通知」（在终端跑会显示 topic 名；agent 在 herdr 里代跑会自动开一个窗格）
         [--subscribed]        用户已订阅、跳过显示 topic 那段直接发测试通知（agent 代跑用，非终端也行）
         [--show-topic]        只打印 topic 名就退出，不发（⚠️ 会进调用方的输出）
         [--again]             已确认过的槽位重新确认（换手机后）
@@ -16,7 +16,8 @@
     add-slot                新建一个槽位（之后要 confirm-sub）
 
 confirm-sub / release / add-slot 的退出码: 0 成功 / 1 槽位名不对 / 2 超时没点按钮（confirm-sub）/ 3 通道故障（daemon 没跑、状态文件读写失败、发布失败）
-    / 4 需要人介入（confirm-sub 在非终端且没给 --subscribed；confirm-sub 的槽位正忙）/ 130 被 Ctrl-C 中断；release 撞上活跃槽位或无租约是 3
+    / 4 需要人介入（confirm-sub 在非终端、没给 --subscribed 且不在 herdr 里或开不出窗格——在 herdr 里会开窗格退 0；confirm-sub 的槽位正忙）
+    / 130 被 Ctrl-C 中断；release 撞上活跃槽位或无租约是 3
 
 ask 的退出码（三种结局不能都表现为空输出）:
     0  拿到回复，stdout 是回复原文（末尾一个换行）
@@ -54,6 +55,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import NamedTuple
 
+import inject
 import projstate
 import texts
 import validate
@@ -67,6 +69,8 @@ EXIT_SENT = EXIT_REPLY  # notify 的 0：发出去了（它不等回复）
 EXIT_BY_KIND = {"invalid_input": EXIT_INVALID, "unknown_slot": EXIT_INVALID, "busy": EXIT_NEEDS_HUMAN, "no_free_slot": EXIT_NEEDS_HUMAN,
                 "unconfirmed": EXIT_NEEDS_HUMAN}  # 其余 kind（state / publish_failed / daemon_stopping / bad_request …）都是通道故障 3
 CONFIRM_TIMEOUT = 600  # 与 daemon.CONFIRM_TIMEOUT 同步（这里刻意不 import daemon）
+DAEMON_START_TIMEOUT = 5.0  # away on 起 daemon 后等它在 socket 上应答的上限（秒）
+PROBE_TIMEOUT = 2.0  # 单次探活的 socket 超时：daemon 已 bind 但还没进主循环（卡在初始化）时不能让调用方挂死
 STATE_KEYS = ("unassigned", "idle", "active", "confirming")  # daemon 的 slots 事件里 state_key 的取值；显示文案按语言取
 
 
@@ -101,6 +105,38 @@ def describe(e: BaseException, lang: str) -> str:
 
 def start_hint(lang: str) -> None:
     print(texts.t("cli.start_hint", lang), file=sys.stderr)
+
+
+# ---------------------------------------------------------------- herdr（CLI 侧）
+
+def herdr_run(argv: list[str]) -> inject.HerdrResult:
+    """CLI 侧所有 herdr 调用的唯一出口（测试在这里换替身，不真开窗格）。"""
+    return inject.run_herdr(argv)
+
+
+def herdr_available() -> bool:
+    """能不能在 herdr 里开窗格：进程在 herdr 窗格内（两个环境变量都有）且 herdr CLI 真的通。环境变量不全就不去跑命令。"""
+    if not (os.environ.get("HERDR_ENV") and os.environ.get("HERDR_PANE_ID")):
+        return False
+    return herdr_run([inject.HERDR, "pane", "list"]).ok
+
+
+def run_self_in_new_pane(home: Path, *subcommand: str) -> str | None:
+    """在当前窗格下方开一个新窗格，在里面跑本程序的一个子命令（同一解释器、同一脚本、同一 --home），返回新窗格 id，不等结果。
+    开不出窗格 / 命令敲不进去就 None（后者会留下一个空窗格，herdr 没有从这里关它的办法）。"""
+    new_pane = inject.split_pane(os.getcwd(), os.environ.get("HERDR_PANE_ID") or "", run=herdr_run)
+    if new_pane is None:
+        return None
+    # --home 是顶层选项，必须放在子命令前面
+    argv = [sys.executable, os.path.abspath(__file__), "--home", str(home), *subcommand]
+    return new_pane if inject.run_in_pane(new_pane, argv, run=herdr_run) else None
+
+
+def open_confirm_pane(home: Path, slot: str, *, again: bool = False, timeout: float = CONFIRM_TIMEOUT) -> str | None:
+    """在新窗格里跑默认形态的 confirm-sub（显示 topic → 等回车 → 发测试通知 → 等按钮），返回窗格 id，不等结果。
+    topic 只出现在那个窗格里，不进本进程的输出。--again / --timeout 原样转进去（缺省的 timeout 不必带）。"""
+    flags = (["--again"] if again else []) + (["--timeout", f"{timeout:g}"] if timeout != CONFIRM_TIMEOUT else [])
+    return run_self_in_new_pane(home, "confirm-sub", slot, *flags)
 
 
 # ---------------------------------------------------------------- socket 协议（客户端侧）
@@ -329,7 +365,8 @@ def cmd_release(args) -> int:
 def cmd_confirm_sub(args) -> int:
     """可达性确认闸。默认两段：先显示 topic 让用户订阅、按回车后才发测试通知，等用户在通知栏点按钮。
 
-    topic 名就是密码：默认只在 stdout 是终端时才显示，agent 代跑（stdout 被捕获）时退出 4 让它转告用户；
+    topic 名就是密码：默认只在 stdout 是终端时才显示。agent 代跑（stdout 被捕获）时：在 herdr 里就开一个新窗格让用户在那里
+    走这两段、本进程打印窗格 id 退 0；不在 herdr 里或开不出窗格才退 4 让它转告用户。
     用户已订阅过时 agent 可以带 --subscribed 代跑（不经过显示 topic 那段）。
     """
     home, slot, lang = Path(args.home), args.slot, env_lang()
@@ -343,8 +380,32 @@ def cmd_confirm_sub(args) -> int:
         print(texts.t("cli.confirm.topic", lang, slot=slot, topic=ev["topic"], url=ev["url"]))
         return 0
     if not args.subscribed and not sys.stdout.isatty():
-        err(texts.t("cli.confirm.topic_hint", lang, slot=slot))
-        return EXIT_NEEDS_HUMAN
+        # agent 代跑（stdout 被捕获）：在 herdr 里就开一个新窗格让用户在那里走默认形态，本进程立即返回；开不了仍退 4 让它转告用户。
+        # 开窗格之前先照 daemon 的 slots 视图核一遍：槽位不存在就按输入错退 1（与 daemon 的 unknown_slot 同款文案，不走下面
+        # 会把 topic 打到被捕获的 stdout 的流程）；已过闸又没说 --again 就直接答「已确认过」——别开一个只会立刻退出的窗格
+        if not herdr_available():
+            err(texts.t("cli.confirm.topic_hint", lang, slot=slot))
+            return EXIT_NEEDS_HUMAN
+        ev = request(home, {"cmd": "slots"}, lang)
+        if ev is None:
+            return EXIT_CHANNEL
+        if ev.get("event") != "slots":
+            err(str(ev.get("message")))
+            return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
+        rec = ev["slots"].get(slot)
+        if rec is None:
+            err(texts.t("daemon.unknown_slot", lang, slot=repr(slot)))
+            return EXIT_INVALID
+        if rec.get("subscribed") and not args.again:
+            print(texts.t("cli.confirm.already", lang, slot=slot))
+            projstate.note_confirmed(slot)
+            return 0
+        pane = open_confirm_pane(home, slot, again=args.again, timeout=args.timeout)
+        if pane is None:
+            err(texts.t("cli.confirm.topic_hint", lang, slot=slot))
+            return EXIT_NEEDS_HUMAN
+        print(texts.t("cli.confirm.pane_opened", lang, slot=slot, pane=pane))
+        return 0
     try:
         sock = connect(home)
     except OSError as e:
@@ -419,18 +480,21 @@ def cmd_add_slot(args) -> int:
 def cmd_away(args) -> int:
     """远程交互模式开关。状态落在项目根 .agent-ntfy/state.json（不含 topic 名），给 agent 在任何会话里读。
 
+    on 是一站式：daemon 没跑就起（herdr 里开窗格起，否则脱离会话起）→ 保证有能用的槽位（没有已过闸的就开确认窗格）→ 才写文件。
     status 以 daemon 为准校对：经 slots 反查本项目真实租着哪个槽位，与文件不一致就改写并提示；daemon 没跑就照旧读文件、标「未校对」。
     没启用过的项目不探活也不校对——校对会写文件，而没启用的项目不该被建目录。
     """
     lang = env_lang()
     try:
         root = projstate.project_root()
-        if args.action in ("on", "off"):
-            if args.action == "off" and not projstate.exists(root):
+        if args.action == "on":
+            return away_on(Path(args.home), root, lang)
+        if args.action == "off":
+            if not projstate.exists(root):
                 print(texts.t("cli.away.not_enabled", lang))  # 没开过就没什么可关的，也不留目录
                 return 0
-            st = projstate.save(root, away=(args.action == "on"), target=identity(root).leased_by)
-            print(texts.t("cli.away.state.on" if st["away"] else "cli.away.state.off", lang))
+            st = projstate.save(root, away=False, target=identity(root).leased_by)
+            print(texts.t("cli.away.state.off", lang))
             print(texts.t("cli.away.path", lang, path=projstate.state_path(root)))
             return 0
         enabled = projstate.exists(root)
@@ -469,6 +533,98 @@ def cmd_away(args) -> int:
         print(texts.t("cli.away.corrected", lang))
     if unverified:
         print(texts.t(unverified, lang))
+    return 0
+
+
+def _state_dir_writable(root: Path) -> bool:
+    """状态目录能不能写：已存在 ⇒ 必须是目录且可写；不存在 ⇒ 父目录可写。只探不建——之后退 3 / 4 时不能留下一个空目录让「已启用」误判。"""
+    d = projstate.state_dir(root)
+    if d.exists():
+        return d.is_dir() and os.access(d, os.W_OK)
+    return os.access(root, os.W_OK)
+
+
+def _ensure_daemon(home: Path, lang: str) -> bool:
+    """daemon 保障：探不到就起一个（herdr 里开窗格在里面前台跑——日志直接可见；否则脱离会话跑），等它在 socket 上应答。"""
+    deadline = time.monotonic() + DAEMON_START_TIMEOUT  # 整个保障过程（含第一次探活）的总预算
+    if probe(home, timeout=min(PROBE_TIMEOUT, DAEMON_START_TIMEOUT)) is not None:
+        return True
+    proc = None
+    if herdr_available():
+        if run_self_in_new_pane(home, "daemon") is None:  # 窗格开不出来 / 命令敲不进去：不会有应答，不必等
+            err(texts.t("cli.away.pane_failed", lang))
+            return False
+    else:
+        proc = _spawn_daemon(home)
+    while (remaining := deadline - time.monotonic()) > 0:
+        time.sleep(0.1)
+        if proc is not None and proc.poll() is not None:  # 子进程已经退了：再等也不会有应答，报它的退出码
+            err(texts.t("cli.detach.died", lang, rc=proc.poll(), log=home / "daemon.log"))
+            return False
+        if probe(home, timeout=min(PROBE_TIMEOUT, remaining)) is not None:  # 单次探活不许把总预算撑长
+            return True
+    err(texts.t("cli.away.daemon_failed", lang, seconds=f"{DAEMON_START_TIMEOUT:g}", log=home / "daemon.log"))
+    return False
+
+
+def _slot_number(slot: str) -> int:
+    digits = slot.removeprefix("slot")
+    return int(digits) if digits.isdigit() else 0
+
+
+def _confirm_or_point(home: Path, slot: str, slots: dict, lang: str) -> bool:
+    """槽位保障的收口：该槽位正在确认中就指去已开的窗格；否则在 herdr 里开确认窗格；开不了就退 4 指路 confirm-sub。返回是否可以继续写文件。"""
+    if slots[slot].get("state_key") == "confirming":
+        print(texts.t("cli.away.confirming", lang, slot=slot))
+        return True
+    pane = open_confirm_pane(home, slot) if herdr_available() else None
+    if pane is None:
+        err(texts.t("cli.confirm.topic_hint", lang, slot=slot))
+        return False
+    print(texts.t("cli.away.confirm_pane", lang, slot=slot, pane=pane))
+    return True
+
+
+def away_on(home: Path, root: Path, lang: str) -> int:
+    """一站式开启：① 状态目录可写 ② daemon 在跑 ③ 有能用的槽位（本项目的租约已过闸 / 池里有空闲已过闸 / 否则开确认窗格）④ 写文件。
+    ①②③ 任一没过就退 3 / 4，文件与目录都不动。"""
+    if not _state_dir_writable(root):
+        err(texts.t("cli.away.io_failed", lang, error=texts.t("cli.away.unwritable", lang, path=projstate.state_dir(root))))
+        return EXIT_CHANNEL
+    if not _ensure_daemon(home, lang):
+        return EXIT_CHANNEL
+    ident = identity(root)
+    ev = request(home, {"cmd": "slots", "leased_by": ident.leased_by, "pane": ident.pane}, lang)
+    if ev is None:
+        return EXIT_CHANNEL
+    if ev.get("event") != "slots":
+        err(str(ev.get("message")))
+        return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
+    slots: dict = ev["slots"]
+    mine = next((s for s, r in slots.items() if r.get("leased_by") == ident.leased_by), None)
+    if mine is not None:
+        if slots[mine].get("subscribed"):
+            print(texts.t("cli.away.ready", lang, slot=mine))
+        elif not _confirm_or_point(home, mine, slots, lang):
+            return EXIT_NEEDS_HUMAN
+    else:
+        free = sorted((s for s, r in slots.items() if not r.get("leased_by")), key=_slot_number)
+        if any(slots[s].get("subscribed") for s in free):
+            print(texts.t("cli.away.ready.lazy", lang))  # 惰性：首次提问才租，别为「开个开关」烧掉一个槽位
+        elif not free:
+            # 全部已租：列出可替换的空闲槽位（措辞与 ask 撞满时一致），让用户 release 一个再来
+            idle = [s for s, r in slots.items() if r.get("state_key") == "idle"]
+            listed = (", ".join(texts.t("daemon.candidate.confirmed" if slots[s].get("subscribed") else "daemon.candidate.unconfirmed", lang, slot=s) for s in idle)
+                      if idle else texts.t("daemon.no_free_slot.none", lang))
+            err(texts.t("daemon.no_free_slot", lang, candidates=listed))
+            for s in idle:
+                gate = texts.t("cli.ask.candidate.confirmed" if slots[s].get("subscribed") else "cli.ask.candidate.unconfirmed", lang)
+                err(texts.t("cli.ask.candidate", lang, slot=s, gate=gate))
+            return EXIT_NEEDS_HUMAN
+        elif not _confirm_or_point(home, free[0], slots, lang):
+            return EXIT_NEEDS_HUMAN
+    projstate.save(root, away=True, target=ident.leased_by)
+    print(texts.t("cli.away.path", lang, path=projstate.state_path(root)))
     return 0
 
 
@@ -537,27 +693,39 @@ def daemon_stop(home: Path, lang: str) -> int:
     return 1
 
 
+def probe(home: Path, *, timeout: float | None = None) -> dict | None:
+    """静默探活：连上 socket 问一声 status，返回那条事件；连不上 / 答非所问 / timeout 秒内没应答就 None，
+    stderr 一个字都不打（调用方拿它做分支，不是报错）。"""
+    try:
+        with connect(home) as s:
+            s.settimeout(PROBE_TIMEOUT if timeout is None else timeout)  # socket.timeout 是 OSError：超时同样算「没应答」
+            send_request(s, {"cmd": "status"})
+            ev = next(read_events(s), None)
+    except (OSError, ValueError):
+        return None
+    return ev if isinstance(ev, dict) and ev.get("event") == "status" else None
+
+
+def _spawn_daemon(home: Path) -> subprocess.Popen:
+    """脱离会话起 daemon：新会话、stdio 接 /dev/null。子进程继承环境，语言由它自己再解析。--home 是顶层选项，必须放在子命令前面。"""
+    return subprocess.Popen([sys.executable, os.path.abspath(__file__), "--home", str(home), "daemon"],
+                            start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def daemon_detach(home: Path, lang: str) -> int:
-    """脱离会话起 daemon：新会话、stdio 接 /dev/null；起来后核一次 socket 能连上才算成功。子进程继承环境，语言由它自己再解析。"""
+    """脱离会话起 daemon；起来后核一次 socket 能连上才算成功。"""
     import daemon
     if daemon.pid_alive(home / "daemon.pid"):
         err(texts.t("cli.detach.already", lang))
         return EXIT_CHANNEL
-    # --home 是顶层选项，必须放在子命令前面
-    proc = subprocess.Popen([sys.executable, os.path.abspath(__file__), "--home", str(home), "daemon"],
-                            start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    proc = _spawn_daemon(home)
     for _ in range(50):
         time.sleep(0.1)
         if proc.poll() is not None:
             err(texts.t("cli.detach.died", lang, rc=proc.poll(), log=home / "daemon.log"))
             return EXIT_CHANNEL
-        try:
-            with connect(home) as s:  # 判据是它在 socket 上报出自己的 pid，不是 socket 文件出现
-                send_request(s, {"cmd": "status"})
-                ev = next(read_events(s), None)
-        except (OSError, ValueError):
-            continue
-        if ev and ev.get("event") == "status" and ev.get("pid") == proc.pid:
+        ev = probe(home)  # 判据是它在 socket 上报出自己的 pid，不是 socket 文件出现
+        if ev and ev.get("pid") == proc.pid:
             print(texts.t("cli.detach.started", lang, pid=proc.pid, log=home / "daemon.log"))
             return 0
     err(texts.t("cli.detach.not_ready", lang, pid=proc.pid, log=home / "daemon.log"))

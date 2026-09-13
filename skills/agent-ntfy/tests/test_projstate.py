@@ -9,10 +9,12 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import projstate
 import tests.test_agent_ntfy as ta
 from tests.test_daemon import Harness, wait_until
+from tests.test_inject import FakeHerdr
 from tests.test_render import SAMPLE
 
 CJK = re.compile(r"[一-鿿]")
@@ -166,12 +168,13 @@ class ReconcileTest(unittest.TestCase):
 
 
 class AwayCommandTest(unittest.TestCase):
-    """away on / off / status 不需要 daemon。"""
+    """away off / status 不需要 daemon；on 是一站式（要 daemon 在跑或起得来）——这里用 Harness 当 daemon，herdr 一律替身。"""
 
     def test_on_off_status(self):
         root, sub = git_repo(self)
-        with chdir(sub):
-            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "on"], env=ta.HERDR, root=ta.CWD)
+        h = Harness(self)
+        with chdir(sub), mock.patch("agent_ntfy.herdr_run", FakeHerdr()):
+            code, out, err = ta.run(["--home", str(h.home), "away", "on"], env=ta.HERDR, root=ta.CWD)
             self.assertEqual((code, err), (0, ""))
             self.assertIn("开", out)
             st = json.loads((root / projstate.DIR_NAME / "state.json").read_text(encoding="utf-8"))
@@ -218,14 +221,19 @@ class AwayCommandTest(unittest.TestCase):
             self.assertIn(ta.Z("cli.away.state.off"), out)
             self.assertIn(ta.Z("cli.away.slot.none"), out)
 
-    # 状态目录读写不了（.agent-ntfy 是个普通文件）：人读报错、退 3，不是 traceback
+    # 状态目录读写不了（.agent-ntfy 是个普通文件）：第一步就人读报错、退 3，不是 traceback；daemon 不起、herdr 不碰
     def test_on_reports_io_failure(self):
         root = plain_dir(self)
         (root / projstate.DIR_NAME).write_text("not a dir", encoding="utf-8")
-        with chdir(root):
+        fake = FakeHerdr()
+        with chdir(root), mock.patch("agent_ntfy.herdr_run", fake), mock.patch("agent_ntfy.probe", return_value=None) as probe, \
+                mock.patch("agent_ntfy._spawn_daemon") as spawn:
             code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "on"], root=ta.CWD)
             self.assertEqual((code, out), (3, ""))
             self.assertIn("状态文件读写失败", err)
+        self.assertEqual(fake.calls, [])
+        probe.assert_not_called()
+        spawn.assert_not_called()
 
     # daemon 没跑：status 照旧读文件，末尾标「未校对」；--json 打文件原文；文件不动
     def test_status_without_daemon_is_marked_unverified(self):
