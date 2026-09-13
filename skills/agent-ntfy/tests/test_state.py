@@ -168,17 +168,17 @@ class StateTest(unittest.TestCase):
             self.assertNotIn(topic, text)
             self.assertNotIn(topic[-20:], text)  # 随机串本身也不能出现
 
-    # 落盘格式：{"slotN": {"subscribed": bool, "leased_by": str|null, "leased_at": str|null}}
+    # 落盘格式：{"slotN": {"subscribed": bool, "leased_by": str|null, "leased_at": str|null, "pane": str|null}}
     def test_leases_file_format(self):
         self.state.acquire("wD:p1")
         self.state.mark_subscribed("slot1")
         data = json.loads(self.leases_path.read_text(encoding="utf-8"))
         self.assertEqual(sorted(data), ["slot1", "slot2", "slot3", "slot4", "slot5"])
-        self.assertEqual(set(data["slot1"]), {"subscribed", "leased_by", "leased_at"})
+        self.assertEqual(set(data["slot1"]), {"subscribed", "leased_by", "leased_at", "pane"})
         self.assertIs(data["slot1"]["subscribed"], True)
         self.assertEqual(data["slot1"]["leased_by"], "wD:p1")
         self.assertRegex(data["slot1"]["leased_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$")
-        self.assertEqual(data["slot2"], {"subscribed": False, "leased_by": None, "leased_at": None})
+        self.assertEqual(data["slot2"], {"subscribed": False, "leased_by": None, "leased_at": None, "pane": None})
         self.assertEqual(oct(self.leases_path.stat().st_mode & 0o777), oct(0o600))
 
     # 订阅状态跨租约保留：释放再租，不用重新过可达性闸
@@ -210,7 +210,7 @@ class StateTest(unittest.TestCase):
         self.assertEqual(again.slot_state(lease.slot), SlotState.IDLE)
         view = again.slots()[lease.slot]
         self.assertEqual(view, {"state": "已租用·空闲", "subscribed": True,
-                                "leased_by": "wD:p1", "leased_at": view["leased_at"]})
+                                "leased_by": "wD:p1", "leased_at": view["leased_at"], "pane": None})
 
     # 池子被重建（钥匙串条目被删后再起）时，旧租约文件作废：新 topic 谁都没订阅过
     def test_pool_recreation_resets_stale_leases(self):
@@ -236,6 +236,73 @@ class StateTest(unittest.TestCase):
         lease = self.state.acquire("wD:p1")
         self.assertNotIn(lease.topic, repr(lease))
         self.assertIn("slot1", repr(lease))
+
+    # 租约记录带 pane：acquire 时写入、视图里能看到、落盘
+    def test_acquire_records_pane_and_slots_view_shows_it(self):
+        self.state.acquire("proj:/w/a", pane="wD:p1")
+        self.assertEqual(self.state.slots()["slot1"]["pane"], "wD:p1")
+        data = json.loads(self.leases_path.read_text(encoding="utf-8"))
+        self.assertEqual(data["slot1"]["pane"], "wD:p1")
+        # 不给 pane（不在 herdr 里）就是 None，字段仍在
+        self.state.acquire("proj:/w/b")
+        self.assertIsNone(self.state.slots()["slot2"]["pane"])
+        self.assertIn("pane", data["slot2"])
+
+    # 旧版租约文件没有 pane 字段：读出来补 None，不报错
+    def test_old_leases_file_without_pane_loads_as_none(self):
+        self.state.topics()
+        self.leases_path.write_text(json.dumps({"slot1": {"subscribed": True, "leased_by": "wD:p1", "leased_at": "2026-01-01T00:00:00+08:00"}}), encoding="utf-8")
+        view = self.state.slots()["slot1"]
+        self.assertEqual((view["leased_by"], view["pane"]), ("wD:p1", None))
+
+    # touch_pane 只改 pane 一个字段并落盘；leased_at 不动
+    def test_touch_pane_changes_only_pane(self):
+        self.state.acquire("proj:/w/a", pane="wD:p1")
+        before = self.state.slots()["slot1"]
+        self.state.touch_pane("slot1", "wD:p7")
+        after = json.loads(self.leases_path.read_text(encoding="utf-8"))["slot1"]
+        self.assertEqual(after["pane"], "wD:p7")
+        self.assertEqual((after["leased_by"], after["leased_at"], after["subscribed"]), (before["leased_by"], before["leased_at"], before["subscribed"]))
+        self.state.touch_pane("slot1", None)  # 离开 herdr 再跑命令：pane 清空
+        self.assertIsNone(self.state.slots()["slot1"]["pane"])
+        with self.assertRaises(state.StateError):
+            self.state.touch_pane("slot2", "wD:p1")  # 未分配的槽位没有 pane 可刷新
+
+    # release 清空 pane
+    def test_release_clears_pane(self):
+        self.state.acquire("proj:/w/a", pane="wD:p1")
+        self.state.release("slot1")
+        data = json.loads(self.leases_path.read_text(encoding="utf-8"))
+        self.assertEqual(data["slot1"], {"subscribed": False, "leased_by": None, "leased_at": None, "pane": None})
+
+    # require_confirmed：候选只取已过闸的空闲槽位；没有就按「全满」报，候选 = 已租·空闲·已过闸
+    def test_acquire_require_confirmed_uses_only_subscribed_free_slots(self):
+        self.state.mark_subscribed("slot3")
+        lease = self.state.acquire("proj:/w/a", require_confirmed=True)
+        self.assertEqual((lease.slot, lease.subscribed), ("slot3", True))
+        # 已过闸的都租出去了，剩下的空闲槽位都未过闸 ⇒ 不租，报 NeedsUserDecision
+        self.state.mark_subscribed("slot4")
+        self.state.acquire("proj:/w/b", require_confirmed=True)
+        with self.assertRaises(NeedsUserDecision) as cm:
+            self.state.acquire("proj:/w/c", require_confirmed=True)
+        self.assertEqual(cm.exception.candidates, ["slot3", "slot4"])  # 只有已过闸的；活跃的也不在其中
+        with self.assertRaises(NeedsUserDecision) as cm:
+            self.state.acquire("proj:/w/c", active={"slot3"}, require_confirmed=True)
+        self.assertEqual(cm.exception.candidates, ["slot4"])
+        self.assertEqual(self.state.slot_state("slot1"), SlotState.UNASSIGNED)  # 未过闸的空闲槽位一个都没被动
+        # 不带 require_confirmed 照旧：租未过闸的空闲槽位
+        self.assertEqual(self.state.acquire("proj:/w/c").slot, "slot1")
+
+    # replace 同款参数：写 pane；require_confirmed 时拒绝换到未过闸的槽位
+    def test_replace_writes_pane_and_respects_require_confirmed(self):
+        slots = self.lease_all()
+        self.state.mark_subscribed(slots[0])
+        lease = self.state.replace(slots[0], "proj:/w/z", pane="wD:p3")
+        self.assertEqual((lease.slot, lease.subscribed), (slots[0], True))
+        self.assertEqual(self.state.slots()[slots[0]]["pane"], "wD:p3")
+        with self.assertRaises(state.StateError):
+            self.state.replace(slots[1], "proj:/w/z", require_confirmed=True)
+        self.assertEqual(self.state.slots()[slots[1]]["leased_by"], "user-1")  # 没被动过
 
 
 class FakeRun:

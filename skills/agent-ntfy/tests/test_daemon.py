@@ -190,10 +190,10 @@ class Harness:
         events = agent_ntfy.read_events(sock)
         return sock, next(events), events
 
-    def ask(self, *, leased_by="wD:p1", tag: str | None = "wD:p1", timeout: float = 30, payload=None):
-        """发 ask 并读到 sent（或首个终态事件），把连接交回去继续读。"""
+    def ask(self, *, leased_by="wD:p1", tag: str | None = "wD:p1", timeout: float = 30, payload=None, **extra):
+        """发 ask 并读到 sent（或首个终态事件），把连接交回去继续读。extra（pane / require_confirmed …）原样进请求；不给就是旧客户端形态。"""
         sock = self.connect()
-        agent_ntfy.send_request(sock, {"cmd": "ask", "payload": payload or SAMPLE, "leased_by": leased_by, "tag": tag, "timeout": timeout})
+        agent_ntfy.send_request(sock, {"cmd": "ask", "payload": payload or SAMPLE, "leased_by": leased_by, "tag": tag, "timeout": timeout, **extra})
         events = agent_ntfy.read_events(sock)
         first = next(events)
         return sock, first, events
@@ -391,6 +391,91 @@ class AskFlowTest(unittest.TestCase):
         for ev in h.request(cmd="release", slot="slot9") + h.request(cmd="confirm-sub", slot="slot9") + h.request(cmd="nonsense"):
             if ev["event"] == "error":
                 self.assertIn("sent", ev, ev)
+
+
+class LeasePaneTest(unittest.TestCase):
+    """租约主体是项目、窗格另记：ask / slots 带 pane 就刷新租约的 pane；require_confirmed 只挑已过闸的。"""
+
+    ME = "proj:/w/me"
+
+    def test_ask_records_pane_and_refreshes_it_next_time(self):
+        h = Harness(self)
+        sock, first, events = h.ask(leased_by=self.ME, tag="me", pane="wD:p1")
+        rec = h.request(cmd="slots")[0]["slots"]["slot1"]
+        self.assertEqual((rec["leased_by"], rec["pane"]), (self.ME, "wD:p1"))
+        h.client.message(h.topic("slot1"), "答")
+        next(events)
+        sock.close()
+        wait_until(lambda: len(h.client.clears) == 1)
+        # 同一项目换了窗格再问：还是 slot1，pane 刷新，leased_at 不动
+        sock2, first2, events2 = h.ask(leased_by=self.ME, tag="me", pane="wD:p2")
+        self.assertEqual(first2["slot"], "slot1")
+        rec2 = h.request(cmd="slots")[0]["slots"]["slot1"]
+        self.assertEqual((rec2["pane"], rec2["leased_at"]), ("wD:p2", rec["leased_at"]))
+        sock2.close()
+
+    def test_ask_with_null_pane_clears_it_but_absent_key_leaves_it(self):
+        h = Harness(self)
+        h.state.acquire(self.ME, pane="wD:p1")
+        sock, first, events = h.ask(leased_by=self.ME, tag="me")  # 旧客户端：请求里没有 pane 这个键 ⇒ 不动
+        self.assertEqual(first["event"], "sent")
+        self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot1"]["pane"], "wD:p1")
+        sock.close()
+        h.client.message(h.topic("slot1"), "答")
+        wait_until(lambda: len(h.client.clears) == 1)
+        sock, first, events = h.ask(leased_by=self.ME, tag="me", pane=None)  # 新客户端不在 herdr 里：pane 显式为 null ⇒ 清空
+        self.assertEqual(first["event"], "sent")
+        self.assertIsNone(h.request(cmd="slots")[0]["slots"]["slot1"]["pane"])
+        sock.close()
+
+    def test_release_refused_as_active_still_refreshes_pane(self):
+        h = Harness(self)
+        sock, first, events = h.ask(leased_by=self.ME, tag="me", pane="wD:p1")
+        ev = h.request(cmd="release", leased_by=self.ME, pane="wD:p2")[0]  # 同一项目在另一个窗格里跑 release：槽位活跃，拒绝
+        self.assertEqual((ev["event"], ev["kind"]), ("error", "active"))
+        self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot1"]["pane"], "wD:p2")  # 但窗格照样刷新：任何命令都刷新
+        sock.close()
+
+    def test_slots_with_identity_refreshes_pane_but_plain_slots_does_not(self):
+        h = Harness(self)
+        h.state.acquire(self.ME, pane="wD:p1")
+        ev = h.request(cmd="slots", leased_by=self.ME, pane="wD:p3")[0]
+        self.assertEqual(ev["event"], "slots")
+        self.assertEqual(ev["slots"]["slot1"]["pane"], "wD:p3")  # 回的视图已经是刷新后的
+        self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot1"]["pane"], "wD:p3")  # 不带身份：只看不动
+        ev = h.request(cmd="slots", leased_by="proj:/w/nobody", pane="wD:p9")[0]  # 本项目没租：什么都不刷新，也不报错
+        self.assertEqual(ev["event"], "slots")
+        self.assertEqual(ev["slots"]["slot1"]["pane"], "wD:p3")
+        self.assertEqual(h.request(cmd="slots", leased_by=self.ME, pane=123)[0]["slots"]["slot1"]["pane"], None)  # 不是字符串当没有
+
+    def test_require_confirmed_never_leases_an_unconfirmed_slot(self):
+        h = Harness(self, pool_size=3, subscribed=("slot1",))
+        h.state.acquire("proj:/w/other")  # 唯一已过闸的槽位被别的项目租走
+        sock, first, events = h.ask(leased_by=self.ME, tag="me", require_confirmed=True)
+        self.assertEqual((first["event"], first["kind"], first["sent"]), ("error", "no_free_slot", False))
+        self.assertEqual(first["candidates"], [{"slot": "slot1", "subscribed": True}])  # 候选只含已过闸的
+        self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot2"]["state_key"], "unassigned")  # 没去租未过闸的
+        self.assertIn("slot1", first["message"])
+        self.assertNotIn("add-slot", first["message"])  # 槽位没全满、新建的也要过闸：离席时这条路走不通，不指它
+        self.assertIn("confirm-sub", first["message"])
+        sock.close()
+        # 不带 require_confirmed（远程模式没开）照旧：租 slot2，报未过闸
+        sock, first, events = h.ask(leased_by=self.ME, tag="me")
+        self.assertEqual((first["event"], first["kind"], first["slot"]), ("error", "unconfirmed", "slot2"))
+        sock.close()
+
+    def test_require_confirmed_with_own_unconfirmed_lease_says_unconfirmed(self):
+        h = Harness(self, subscribed=())
+        h.state.acquire(self.ME)  # 本项目已租 slot1，但没过闸
+        sock, first, events = h.ask(leased_by=self.ME, tag="me", require_confirmed=True)
+        self.assertEqual((first["event"], first["kind"], first["slot"]), ("error", "unconfirmed", "slot1"))  # 不换槽位，提示去过闸
+        sock.close()
+
+    def test_release_without_slot_uses_leased_by(self):
+        h = Harness(self)
+        h.state.acquire(self.ME, pane="wD:p1")
+        self.assertEqual(h.request(cmd="release", leased_by=self.ME, pane="wD:p1")[0], {"event": "released", "slot": "slot1"})
+        self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot1"], {"state": "未分配", "state_key": "unassigned", "subscribed": True, "leased_by": None, "leased_at": None, "pane": None})
 
 
 class CommandsTest(unittest.TestCase):
@@ -1039,9 +1124,29 @@ class InjectTest(unittest.TestCase):
     """无 pending 的消息：注入 / 回执 / 控制按钮。herdr 是替身，ntfy 是替身。"""
 
     def lease(self, h, slot_owner="wD:p1"):
-        """给 slot1 一个租约（不经 ask，免得留 pending）。"""
-        lease = h.state.acquire(slot_owner)
+        """给 slot1 一个租约（不经 ask，免得留 pending），租约的 pane 就用 owner 同名：下面的用例按 pane 找 FakeHerdr 里的窗格。"""
+        lease = h.state.acquire(slot_owner, pane=slot_owner)
         return lease.slot
+
+    def test_injection_targets_the_lease_pane_not_its_owner(self):
+        h = Harness(self)
+        h.state.acquire("proj:/w/me", pane="wD:p1")
+        h.client.message(h.topic("slot1"), "把 B 方案也列进去")
+        wait_until(lambda: any(c[1:3] == ["agent", "prompt"] for c in h.herdr.calls), what="herdr agent prompt 被调用")
+        self.assertEqual(h.herdr.calls[-1], ["herdr", "agent", "prompt", "wD:p1", "把 B 方案也列进去"])
+
+    def test_lease_without_pane_gets_receipt_without_touching_herdr(self):
+        h = Harness(self)
+        h.state.acquire("proj:/w/me")  # 不在 herdr 里租的，或升级前留下的旧租约：没有窗格可注
+        h.client.message(h.topic("slot1"), "在吗")
+        wait_until(lambda: len(h.client.published) == 1, what="回执发出")
+        pub = h.client.published[0]
+        self.assertEqual(pub["title"], "[slot1] 消息未送达")
+        self.assertNotIn("proj:/w/me", pub["message"])  # 租约主体是本机路径，不上手机
+        self.assertIn(Z("receipt.no_pane", slot="slot1"), pub["message"])
+        self.assertIn(Z("receipt.not_delivered"), pub["message"])
+        self.assertEqual([a["label"] for a in pub["actions"]], [Z("receipt.button.release"), Z("receipt.button.ignore")])
+        self.assertEqual(h.herdr.calls, [])  # 没有目标就不问 herdr
 
     def test_message_is_injected_with_pane_id_and_raw_text(self):
         h = Harness(self)

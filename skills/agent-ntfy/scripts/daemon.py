@@ -9,6 +9,8 @@
 日志只写槽位名 / 消息 id / 事件类型 / 错误类别——topic 是密码，正文与回复是用户的项目信息，都不落日志。
 
 socket 协议是 JSON Lines：客户端连上后发一行 {"cmd": ...}，daemon 回若干行事件（每行一个 JSON 对象）。
+带 leased_by 的请求（ask / slots / release）可选带 pane：带了这个键就把本项目租约的注入窗格刷新成它（null = 不在 herdr 里，清空）；
+ask 另可带 require_confirmed（用户离席：只用已过闸的槽位）。不带这些字段的旧客户端行为不变（窗格不动）。
 ask 的连接保持到终态（reply / timeout / error）：daemon 若死了，连接当场断开，ask 立刻失败——这就是它的响亮信号；
 confirm-sub 同样保持到终态，且中途客户端会再发一行 {"ready": true}（用户订阅好了，可以发测试通知了）；
 其余命令一问一答即关。error 事件必带 sent：调用方要据此知道消息发出去了没有。
@@ -73,6 +75,12 @@ class DaemonError(Exception):
 
     def text(self, lang: str) -> str:
         return texts.t(f"daemon_error.{self.key}", lang, **self.fmt)
+
+
+def _pane_of(req: dict) -> str | None:
+    """请求里的注入窗格：非空字符串才算，null / 空 / 别的类型都当不在 herdr 里。键不在的情形由调用方先判（那是旧客户端，窗格不动）。"""
+    pane = req.get("pane")
+    return pane if isinstance(pane, str) and pane else None
 
 
 def paths(home: Path) -> dict[str, Path]:
@@ -210,7 +218,7 @@ class Daemon:
         self._confirming: dict[str, Confirm] = {}  # slot → 进行中的可达性确认；对 release / ask 按活跃对待，但不交给状态层
         self._own_ids: dict[str, float] = {}  # 我们自己发布的消息 id → 发布时刻；订阅流会回显它们，不是回复
         self._receipts: dict[str, Receipt] = {}  # slot → 最近一条投递失败回执；按钮被点后用它做同 seq 更新 + clear
-        self._inject_q: queue.Queue = queue.Queue()  # 主线程 → 注入线程：(slot, leased_by, 消息 id, 正文)；None 是收工
+        self._inject_q: queue.Queue = queue.Queue()  # 主线程 → 注入线程：(slot, pane, 消息 id, 正文)；None 是收工
         self._inject_thread: threading.Thread | None = None
         self._inflight: dict[str, str] = {}  # 消息 id → slot：排进注入队列、尚未回到主线程的投递（只在主线程改；关停时靠它发回执）
         self._clients: dict[int, Client] = {}
@@ -577,7 +585,7 @@ class Daemon:
             self._cmd_ask(c, req)
             return
         if cmd == "slots":
-            self._reply_once(c, {"event": "slots", "slots": self._slots_view()})
+            self._reply_once(c, self._cmd_slots(req))
         elif cmd == "release":
             self._reply_once(c, self._cmd_release(req))
         elif cmd == "status":
@@ -613,6 +621,24 @@ class Daemon:
             rec["state_key"] = "confirming" if slot in self._confirming else STATE_KEYS.get(rec["state"], rec["state"])
         return view
 
+    def _cmd_slots(self, req: dict) -> dict:
+        """看槽位；带了身份就顺手把本项目租约的窗格刷新成请求方所在的那个（没租就只看）。"""
+        try:
+            leased_by = req.get("leased_by")
+            if isinstance(leased_by, str) and leased_by:
+                self._touch_pane(self._state().slots(), leased_by, req)
+            return {"event": "slots", "slots": self._slots_view()}
+        except StateError as e:
+            return {"event": "error", "kind": "state", "sent": False, "message": e.text(self._req_lang(req))}
+
+    def _touch_pane(self, slots: dict, leased_by: str, req: dict) -> str | None:
+        """本项目租着的槽位（没有就 None）；请求带了 pane 键、且记录的窗格与请求方此刻所在的不同，就改写。"""
+        existing = next((s for s, rec in slots.items() if rec["leased_by"] == leased_by), None)
+        if existing is not None and "pane" in req and slots[existing]["pane"] != _pane_of(req):
+            self._state().touch_pane(existing, _pane_of(req))
+            slots[existing]["pane"] = _pane_of(req)
+        return existing
+
     def _status(self) -> dict:
         return {"event": "status", "pid": os.getpid(), "subscribed": self._connected,
                 "disconnected_for": None if self._connected or self._disconnected_since is None
@@ -633,7 +659,7 @@ class Daemon:
         except StateError as e:
             return {"event": "error", "kind": "state", "sent": False, "message": e.text(lang)}
         if not slot and leased_by:
-            slot = next((s for s, rec in known.items() if rec["leased_by"] == leased_by), None)
+            slot = self._touch_pane(known, leased_by, req)  # 释放本项目的槽位；拒绝时租约还在，窗格照样刷新
             if slot is None:
                 return {"event": "error", "kind": "no_lease", "sent": False, "message": texts.t("daemon.no_lease", lang)}
         if not slot and not leased_by:
@@ -671,8 +697,13 @@ class Daemon:
             return
         assert isinstance(payload, dict)
         state = self._state()
-        slots = state.slots()  # 这次 ask 里租约文件只读这一次；acquire() 内部会再读一次，那是状态层的事
-        existing = next((s for s, rec in slots.items() if rec["leased_by"] == leased_by), None)
+        pane, require_confirmed = _pane_of(req), req.get("require_confirmed") is True
+        try:
+            slots = state.slots()  # 视图只在这里读一次；刷新窗格与 acquire() 各自再读写一次，那是状态层的事
+            existing = self._touch_pane(slots, leased_by, req)  # 同一项目换了窗格再问：手机消息要注到新窗格
+        except StateError as e:
+            self._reply_once(c, {"event": "error", "kind": "state", "sent": False, "message": e.text(lang)})
+            return
         if existing in self._pending:
             self._reply_once(c, {"event": "error", "kind": "busy", "sent": False, "message": texts.t("daemon.busy.pending", lang, slot=existing)})
             return
@@ -684,13 +715,14 @@ class Daemon:
                 # 同一个目标复用自己的租约（一个目标一个 topic），不刷新 leased_at——那是租约起点，不是上次提问时间
                 lease = Lease(slot=existing, topic=state.topic_of(existing), subscribed=slots[existing]["subscribed"])
             else:
-                lease = state.acquire(leased_by, self._active())
+                lease = state.acquire(leased_by, self._active(), require_confirmed=require_confirmed, pane=pane)
         except NeedsUserDecision as e:
             cands = [{"slot": s, "subscribed": slots[s]["subscribed"]} for s in e.candidates]
             listed = (", ".join(texts.t("daemon.candidate.confirmed" if x["subscribed"] else "daemon.candidate.unconfirmed", lang, slot=x["slot"]) for x in cands)
                       if cands else texts.t("daemon.no_free_slot.none", lang))
+            key = "daemon.no_confirmed_slot" if require_confirmed else "daemon.no_free_slot"  # 离席时槽位未必全满，新建的也没人过闸：不指 add-slot
             self._reply_once(c, {"event": "error", "kind": "no_free_slot", "sent": False, "candidates": cands,
-                                 "message": texts.t("daemon.no_free_slot", lang, candidates=listed)})
+                                 "message": texts.t(key, lang, candidates=listed)})
             return
         except StateError as e:
             self._reply_once(c, {"event": "error", "kind": "state", "sent": False, "message": e.text(lang)})
@@ -934,21 +966,31 @@ class Daemon:
     # ---------------------------------------------------------------- 无 pending：注入 / 回执 / 控制按钮
 
     def deliver(self, slot: str, event: dict) -> None:
-        """该槽位没有提问在等：这是用户的主动指令，排给注入线程。租约在这里（主线程）读，注入线程不碰状态。"""
+        """该槽位没有提问在等：这是用户的主动指令，排给注入线程。租约在这里（主线程）读，注入线程不碰状态。
+
+        注入目标是租约记的窗格（占用者最近一次跑命令所在的 pane），不是租约主体：主体是项目，herdr 不认识它。
+        有租约却没有窗格（不在 herdr 里租的，或升级前留下的旧租约）就直接发「未送达」回执，不排队。
+        """
         text = event.get("message")
         if not isinstance(text, str):
             text = ""
         mid = str(event.get("id"))
         try:
-            leased_by = self._state().slots().get(slot, {}).get("leased_by")
+            rec = self._state().slots().get(slot, {})
         except StateError as e:
             # 租约文件坏了不能让一条手机消息把 daemon 打死；回执也不带本机路径
             LOG.error("读租约失败 slot=%s id=%s：%s", slot, mid, e)
             self._settle(slot, mid, inject.Outcome(False, "error", None, None, texts.t("receipt.lease_unreadable", self.lang), self.lang))
             return
-        LOG.info("无 pending 的消息 slot=%s id=%s，排队注入 target=%s", slot, mid, leased_by)
+        leased_by, pane = rec.get("leased_by"), rec.get("pane")
+        if leased_by and not pane:
+            LOG.info("无 pending 的消息 slot=%s id=%s，租约没有窗格 target=%s", slot, mid, leased_by)
+            # 回执正文只带槽位：租约主体是本机路径，不上手机；target 只进日志
+            self._settle(slot, mid, inject.Outcome(False, "pane_missing", leased_by, None, texts.t("receipt.no_pane", self.lang, slot=slot), self.lang))
+            return
+        LOG.info("无 pending 的消息 slot=%s id=%s，排队注入 target=%s pane=%s", slot, mid, leased_by, pane)
         self._inflight[mid] = slot
-        self._inject_q.put((slot, leased_by, mid, text))
+        self._inject_q.put((slot, pane, mid, text))
 
     def _inject_loop(self) -> None:
         """注入线程：只跑 herdr 子进程，结果作为 _delivered 事件回主线程。串行——一个槽位同一时刻只处理一条、按到达顺序。"""
@@ -956,12 +998,12 @@ class Daemon:
             job = self._inject_q.get()
             if job is None:
                 return
-            slot, leased_by, mid, text = job
+            slot, pane, mid, text = job
             try:  # 关停中也照跑：这条是与主线程的排空竞争到的，跑完在宽限期内回来就能正常落地
-                outcome = inject.deliver(slot, leased_by, text, run=self._herdr, lang=self.lang)
+                outcome = inject.deliver(slot, pane, text, run=self._herdr, lang=self.lang)
             except Exception as e:  # 注入层不该抛；真抛了也不能让线程死掉、让后面的投递永远排队
                 LOG.error("注入异常 slot=%s id=%s：%s", slot, mid, type(e).__name__, exc_info=True)
-                outcome = inject.Outcome(False, "error", leased_by, None, texts.t("receipt.error", self.lang, error=type(e).__name__), self.lang)
+                outcome = inject.Outcome(False, "error", pane, None, texts.t("receipt.error", self.lang, error=type(e).__name__), self.lang)
             self._push({"event": "_delivered", "slot": slot, "id": mid, "outcome": outcome})
 
     def _on_delivered(self, ev: dict) -> None:

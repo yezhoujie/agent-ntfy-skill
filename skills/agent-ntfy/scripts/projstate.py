@@ -1,7 +1,8 @@
 """项目级状态文件：`<项目根>/.agent-ntfy/state.json`。
 
 给 agent 在任何一个会话里读的：本项目远程模式开没开、当前租着哪个槽位、过没过闸。
-它是**状态**不是配置——slot 随租约来去而变；开关由 `away on|off` 改；ask / confirm-sub / release 跑完顺手回写。
+它是**状态**不是配置——slot 随租约来去而变；开关由 `away on|off` 改；ask / confirm-sub / release 跑完顺手回写；
+`away status` 经 daemon 的租约校对（`reconcile()`），文件与 daemon 不一致时以 daemon 为准。
 
 三条边界：
 - 只在目录已存在时回写（`note()`）：没启用过远程模式的项目不会被建目录。
@@ -93,6 +94,20 @@ def save(root: Path, **fields) -> dict:
             pass
         raise
     return data
+
+
+def reconcile(root: Path, leased_by: str, slots_view: dict) -> tuple[dict, bool]:
+    """以 daemon 为准校对文件里的 slot / confirmed：在 slots 视图里按 leased_by 反查本项目真实租着哪个槽位。
+
+    有 ⇒ 期望 slot = 那个、confirmed = 其 subscribed；没有 ⇒ 期望两者都是 None。与文件不一致才改写，
+    返回 (校对后的状态, 是否改写过)。`away` 是人的开关，校对永远不碰它；两边都空时连文件都不建。
+    """
+    current = load(root)
+    mine = next((slot for slot, rec in slots_view.items() if rec.get("leased_by") == leased_by), None)
+    expected = {"slot": mine, "confirmed": bool(slots_view[mine].get("subscribed")) if mine else None}
+    if all(current.get(k) == v for k, v in expected.items()):
+        return current, False
+    return save(root, **expected), True
 
 
 def note(**fields) -> None:

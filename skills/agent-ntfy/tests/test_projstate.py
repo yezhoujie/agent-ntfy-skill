@@ -107,32 +107,90 @@ class RootAndDirTest(unittest.TestCase):
         self.assertEqual(projstate.load(root)["slot"], "slot1")
 
 
+class ReconcileTest(unittest.TestCase):
+    """reconcile：以 daemon 的 slots 视图为准校对文件里的 slot / confirmed；away 永远不动。"""
+
+    ME = "proj:/w/me"
+
+    def view(self, **owned):
+        """一份 slots 视图：owned = {slot: (leased_by, subscribed)}，其余槽位未分配。"""
+        v = {f"slot{i}": {"state": "未分配", "subscribed": False, "leased_by": None, "leased_at": None, "pane": None} for i in range(1, 4)}
+        for slot, (who, sub) in owned.items():
+            v[slot].update({"state": "已租用·空闲", "subscribed": sub, "leased_by": who, "leased_at": "2026-01-01T00:00:00+08:00"})
+        return v
+
+    def setUp(self):
+        self.root = plain_dir(self)
+        projstate.ensure(self.root)
+
+    # 文件有 · daemon 有 · 一致：不改写，updated 不动
+    def test_consistent_is_not_rewritten(self):
+        projstate.save(self.root, away=True, slot="slot2", confirmed=True)
+        before = projstate.load(self.root)
+        st, corrected = projstate.reconcile(self.root, self.ME, self.view(slot2=(self.ME, True)))
+        self.assertFalse(corrected)
+        self.assertEqual(st, before)
+        self.assertEqual(projstate.load(self.root), before)
+
+    # 文件有 · daemon 有 · 不一致（槽位号 / 过闸位）：以 daemon 为准改写；away 不动
+    def test_mismatch_is_corrected_from_daemon(self):
+        projstate.save(self.root, away=True, slot="slot1", confirmed=False)
+        st, corrected = projstate.reconcile(self.root, self.ME, self.view(slot1=("proj:/w/other", True), slot3=(self.ME, True)))
+        self.assertTrue(corrected)
+        self.assertEqual((st["away"], st["slot"], st["confirmed"]), (True, "slot3", True))
+        self.assertEqual((projstate.load(self.root)["slot"], projstate.load(self.root)["confirmed"]), ("slot3", True))
+        st, corrected = projstate.reconcile(self.root, self.ME, self.view(slot3=(self.ME, False)))  # 只有过闸位不同也算
+        self.assertEqual((corrected, st["slot"], st["confirmed"]), (True, "slot3", False))
+
+    # 文件有 · daemon 无：本项目的租约已不在（被 release / daemon 重建）⇒ 清掉 slot / confirmed
+    def test_file_has_lease_daemon_does_not(self):
+        projstate.save(self.root, away=False, slot="slot1", confirmed=True)
+        st, corrected = projstate.reconcile(self.root, self.ME, self.view(slot1=("proj:/w/other", True)))
+        self.assertTrue(corrected)
+        self.assertEqual((st["away"], st["slot"], st["confirmed"]), (False, None, None))
+        self.assertEqual(projstate.load(self.root)["slot"], None)
+
+    # 文件无 · daemon 有：文件里没记（另一台会话租的）⇒ 写上
+    def test_file_empty_daemon_has_lease(self):
+        st, corrected = projstate.reconcile(self.root, self.ME, self.view(slot2=(self.ME, False)))
+        self.assertTrue(corrected)
+        self.assertEqual((st["slot"], st["confirmed"]), ("slot2", False))
+        self.assertEqual((projstate.load(self.root)["slot"], projstate.load(self.root)["confirmed"]), ("slot2", False))
+        self.assertIsNone(projstate.load(self.root)["away"])  # 校对不碰开关
+
+    # 文件无 · daemon 无：什么都不写，连文件都不建
+    def test_both_empty_writes_nothing(self):
+        st, corrected = projstate.reconcile(self.root, self.ME, self.view())
+        self.assertEqual((st, corrected), ({}, False))
+        self.assertFalse(projstate.state_path(self.root).exists())
+
+
 class AwayCommandTest(unittest.TestCase):
     """away on / off / status 不需要 daemon。"""
 
     def test_on_off_status(self):
         root, sub = git_repo(self)
         with chdir(sub):
-            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "on"], env=ta.HERDR)
+            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "on"], env=ta.HERDR, root=ta.CWD)
             self.assertEqual((code, err), (0, ""))
             self.assertIn("开", out)
             st = json.loads((root / projstate.DIR_NAME / "state.json").read_text(encoding="utf-8"))
-            self.assertEqual((st["away"], st["target"], st["slot"]), (True, "wD:p1", None))
+            self.assertEqual((st["away"], st["target"], st["slot"]), (True, f"proj:{root}", None))
 
-            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "status"], env=ta.HERDR)
+            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "status"], env=ta.HERDR, root=ta.CWD)
             self.assertEqual(code, 0)
             self.assertIn(ta.Z("cli.away.state.on"), out)
             self.assertIn(ta.Z("cli.away.slot.none"), out)
 
-            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "off"], env=ta.HERDR)
+            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "off"], env=ta.HERDR, root=ta.CWD)
             self.assertEqual(code, 0)
             self.assertFalse(json.loads((root / projstate.DIR_NAME / "state.json").read_text(encoding="utf-8"))["away"])
 
-            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "status", "--json"])
+            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "status", "--json"], root=ta.CWD)
             self.assertEqual(code, 0)
             self.assertEqual(json.loads(out)["away"], False)
 
-            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "status"], env={"AGENT_NTFY_LANG": "en"})
+            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "status"], env={"AGENT_NTFY_LANG": "en"}, root=ta.CWD)
             self.assertEqual(code, 0)
             self.assertIsNone(CJK.search(out + err), (out, err))
             self.assertIn("off", out)
@@ -142,11 +200,11 @@ class AwayCommandTest(unittest.TestCase):
         root = plain_dir(self)
         with chdir(root):
             for action in ("status", "off"):
-                code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", action])
+                code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", action], root=ta.CWD)
                 self.assertEqual((code, err), (0, ""), action)
                 self.assertIn(ta.Z("cli.away.not_enabled"), out)
                 self.assertFalse((root / projstate.DIR_NAME).exists(), action)
-            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "status", "--json"])
+            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "status", "--json"], root=ta.CWD)
             self.assertEqual((code, out), (0, "{}\n"))
 
     # 目录在、文件不在（或坏了）：算已启用，按空状态显示，不说「没有目录」
@@ -154,7 +212,7 @@ class AwayCommandTest(unittest.TestCase):
         root = plain_dir(self)
         projstate.ensure(root)
         with chdir(root):
-            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "status"])
+            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "status"], root=ta.CWD)
             self.assertEqual(code, 0)
             self.assertNotIn(ta.Z("cli.away.not_enabled"), out)
             self.assertIn(ta.Z("cli.away.state.off"), out)
@@ -165,9 +223,62 @@ class AwayCommandTest(unittest.TestCase):
         root = plain_dir(self)
         (root / projstate.DIR_NAME).write_text("not a dir", encoding="utf-8")
         with chdir(root):
-            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "on"])
+            code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "on"], root=ta.CWD)
             self.assertEqual((code, out), (3, ""))
             self.assertIn("状态文件读写失败", err)
+
+    # daemon 没跑：status 照旧读文件，末尾标「未校对」；--json 打文件原文；文件不动
+    def test_status_without_daemon_is_marked_unverified(self):
+        root = plain_dir(self)
+        projstate.ensure(root)
+        projstate.save(root, away=True, slot="slot1", confirmed=True)
+        before = projstate.state_path(root).read_text(encoding="utf-8")
+        code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "status"], root=root)
+        self.assertEqual(code, 0)
+        self.assertIn(ta.Z("cli.away.slot", slot="slot1", gate=ta.Z("cli.slots.gate.confirmed")), out)
+        self.assertEqual(out.rstrip("\n").splitlines()[-1], ta.Z("cli.away.unverified"))
+        self.assertNotIn(ta.Z("cli.away.corrected"), out)
+        code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "status", "--json"], root=root)
+        self.assertEqual((code, json.loads(out)["slot"]), (0, "slot1"))
+        self.assertEqual(projstate.state_path(root).read_text(encoding="utf-8"), before)
+        code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "status"], env={"AGENT_NTFY_LANG": "en"}, root=root)
+        self.assertIsNone(CJK.search(out + err), (out, err))
+
+    # daemon 在跑：以它的租约为准校对文件——文件漏记 / 记错 / 租约已不在，三种都改写并提示「已校正」；一致就不提示
+    def test_status_is_reconciled_against_the_daemon(self):
+        h = Harness(self)
+        root = plain_dir(self)
+        projstate.ensure(root)
+        projstate.save(root, away=True)
+        h.state.acquire(f"proj:{root}", pane="wD:p1")  # 另一个会话租的，文件里没记
+        code, out, err = ta.run(["--home", str(h.home), "away", "status"], root=root)
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn(ta.Z("cli.away.slot", slot="slot1", gate=ta.Z("cli.slots.gate.confirmed")), out)
+        self.assertIn(ta.Z("cli.away.corrected"), out)
+        self.assertNotIn(ta.Z("cli.away.unverified"), out)
+        st = projstate.load(root)
+        self.assertEqual((st["away"], st["slot"], st["confirmed"]), (True, "slot1", True))
+        code, out, err = ta.run(["--home", str(h.home), "away", "status"], root=root)  # 已一致：不再提示
+        self.assertEqual(code, 0)
+        self.assertNotIn(ta.Z("cli.away.corrected"), out)
+        h.state.release("slot1")  # 租约在别处被释放了：文件里的 slot 要清掉
+        code, out, err = ta.run(["--home", str(h.home), "away", "status", "--json"], root=root)  # --json 同样先校对
+        self.assertEqual(code, 0)
+        self.assertEqual((json.loads(out)["slot"], json.loads(out)["confirmed"], json.loads(out)["away"]), (None, None, True))
+        self.assertIsNone(projstate.load(root)["slot"])
+
+    # daemon 在跑但租约读不出来（租约文件坏了）：stderr 说明原因，文件不动，末尾照旧标「未校对」
+    def test_status_with_unreadable_leases_is_unverified_with_reason(self):
+        h = Harness(self)
+        root = plain_dir(self)
+        projstate.ensure(root)
+        projstate.save(root, away=True, slot="slot1", confirmed=True)
+        (h.home / "leases.json").write_text("{not json", encoding="utf-8")
+        code, out, err = ta.run(["--home", str(h.home), "away", "status"], root=root)
+        self.assertEqual(code, 0)
+        self.assertIn("leases.json", err)
+        self.assertEqual(out.rstrip("\n").splitlines()[-1], ta.Z("cli.away.unverified.error"))  # 不是「daemon 未运行」
+        self.assertEqual(projstate.load(root)["slot"], "slot1")
 
 
 class HooksTest(unittest.TestCase):
@@ -188,15 +299,15 @@ class HooksTest(unittest.TestCase):
         projstate.ensure(root)
         with chdir(root):
             self.reply_when_sent(h, "留固定目录")
-            code, out, err = ta.run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), ta.HERDR)
+            code, out, err = ta.run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), ta.HERDR, root=ta.CWD)
             self.assertEqual((code, out), (0, "留固定目录\n"))
             st = self.state(root)
-            self.assertEqual((st["slot"], st["confirmed"], st["target"]), ("slot1", True, "wD:p1"))
+            self.assertEqual((st["slot"], st["confirmed"], st["target"]), ("slot1", True, f"proj:{root}"))
             wait_until(lambda: len(h.client.clears) == 1)
-            code, out, err = ta.run(["--home", str(h.home), "release"], env=ta.HERDR)
+            code, out, err = ta.run(["--home", str(h.home), "release"], env=ta.HERDR, root=ta.CWD)
             self.assertEqual(code, 0)
             st = self.state(root)
-            self.assertEqual((st["slot"], st["confirmed"], st["target"]), (None, None, "wD:p1"))
+            self.assertEqual((st["slot"], st["confirmed"], st["target"]), (None, None, f"proj:{root}"))
 
     # 状态文件是坏的：已发出的 ask 照样退 0、回复照样到 stdout（回写只是顺手，绝不能把主事搞失败）
     def test_ask_survives_broken_state_file(self):
@@ -206,7 +317,7 @@ class HooksTest(unittest.TestCase):
         projstate.state_path(root).write_bytes(b"\xff")
         with chdir(root):
             self.reply_when_sent(h, "留固定目录")
-            code, out, err = ta.run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), ta.HERDR)
+            code, out, err = ta.run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), ta.HERDR, root=ta.CWD)
             self.assertEqual((code, out, err), (0, "留固定目录\n", ""))
             self.assertEqual(self.state(root)["slot"], "slot1")  # 坏文件被合法内容覆盖
 
@@ -217,18 +328,18 @@ class HooksTest(unittest.TestCase):
         projstate.ensure(root)
         with chdir(root):
             self.reply_when_sent(h, "答")
-            code, out, err = ta.run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), ta.HERDR)
+            code, out, err = ta.run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), ta.HERDR, root=ta.CWD)
             self.assertEqual(code, 0)
             wait_until(lambda: len(h.client.clears) == 1)
             self.assertEqual(self.state(root)["slot"], "slot1")
-            code, out, err = ta.run(["--home", str(h.home), "confirm-sub", "slot3", "--subscribed"], env=ta.HERDR)
+            code, out, err = ta.run(["--home", str(h.home), "confirm-sub", "slot3", "--subscribed"], env=ta.HERDR, root=ta.CWD)
             self.assertEqual(code, 0)
             self.assertEqual((self.state(root)["slot"], self.state(root)["confirmed"]), ("slot1", True))
             h.state.acquire("someone-else")  # 让 slot2 有租约可释放
-            code, out, err = ta.run(["--home", str(h.home), "release", "slot2"], env=ta.HERDR)
+            code, out, err = ta.run(["--home", str(h.home), "release", "slot2"], env=ta.HERDR, root=ta.CWD)
             self.assertEqual(code, 0)
             self.assertEqual(self.state(root)["slot"], "slot1")
-            code, out, err = ta.run(["--home", str(h.home), "release", "slot1"], env=ta.HERDR)  # 显式释放的正是本项目那个 ⇒ 清
+            code, out, err = ta.run(["--home", str(h.home), "release", "slot1"], env=ta.HERDR, root=ta.CWD)  # 显式释放的正是本项目那个 ⇒ 清
             self.assertEqual(code, 0)
             self.assertIsNone(self.state(root)["slot"])
 
@@ -237,7 +348,7 @@ class HooksTest(unittest.TestCase):
         root = plain_dir(self)
         projstate.ensure(root)
         with chdir(root):
-            code, out, err = ta.run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), ta.HERDR)
+            code, out, err = ta.run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), ta.HERDR, root=ta.CWD)
             self.assertEqual((code, out), (4, ""))
             st = self.state(root)
             self.assertEqual((st["slot"], st["confirmed"]), ("slot1", False))
@@ -248,7 +359,7 @@ class HooksTest(unittest.TestCase):
         projstate.ensure(root)
         projstate.save(root, slot="slot2", confirmed=False)  # ask 退 4 之后的样子
         with chdir(root):
-            code, out, err = ta.run(["--home", str(h.home), "confirm-sub", "slot2", "--subscribed"], env=ta.HERDR)
+            code, out, err = ta.run(["--home", str(h.home), "confirm-sub", "slot2", "--subscribed"], env=ta.HERDR, root=ta.CWD)
             self.assertEqual(code, 0)
             st = self.state(root)
             self.assertEqual((st["slot"], st["confirmed"]), ("slot2", True))
@@ -258,7 +369,7 @@ class HooksTest(unittest.TestCase):
         root = plain_dir(self)
         with chdir(root):
             self.reply_when_sent(h, "答")
-            code, out, err = ta.run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), ta.HERDR)
+            code, out, err = ta.run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), ta.HERDR, root=ta.CWD)
             self.assertEqual(code, 0)
             self.assertFalse((root / projstate.DIR_NAME).exists())
 

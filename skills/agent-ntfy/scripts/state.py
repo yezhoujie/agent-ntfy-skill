@@ -2,7 +2,8 @@
 
 两层分开存：
     密钥层  topic 名的池子（JSON 数组），存 macOS 钥匙串，几乎不变
-    租约层  各槽位的订阅状态与当前占用者，存明文 JSON，频繁变
+    租约层  各槽位的订阅状态与当前占用者（leased_by：项目 id，由 CLI 给，本层不解释形态）
+            与占用者最近一次跑命令所在的 herdr 窗格（pane，可空），存明文 JSON，频繁变
 
 topic 名就是密码（公共 ntfy 实例知道名字即可读写、可对本机 agent 下指令），
 所以租约文件里只出现槽位号（slot1、slot2……），绝不出现 topic 名。
@@ -177,7 +178,7 @@ def _slot_index(slot):
 
 
 def _empty_record():
-    return {"subscribed": False, "leased_by": None, "leased_at": None}
+    return {"subscribed": False, "leased_by": None, "leased_at": None, "pane": None}
 
 
 def _now():
@@ -280,6 +281,8 @@ class State:
                 rec["subscribed"] = got.get("subscribed") is True  # 字符串 "false" 之类脏值一律不算已订阅
                 rec["leased_by"] = got.get("leased_by") or None
                 rec["leased_at"] = got.get("leased_at") if rec["leased_by"] else None
+                pane = got.get("pane")  # 旧版文件没有这个字段：当 None
+                rec["pane"] = pane if rec["leased_by"] and isinstance(pane, str) and pane else None
             leases[slot] = rec
         return leases
 
@@ -313,21 +316,23 @@ class State:
 
     # -------- 分配 / 替换 / 新建 / 释放
 
-    def acquire(self, leased_by: str, active: Collection[str] = ()):
+    def acquire(self, leased_by: str, active: Collection[str] = (), *, require_confirmed: bool = False, pane: str | None = None):
         """租一个槽位。
 
         有「未分配」槽位就直接用（已过闸的优先，省一次手机确认；其余按槽位号）。
         全部已租用则抛 NeedsUserDecision，带上可替换的空闲槽位清单，由调用方去问用户。
+        require_confirmed（用户离席时）：只考虑已过闸的槽位——空闲的未过闸槽位不租，候选里也不列，
+        因为没人在键盘旁过闸。
         """
         leases = self._load_leases()
         _check_active(leases, active)
-        free = [s for s, r in leases.items() if not r["leased_by"]]
+        free = [s for s, r in leases.items() if not r["leased_by"] and (r["subscribed"] or not require_confirmed)]
         if free:
             slot = min(free, key=lambda s: (not leases[s]["subscribed"], _slot_index(s)))
-            return self._grant(leases, slot, leased_by)
-        raise NeedsUserDecision(s for s in leases if s not in active)
+            return self._grant(leases, slot, leased_by, pane)
+        raise NeedsUserDecision(s for s, r in leases.items() if s not in active and r["leased_by"] and (r["subscribed"] or not require_confirmed))
 
-    def replace(self, slot: str, leased_by: str, active: Collection[str] = ()):
+    def replace(self, slot: str, leased_by: str, active: Collection[str] = (), *, require_confirmed: bool = False, pane: str | None = None):
         """把一个「已租用·空闲」槽位转给新的使用者。活跃槽位拒绝——它上面正有人等回复。"""
         leases = self._load_leases()
         _require(leases, slot)
@@ -337,15 +342,27 @@ class State:
             raise StateError("replace.active", slot=slot)
         if st is SlotState.UNASSIGNED:
             raise StateError("replace.unassigned", slot=slot)
-        return self._grant(leases, slot, leased_by)
+        if require_confirmed and not leases[slot]["subscribed"]:
+            raise StateError("replace.unconfirmed", slot=slot)
+        return self._grant(leases, slot, leased_by, pane)
 
-    def _grant(self, leases, slot, leased_by):
+    def _grant(self, leases, slot, leased_by, pane):
         if not leased_by:
             raise StateError("grant.empty_owner")
         leases[slot]["leased_by"] = leased_by
         leases[slot]["leased_at"] = _now()
+        leases[slot]["pane"] = pane or None
         self._save_leases(leases)
         return Lease(slot=slot, topic=self.topic_of(slot), subscribed=leases[slot]["subscribed"])
+
+    def touch_pane(self, slot: str, pane: str | None):
+        """占用者又跑了一次命令：只刷新它此刻所在的窗格（None = 不在 herdr 里），别的字段不动。"""
+        leases = self._load_leases()
+        _require(leases, slot)
+        if not leases[slot]["leased_by"]:
+            raise StateError("touch.unassigned", slot=slot)
+        leases[slot]["pane"] = pane or None
+        self._save_leases(leases)
 
     def release(self, slot: str, active: Collection[str] = ()):
         """释放租约，槽位回到「未分配」。订阅状态保留——可达性闸只需过一次。
@@ -362,6 +379,7 @@ class State:
             raise StateError("release.unassigned", slot=slot)
         leases[slot]["leased_by"] = None
         leases[slot]["leased_at"] = None
+        leases[slot]["pane"] = None
         self._save_leases(leases)
 
     def mark_subscribed(self, slot: str):

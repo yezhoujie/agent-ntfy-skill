@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import tempfile
 import threading
 import time
@@ -13,6 +14,7 @@ from unittest import mock
 
 import agent_ntfy
 import inject
+import projstate
 import texts
 from tests.test_daemon import Harness, wait_until
 from tests.test_render import SAMPLE
@@ -22,44 +24,110 @@ def Z(key, **fmt):
     return texts.t(key, "zh", **fmt)
 
 
-def run(argv, stdin_text="", env=None):
-    """跑 main()，返回 (退出码, stdout, stderr)。缺省把固定文案定成 zh（既有用例断言的都是中文）；env 里给 AGENT_NTFY_LANG 可覆盖。"""
+CWD = object()  # run(root=CWD)：不钉项目根，让 CLI 从真实 cwd 解析（专门验这条解析路径的用例才用）
+
+
+def run(argv, stdin_text="", env=None, root=None):
+    """跑 main()，返回 (退出码, stdout, stderr)。缺省把固定文案定成 zh（既有用例断言的都是中文）；env 里给 AGENT_NTFY_LANG 可覆盖。
+
+    项目根缺省钉在一个一次性的临时目录：身份 / tag / 状态文件都以它为准，测试进程落在哪个仓里、那个仓开没开远程模式
+    都不影响结果，也不会把那个仓的状态文件改掉。root 给了目录就钉在那；给 CWD 才走真实的 cwd 解析。
+    """
     out, errbuf = io.StringIO(), io.StringIO()
-    environ = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_") and k != "AGENT_NTFY_LANG"}
+    environ = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_") and k not in ("AGENT_NTFY_LANG", "AGENT_NTFY_TARGET")}
     environ["AGENT_NTFY_LANG"] = "zh"
     environ.update(env or {})
-    with mock.patch.dict(os.environ, environ, clear=True), mock.patch("sys.stdin", io.StringIO(stdin_text)), \
-            contextlib.redirect_stdout(out), contextlib.redirect_stderr(errbuf):
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(mock.patch.dict(os.environ, environ, clear=True))
+        stack.enter_context(mock.patch("sys.stdin", io.StringIO(stdin_text)))
+        stack.enter_context(contextlib.redirect_stdout(out))
+        stack.enter_context(contextlib.redirect_stderr(errbuf))
+        if root is None:
+            root = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix="proj-"))).resolve()
+        if root is not CWD:
+            stack.enter_context(mock.patch.object(projstate, "project_root", return_value=Path(root)))
         code = agent_ntfy.main(argv)
     return code, out.getvalue(), errbuf.getvalue()
+
+
+def temp_root(case):
+    """一个临时项目根（短路径、已 resolve）。"""
+    root = Path(tempfile.mkdtemp(prefix="proj-")).resolve()
+    case.addCleanup(shutil.rmtree, root, ignore_errors=True)
+    return root
+
+
+def owner(root):
+    """项目根对应的租约主体。"""
+    return f"proj:{root}"
 
 
 HERDR = {"HERDR_ENV": "1", "HERDR_PANE_ID": "wD:p1"}
 
 
 class IdentityTest(unittest.TestCase):
-    def test_inside_herdr_uses_pane_id_for_both(self):
-        with mock.patch.dict(os.environ, HERDR):
-            self.assertEqual(agent_ntfy.identity(), ("wD:p1", "wD:p1"))
+    """identity() = Identity(leased_by, pane, tag)：租约主体是项目，pane 只在 herdr 里才有，tag 是项目目录名。"""
 
-    def test_outside_herdr_is_host_and_session_id_with_no_tag(self):
-        env = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_") and k != "AGENT_NTFY_TARGET"}
-        with mock.patch.dict(os.environ, env, clear=True):
-            leased_by, tag = agent_ntfy.identity()
-        # 会话 id 而不是父进程 pid：agent 的工具壳每次调用父进程都不同，用它会每问一次烧一个槽位
-        self.assertEqual(leased_by, f"host:{os.uname().nodename}|sid:{os.getsid(0)}")
-        self.assertNotIn("pid:", leased_by)
-        self.assertIsNone(tag)
+    def setUp(self):
+        self.root = temp_root(self)
+        patcher = mock.patch.object(projstate, "project_root", return_value=self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
-    def test_outside_herdr_env_override_wins(self):
-        env = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_")}
-        env["AGENT_NTFY_TARGET"] = "my-project"
-        with mock.patch.dict(os.environ, env, clear=True):
-            self.assertEqual(agent_ntfy.identity(), ("my-project", None))
+    def env(self, **extra):
+        base = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_") and k != "AGENT_NTFY_TARGET"}
+        return mock.patch.dict(os.environ, {**base, **extra}, clear=True)
 
-    def test_inside_herdr_ignores_override(self):
-        with mock.patch.dict(os.environ, {**HERDR, "AGENT_NTFY_TARGET": "my-project"}):
-            self.assertEqual(agent_ntfy.identity(), ("wD:p1", "wD:p1"))
+    def test_outside_herdr_owner_is_the_project_and_tag_its_dir_name(self):
+        with self.env():
+            ident = agent_ntfy.identity()
+        self.assertEqual(ident, (owner(self.root), None, self.root.name))
+        self.assertEqual((ident.leased_by, ident.pane, ident.tag), (owner(self.root), None, self.root.name))
+        self.assertNotIn("sid:", ident.leased_by)  # 不再是主机名 + 会话 id
+
+    def test_inside_herdr_adds_pane_but_owner_is_still_the_project(self):
+        with self.env(**HERDR):
+            self.assertEqual(agent_ntfy.identity(), (owner(self.root), "wD:p1", self.root.name))
+
+    def test_pane_needs_herdr_env_not_just_a_pane_id(self):
+        with self.env(HERDR_PANE_ID="wD:p1"):  # 残留的变量：不在 herdr 里就没有注入目标
+            self.assertIsNone(agent_ntfy.identity().pane)
+        with self.env(HERDR_ENV="1"):
+            self.assertIsNone(agent_ntfy.identity().pane)
+
+    def test_target_override_wins_inside_and_outside_herdr(self):
+        with self.env(AGENT_NTFY_TARGET="my-project"):
+            self.assertEqual(agent_ntfy.identity(), ("my-project", None, self.root.name))
+        with self.env(AGENT_NTFY_TARGET="my-project", **HERDR):
+            self.assertEqual(agent_ntfy.identity(), ("my-project", "wD:p1", self.root.name))
+
+    def test_tag_falls_back_to_owner_when_root_has_no_name(self):
+        with mock.patch.object(projstate, "project_root", return_value=Path("/")), self.env():
+            ident = agent_ntfy.identity()
+        self.assertEqual(ident.tag, ident.leased_by)
+
+
+class RequireConfirmedTest(unittest.TestCase):
+    """require_confirmed()：本项目开着远程模式（state.json 的 away 恰为 true）才为真。"""
+
+    def setUp(self):
+        self.root = temp_root(self)
+        patcher = mock.patch.object(projstate, "project_root", return_value=self.root)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_false_without_dir_or_switch(self):
+        self.assertFalse(agent_ntfy.require_confirmed())  # 没启用过
+        projstate.ensure(self.root)
+        self.assertFalse(agent_ntfy.require_confirmed())  # 目录在、文件不在
+        projstate.save(self.root, away=False)
+        self.assertFalse(agent_ntfy.require_confirmed())
+        projstate.save(self.root, away="true")  # 脏值不算开
+        self.assertFalse(agent_ntfy.require_confirmed())
+
+    def test_true_when_away_is_on(self):
+        projstate.save(self.root, away=True)
+        self.assertTrue(agent_ntfy.require_confirmed())
 
 
 class AskExitCodesTest(unittest.TestCase):
@@ -73,12 +141,31 @@ class AskExitCodesTest(unittest.TestCase):
     # 0：拿到回复，stdout 是回复原文 + 一个换行，别的什么都不加
     def test_reply_exit_0(self):
         h = Harness(self)
+        root = temp_root(self)
         self.reply_when_sent(h, "留固定目录")
-        code, out, err = run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), HERDR)
+        code, out, err = run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), HERDR, root=root)
         self.assertEqual((code, out), (0, "留固定目录\n"))
         self.assertEqual(err, "")
-        self.assertEqual(h.client.published[0]["title"], "[wD:p1] " + SAMPLE["title"])  # leased_by / tag 来自环境
+        self.assertEqual(h.client.published[0]["title"], f"[{root.name}] " + SAMPLE["title"])  # tag 是项目目录名
+        rec = h.state.slots()["slot1"]
+        self.assertEqual((rec["leased_by"], rec["pane"]), (owner(root), "wD:p1"))  # 租约主体是项目，窗格来自环境
         wait_until(lambda: len(h.client.clears) == 1)
+
+    # 远程模式开着：只用已过闸的槽位——池里没有就退 4 报「全满」，不去租一个未过闸的
+    def test_away_on_requires_confirmed_slot(self):
+        h = Harness(self, pool_size=2, subscribed=("slot1",))
+        h.state.acquire("proj:/w/other")  # 唯一已过闸的被别的项目占着
+        root = temp_root(self)
+        projstate.save(root, away=True)
+        code, out, err = run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), HERDR, root=root)
+        self.assertEqual((code, out), (4, ""))
+        self.assertIn("slot1", err)
+        self.assertNotIn("slot2", err)  # 未过闸的不在候选里
+        self.assertEqual(h.state.slots()["slot2"]["leased_by"], None)
+        projstate.save(root, away=False)  # 关掉就照旧：租 slot2，提示去过闸
+        code, out, err = run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), HERDR, root=root)
+        self.assertEqual(code, 4)
+        self.assertIn("confirm-sub slot2", err)
 
     # 1：校验不过，消息未发送，stdout 空，不需要 daemon 在跑
     def test_invalid_input_exit_1_without_daemon(self):
@@ -141,8 +228,9 @@ class AskExitCodesTest(unittest.TestCase):
 
     def test_busy_exit_4(self):
         h = Harness(self)
-        sock, first, events = h.ask(leased_by="wD:p1")
-        code, out, err = run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), HERDR)
+        root = temp_root(self)
+        sock, first, events = h.ask(leased_by=owner(root))  # 同一项目（别的窗格 / 会话）已有提问挂着
+        code, out, err = run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), HERDR, root=root)
         self.assertEqual((code, out), (4, ""))
         self.assertIn("等回复", err)
         sock.close()
@@ -161,6 +249,27 @@ class AskExitCodesTest(unittest.TestCase):
         self.assertEqual((code, out), (130, ""))
         self.assertIn("中断", err)
         self.assertIn("已发送", err)
+
+    # cwd 已被删（项目根定不出来）：退 3 + 一句人读的「未发送」，不是 traceback、更不是冒充「输入无效」的退 1
+    def test_unresolvable_project_root_exits_3_not_traceback(self):
+        h = Harness(self)
+        gone = FileNotFoundError(2, "No such file or directory")
+        with mock.patch.object(Path, "cwd", side_effect=gone):
+            code, out, err = run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), HERDR, root=CWD)
+        self.assertEqual((code, out), (3, ""))
+        self.assertIn("消息未发送", err)
+        self.assertNotIn("Traceback", err)
+        self.assertEqual(h.client.published, [])
+        for argv in (["slots"], ["release"]):
+            with mock.patch.object(Path, "cwd", side_effect=gone):
+                code, out, err = run(["--home", str(h.home), *argv], root=CWD)
+            self.assertEqual((code, out), (3, ""), argv)
+            self.assertNotIn("Traceback", err)
+            self.assertIn("No such file", err)
+        with mock.patch.object(Path, "cwd", side_effect=gone):
+            code, out, err = run(["--home", str(h.home), "release", "slot1"], root=CWD)  # 指名槽位：用不着项目根
+        self.assertEqual(code, 3)  # slot1 没租约 ⇒ 无需释放（既有语义），不是项目根的错
+        self.assertIn("无需释放", err)
 
     # --timeout 必须是正数：在本地就拦，不用连 daemon
     def test_non_positive_timeout_rejected_locally(self):
@@ -189,17 +298,18 @@ class AskExitCodesTest(unittest.TestCase):
 class OtherCommandsTest(unittest.TestCase):
     def test_slots_release_status_confirm(self):
         h = Harness(self)
+        root = temp_root(self)
         code, out, err = run(["--home", str(h.home), "slots"])
         self.assertEqual(code, 0)
         self.assertIn("slot1", out)
         for t in h.state.topics():
             self.assertNotIn(t, out)
-        sock, first, events = h.ask(leased_by="wD:p1")
+        sock, first, events = h.ask(leased_by=owner(root))
         h.client.message(h.topic("slot1"), "答")
         next(events)
         sock.close()
         wait_until(lambda: len(h.client.clears) == 1)
-        code, out, err = run(["--home", str(h.home), "release"], env=HERDR)  # 不给槽位：释放本窗格租的那个
+        code, out, err = run(["--home", str(h.home), "release"], env=HERDR, root=root)  # 不给槽位：释放本项目租的那个
         self.assertEqual((code, out), (0, "已释放 slot1\n"))
         code, out, err = run(["--home", str(h.home), "release", "slot1"])
         self.assertEqual(code, 3)
@@ -216,6 +326,28 @@ class OtherCommandsTest(unittest.TestCase):
         for t in h.store.load() or []:
             self.assertNotIn(t, out)
 
+    # slots 每行：租约主体打完整值（proj:<路径> 可复制），窗格有就加在行尾；顺手把本项目租约的窗格刷新成当前窗格
+    def test_slots_prints_full_owner_and_pane_and_refreshes_own_pane(self):
+        h = Harness(self)
+        root = temp_root(self)
+        h.state.acquire("proj:/w/other/very/long/path", pane="wX:p9")
+        h.state.acquire(owner(root), pane="wD:p1")
+        h.state.acquire("host:old|sid:1")  # 升级前留下的旧租约：没有窗格，照常显示
+        code, out, err = run(["--home", str(h.home), "slots"], env={**HERDR, "HERDR_PANE_ID": "wD:p2"}, root=root)
+        self.assertEqual((code, err), (0, ""))
+        lines = out.splitlines()
+        self.assertIn("proj:/w/other/very/long/path", lines[0])
+        self.assertTrue(lines[0].endswith("wX:p9"), lines[0])
+        self.assertIn(owner(root), lines[1])
+        self.assertTrue(lines[1].endswith("wD:p2"), lines[1])  # 刷新成本次跑命令的窗格
+        self.assertEqual(h.state.slots()["slot2"]["pane"], "wD:p2")
+        self.assertIn("host:old|sid:1", lines[2])
+        self.assertNotIn("None", lines[2])
+        self.assertEqual(h.state.slots()["slot1"]["pane"], "wX:p9")  # 别的项目的窗格不动
+        code, out, err = run(["--home", str(h.home), "slots"], root=root)  # 不在 herdr 里跑：本项目的窗格清空
+        self.assertEqual(code, 0)
+        self.assertIsNone(h.state.slots()["slot2"]["pane"])
+        self.assertFalse(out.splitlines()[1].rstrip().endswith("wD:p2"))
 
 
 class ConfirmSubTest(unittest.TestCase):

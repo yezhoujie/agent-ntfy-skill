@@ -6,7 +6,7 @@
     daemon [--detach|--status|--stop]
                             常驻订阅进程（唯一的 ntfy 订阅者）：前台跑 / 脱离会话跑 / 看状态 / 停掉
     slots                   看槽位池与租约状态
-    release [<槽位>]        释放租约；不给槽位就释放当前目标（本窗格）租的那个
+    release [<槽位>]        释放租约；不给槽位就释放本项目租的那个
     confirm-sub <槽位>      可达性确认闸：验「手机收得到通知」（要用户自己在终端跑：会显示 topic 名）
         [--subscribed]        用户已订阅、跳过显示 topic 那段直接发测试通知（agent 代跑用，非终端也行）
         [--show-topic]        只打印 topic 名就退出，不发（⚠️ 会进调用方的输出）
@@ -28,8 +28,11 @@ ask 的退出码（三种结局不能都表现为空输出）:
 除 daemon 外的子命令都是瘦客户端：经 unix socket 向 daemon 说话（一行 JSON 请求，若干行 JSON 事件），
 不读租约文件、不碰钥匙串。
 
+租约主体是项目（git 仓根，否则 cwd）：同一项目里任意窗格 / 会话共用一个槽位。每次跑命令都把本项目租约的
+注入窗格刷新成当前 herdr 窗格（不在 herdr 里 ⇒ 清空，手机消息走「未送达」回执）。卡片 Title 的 [<tag>] 是项目目录名。
+
 环境变量: AGENT_NTFY_HOME（默认 ~/.agent-ntfy）· HERDR_PANE_ID / HERDR_ENV（在 herdr 里时自动带上窗格标识）
-          AGENT_NTFY_TARGET（不在 herdr 里时指定「我是谁」，同一个值复用同一个槽位）
+          AGENT_NTFY_TARGET（覆盖租约主体「我是谁」，同一个值复用同一个槽位；herdr 内外都生效）
           AGENT_NTFY_LANG（固定文案的语言 zh / en；ask 的 JSON 里给了 lang 以它为准；都没有就 en）
 
 固定文案的语言只在这里解析一次（ask：JSON lang → AGENT_NTFY_LANG → en；其余子命令：AGENT_NTFY_LANG → en），
@@ -46,6 +49,7 @@ import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from typing import NamedTuple
 
 import projstate
 import texts
@@ -134,20 +138,40 @@ def read_events(sock: socket.socket) -> Iterator[dict]:
             yield ev
 
 
-def identity() -> tuple[str, str | None]:
-    """(leased_by, tag)：一个目标一个槽位，这个值决定「谁」在问。
+class Identity(NamedTuple):
+    """谁在问、往哪注、卡片上标什么。"""
 
-    herdr 内两者都是本窗格 id，不接受覆盖（窗格就是注入目标）。不在 herdr 时 tag 交给 daemon 用槽位名，
-    leased_by 先看 AGENT_NTFY_TARGET，没有就用主机名 + 会话 id——不用父进程 pid：agent 的工具壳每次调用
-    父进程都不同，那样每问一次就烧掉一个槽位。
+    leased_by: str  # 租约主体：项目 id（proj:<仓根>），AGENT_NTFY_TARGET 可覆盖；同一项目的任何窗格 / 会话共用一个槽位
+    pane: str | None  # 当前 herdr 窗格：手机消息注入到它；不在 herdr 里就是 None（注入走「未送达」回执）
+    tag: str  # 卡片 Title 的 [<tag>]：项目目录名
+
+
+def identity(root: Path | None = None) -> Identity:
+    """租约主体是项目（git 仓根，否则 cwd）而不是窗格：同一项目里换窗格、换会话、重置上下文都还是它，
+    不会每换一次就烧掉一个槽位。窗格另记（每次跑命令都刷新），只作注入目标。
+
+    root 不给就现查；cwd 已被删时 project_root() 抛 OSError，原样抛出——命令入口用 project_root_or_none() 收成人读报错。
     """
-    pane = os.environ.get("HERDR_PANE_ID")
-    if os.environ.get("HERDR_ENV") and pane:
-        return pane, pane
-    target = os.environ.get("AGENT_NTFY_TARGET")
-    if target:
-        return target, None
-    return f"host:{socket.gethostname()}|sid:{os.getsid(0)}", None
+    root = root or projstate.project_root()
+    leased_by = os.environ.get("AGENT_NTFY_TARGET") or f"proj:{root}"
+    pane = (os.environ.get("HERDR_PANE_ID") or None) if os.environ.get("HERDR_ENV") else None
+    return Identity(leased_by, pane, root.name or leased_by)  # 根目录名为空（/）时退回项目 id
+
+
+def require_confirmed(root: Path | None = None) -> bool:
+    """本项目开着远程交互模式 ⇒ 只能用已过闸的槽位：没人在键盘旁替一个新槽位过闸。"""
+    root = root or projstate.project_root()
+    return projstate.exists(root) and projstate.load(root).get("away") is True
+
+
+def project_root_or_none(lang: str, *, not_sent: bool = False) -> Path | None:
+    """定项目根；定不出来（cwd 已被删）就打一句人读报错、返回 None，调用方退 3——不能让 traceback 退 1 冒充「输入无效」。"""
+    try:
+        return projstate.project_root()
+    except OSError as e:
+        message = texts.t("cli.project.unresolved", lang, error=e.strerror or e)
+        err(texts.t("cli.ask.error_not_sent", lang, message=message) if not_sent else message)
+        return None
 
 
 # ---------------------------------------------------------------- ask
@@ -159,7 +183,10 @@ def cmd_ask(args) -> int:
     if problems:
         sys.stderr.write(validate.format_problems(problems, lang))
         return EXIT_INVALID
-    leased_by, tag = identity()
+    root = project_root_or_none(lang, not_sent=True)
+    if root is None:
+        return EXIT_CHANNEL
+    leased_by, pane, tag = identity(root)
     try:
         sock = connect(home)
     except OSError as e:
@@ -168,7 +195,8 @@ def cmd_ask(args) -> int:
         return EXIT_CHANNEL
     sent = False
     try:
-        send_request(sock, {"cmd": "ask", "payload": payload, "leased_by": leased_by, "tag": tag, "timeout": args.timeout, "lang": lang})
+        send_request(sock, {"cmd": "ask", "payload": payload, "leased_by": leased_by, "pane": pane, "tag": tag, "timeout": args.timeout, "lang": lang,
+                            "require_confirmed": require_confirmed(root)})
         for ev in read_events(sock):
             kind = ev.get("event")
             if kind == "sent":
@@ -220,7 +248,11 @@ def request(home: Path, req: dict, lang: str) -> dict | None:
 
 def cmd_slots(args) -> int:
     lang = env_lang()
-    ev = request(Path(args.home), {"cmd": "slots"}, lang)
+    root = project_root_or_none(lang)
+    if root is None:
+        return EXIT_CHANNEL
+    ident = identity(root)
+    ev = request(Path(args.home), {"cmd": "slots", "leased_by": ident.leased_by, "pane": ident.pane}, lang)  # 带身份：顺手刷新本项目租约的窗格
     if ev is None:
         return EXIT_CHANNEL
     if ev.get("event") != "slots":
@@ -229,15 +261,23 @@ def cmd_slots(args) -> int:
     width = max(8, *(len(texts.t(f"cli.slots.state.{k}", lang)) for k in STATE_KEYS))  # 列宽装得下该语言最长的状态词
     for slot, rec in ev["slots"].items():
         gate = texts.t("cli.slots.gate.confirmed" if rec.get("subscribed") else "cli.slots.gate.unconfirmed", lang)
-        who = texts.t("cli.slots.since", lang, leased_by=rec["leased_by"], leased_at=rec["leased_at"]) if rec.get("leased_by") else ""
+        who = texts.t("cli.slots.since", lang, leased_by=rec["leased_by"], leased_at=rec["leased_at"]) if rec.get("leased_by") else ""  # 主体打完整值：可读且可复制
+        pane = texts.t("cli.slots.pane", lang, pane=rec["pane"]) if rec.get("pane") else ""
         state = texts.t(f"cli.slots.state.{rec['state_key']}", lang) if rec.get("state_key") in STATE_KEYS else rec["state"]
-        print(f"{slot:<7} {state:<{width}} {gate}{who}")
+        print(f"{slot:<7} {state:<{width}} {gate}{who}{pane}")
     return 0
 
 
 def cmd_release(args) -> int:
     lang = env_lang()
-    req = {"cmd": "release", "slot": args.slot} if args.slot else {"cmd": "release", "leased_by": identity()[0]}
+    if args.slot:
+        req = {"cmd": "release", "slot": args.slot}
+    else:
+        root = project_root_or_none(lang)  # 不给槽位 = 释放本项目租的那个
+        if root is None:
+            return EXIT_CHANNEL
+        ident = identity(root)
+        req = {"cmd": "release", "leased_by": ident.leased_by, "pane": ident.pane}
     ev = request(Path(args.home), req, lang)
     if ev is None:
         return EXIT_CHANNEL
@@ -340,7 +380,11 @@ def cmd_add_slot(args) -> int:
 # ---------------------------------------------------------------- away：项目级状态文件
 
 def cmd_away(args) -> int:
-    """远程交互模式开关。状态落在项目根 .agent-ntfy/state.json（不含 topic 名），给 agent 在任何会话里读。"""
+    """远程交互模式开关。状态落在项目根 .agent-ntfy/state.json（不含 topic 名），给 agent 在任何会话里读。
+
+    status 以 daemon 为准校对：经 slots 反查本项目真实租着哪个槽位，与文件不一致就改写并提示；daemon 没跑就照旧读文件、标「未校对」。
+    没启用过的项目不探活也不校对——校对会写文件，而没启用的项目不该被建目录。
+    """
     lang = env_lang()
     try:
         root = projstate.project_root()
@@ -348,12 +392,22 @@ def cmd_away(args) -> int:
             if args.action == "off" and not projstate.exists(root):
                 print(texts.t("cli.away.not_enabled", lang))  # 没开过就没什么可关的，也不留目录
                 return 0
-            st = projstate.save(root, away=(args.action == "on"), target=identity()[0])
+            st = projstate.save(root, away=(args.action == "on"), target=identity(root).leased_by)
             print(texts.t("cli.away.state.on" if st["away"] else "cli.away.state.off", lang))
             print(texts.t("cli.away.path", lang, path=projstate.state_path(root)))
             return 0
         enabled = projstate.exists(root)
-        st = projstate.load(root) if enabled else {}
+        st, corrected, unverified = projstate.load(root) if enabled else {}, False, None
+        if enabled:
+            ident = identity(root)
+            ev = request(Path(args.home), {"cmd": "slots", "leased_by": ident.leased_by, "pane": ident.pane}, lang)
+            if ev is None:
+                unverified = "cli.away.unverified"  # daemon 没跑（request 已打印连不上 + 启动方式）
+            elif ev.get("event") != "slots":
+                err(str(ev.get("message")))  # daemon 在跑但答不出租约（状态层坏了）：说明原因
+                unverified = "cli.away.unverified.error"
+            else:
+                st, corrected = projstate.reconcile(root, ident.leased_by, ev["slots"])
     except OSError as e:
         err(texts.t("cli.away.io_failed", lang, error=describe(e, lang)))
         return EXIT_CHANNEL
@@ -374,6 +428,10 @@ def cmd_away(args) -> int:
     if st.get("updated"):
         print(texts.t("cli.away.updated", lang, updated=st["updated"]))
     print(texts.t("cli.away.path", lang, path=projstate.state_path(root)))
+    if corrected:
+        print(texts.t("cli.away.corrected", lang))
+    if unverified:
+        print(texts.t(unverified, lang))
     return 0
 
 
