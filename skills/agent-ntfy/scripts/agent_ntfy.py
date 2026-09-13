@@ -121,22 +121,26 @@ def herdr_available() -> bool:
     return herdr_run([inject.HERDR, "pane", "list"]).ok
 
 
-def run_self_in_new_pane(home: Path, *subcommand: str) -> str | None:
-    """在当前窗格下方开一个新窗格，在里面跑本程序的一个子命令（同一解释器、同一脚本、同一 --home），返回新窗格 id，不等结果。
-    开不出窗格 / 命令敲不进去就 None（后者会留下一个空窗格，herdr 没有从这里关它的办法）。"""
+def run_self_in_new_pane(home: Path, lang: str, *subcommand: str) -> str | None:
+    """在当前窗格下方开一个新窗格，在里面跑本程序的一个子命令（同一解释器、同一脚本、同一 --home、同一语言），返回新窗格 id，
+    不等结果。开不出窗格 / 命令敲不进去就 None（后者会留下一个空窗格，herdr 没有从这里关它的办法）。
+
+    新窗格是一个新 shell，不继承调用方的环境：语言要显式用 `env AGENT_NTFY_LANG=<lang>` 带过去，否则窗格里的文案 / daemon 的
+    缺省语言会退回 en（实测）。`env` 是 POSIX 工具，Windows 未做端到端。
+    """
     new_pane = inject.split_pane(os.getcwd(), os.environ.get("HERDR_PANE_ID") or "", run=herdr_run)
     if new_pane is None:
         return None
     # --home 是顶层选项，必须放在子命令前面
-    argv = [sys.executable, os.path.abspath(__file__), "--home", str(home), *subcommand]
+    argv = ["env", f"{texts.ENV_VAR}={lang}", sys.executable, os.path.abspath(__file__), "--home", str(home), *subcommand]
     return new_pane if inject.run_in_pane(new_pane, argv, run=herdr_run) else None
 
 
-def open_confirm_pane(home: Path, slot: str, *, again: bool = False, timeout: float = CONFIRM_TIMEOUT) -> str | None:
+def open_confirm_pane(home: Path, slot: str, lang: str, *, again: bool = False, timeout: float = CONFIRM_TIMEOUT) -> str | None:
     """在新窗格里跑默认形态的 confirm-sub（显示 topic → 等回车 → 发测试通知 → 等按钮），返回窗格 id，不等结果。
     topic 只出现在那个窗格里，不进本进程的输出。--again / --timeout 原样转进去（缺省的 timeout 不必带）。"""
     flags = (["--again"] if again else []) + (["--timeout", f"{timeout:g}"] if timeout != CONFIRM_TIMEOUT else [])
-    return run_self_in_new_pane(home, "confirm-sub", slot, *flags)
+    return run_self_in_new_pane(home, lang, "confirm-sub", slot, *flags)
 
 
 # ---------------------------------------------------------------- socket 协议（客户端侧）
@@ -400,7 +404,7 @@ def cmd_confirm_sub(args) -> int:
             print(texts.t("cli.confirm.already", lang, slot=slot))
             projstate.note_confirmed(slot)
             return 0
-        pane = open_confirm_pane(home, slot, again=args.again, timeout=args.timeout)
+        pane = open_confirm_pane(home, slot, lang, again=args.again, timeout=args.timeout)
         if pane is None:
             err(texts.t("cli.confirm.topic_hint", lang, slot=slot))
             return EXIT_NEEDS_HUMAN
@@ -551,7 +555,7 @@ def _ensure_daemon(home: Path, lang: str) -> bool:
         return True
     proc = None
     if herdr_available():
-        if run_self_in_new_pane(home, "daemon") is None:  # 窗格开不出来 / 命令敲不进去：不会有应答，不必等
+        if run_self_in_new_pane(home, lang, "daemon") is None:  # 窗格开不出来 / 命令敲不进去：不会有应答，不必等
             err(texts.t("cli.away.pane_failed", lang))
             return False
     else:
@@ -577,7 +581,7 @@ def _confirm_or_point(home: Path, slot: str, slots: dict, lang: str) -> bool:
     if slots[slot].get("state_key") == "confirming":
         print(texts.t("cli.away.confirming", lang, slot=slot))
         return True
-    pane = open_confirm_pane(home, slot) if herdr_available() else None
+    pane = open_confirm_pane(home, slot, lang) if herdr_available() else None
     if pane is None:
         err(texts.t("cli.confirm.topic_hint", lang, slot=slot))
         return False

@@ -742,7 +742,8 @@ class ConfirmSubPaneTest(unittest.TestCase):
         self.assertEqual(split[3:5], ["--pane", "wD:p1"])  # 在当前窗格下方开
         self.assertEqual(split[split.index("--cwd") + 1], os.getcwd())
         self.assertEqual(ran[3], "wD:p7")
-        argv = shlex.split(ran[4])
+        self.assertTrue(ran[4].startswith("env AGENT_NTFY_LANG=zh "), ran[4])  # 新窗格是新 shell，不继承调用方的语言：显式带上
+        argv = shlex.split(ran[4])[2:]
         self.assertEqual(argv[:2], [sys.executable, os.path.abspath(agent_ntfy.__file__)])
         self.assertEqual(argv[2:], ["--home", str(h.home), "confirm-sub", "slot4", "--again"])  # --home 在子命令前；--again 原样转进去
         # 本进程不碰 daemon：没发测试通知、没进确认中；topic 名不进本进程的输出
@@ -783,6 +784,16 @@ class ConfirmSubPaneTest(unittest.TestCase):
         self.assertEqual((code, out), (3, ""))
         self.assertIn("daemon 没在跑", err)
         self.assertNotIn(["pane", "split"], [c[1:3] for c in fake.calls])
+
+    # 调用方是 en 时窗格里也是 en
+    def test_non_tty_pane_command_carries_english_when_caller_is_english(self):
+        h = Harness(self, subscribed=())
+        fake = FakeHerdr()
+        with mock.patch("agent_ntfy.herdr_run", fake):
+            code, out, err = run(["--home", str(h.home), "confirm-sub", "slot4"], env={**HERDR, "AGENT_NTFY_LANG": "en"})
+        self.assertEqual(code, 0, err)
+        self.assertTrue(fake.calls[-1][4].startswith("env AGENT_NTFY_LANG=en "), fake.calls[-1][4])
+        self.assertIn("Tell the user", out)
 
     def test_non_tty_in_herdr_but_cli_broken_still_exits_4(self):
         h = Harness(self, subscribed=())
@@ -875,7 +886,8 @@ class AwayOnTest(unittest.TestCase):
         self.assertEqual(out.splitlines()[0], Z("cli.away.confirm_pane", slot="slot1", pane="wD:p7").splitlines()[0])
         self.assertIn("wD:p7", out)
         self.assertEqual([c[1:3] for c in self.fake.calls], [["pane", "list"], ["pane", "split"], ["pane", "run"]])
-        self.assertEqual(self.pane_commands()[0][2:], ["--home", str(h.home), "confirm-sub", "slot1"])
+        self.assertEqual(self.pane_commands()[0][:2], ["env", "AGENT_NTFY_LANG=zh"])  # 确认窗格里的文案与调用方同语言
+        self.assertEqual(self.pane_commands()[0][4:], ["--home", str(h.home), "confirm-sub", "slot1"])
         self.assertTrue(self.state()["away"])
 
     # 同样情形但不在 herdr 里：退 4 指路 confirm-sub，什么都不写、不建目录
@@ -935,7 +947,7 @@ class AwayOnTest(unittest.TestCase):
         self.assertEqual((code, out), (3, ""))
         self.assertIn(Z("cli.away.daemon_failed", seconds="0.3", log=home / "daemon.log"), err)
         self.assertEqual([c[1:3] for c in self.fake.calls], [["pane", "list"], ["pane", "split"], ["pane", "run"]])
-        self.assertEqual(self.pane_commands()[0], [sys.executable, os.path.abspath(agent_ntfy.__file__), "--home", str(home), "daemon"])
+        self.assertEqual(self.pane_commands()[0], ["env", "AGENT_NTFY_LANG=zh", sys.executable, os.path.abspath(agent_ntfy.__file__), "--home", str(home), "daemon"])
         self.assertFalse((self.root / projstate.DIR_NAME).exists())
 
     # 在 herdr 里但窗格开不出来：立刻退 3，不傻等探活超时
