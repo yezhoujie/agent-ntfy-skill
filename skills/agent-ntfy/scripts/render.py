@@ -2,9 +2,11 @@
 
 纯函数，不知道 topic 名：按钮回传地址与通知标题里的 [<tag>] 都由调用方以字符串传入。
 版式由这里定死，agent 只给数据——格式统一、末尾那句提示永远不会漏、按钮永远只有一个。
-版式是 Markdown（卡片都带 Markdown: yes 发出），但只用加粗的分段标记（**【正在做】** / **[Doing]**）、选项的有序列表、
-`---` 分隔线三样：不支持 Markdown 的客户端看到的是源码，这三样的源码形态也读得通；# 标题手机上太大、表格 / 图片 / 链接的
-源码形态难读，都不用。需要看得见的换行一律空一行（Markdown 把单个换行折成空格），只有列表项之间例外。
+版式是 Markdown（卡片都带 Markdown: yes 发出），但只用加粗的分段标记（**【正在做】** / **[Doing]**）与 `---` 分隔线
+两样：不支持 Markdown 的客户端看到的是源码，这两样的源码形态也读得通；# 标题手机上太大、表格 / 图片 / 链接的源码形态难读，
+都不用。选项的编号「1\\. 」把点号转义了、不是有序列表——ntfy 的 Android 客户端把有序列表渲染成圆点、编号就丢了（实测）；
+不渲染 Markdown 的客户端会看到那个反斜杠，为保住编号而接受。
+需要看得见的换行一律空一行（Markdown 把单个换行折成空格），选项行之间也是。
 固定文案全部从 texts 表按 lang 取；lang 由调用方显式传（这里不读环境变量），渲染结果自带 lang，
 之后同一张卡片的更新（已回复 / 超时 / 取消）沿用它——同一张卡片前后两种语言是不可接受的。
 
@@ -112,7 +114,7 @@ def render_body(payload: dict, lang: str) -> str:
         _section("section.doing", lang, _text(payload, "doing")),
         _section("section.background", lang, _text(payload, "description")),
         _section("section.blocker", lang, _text(payload, "blocker")),
-        _bold_label("section.options", lang) + "\n\n" + "\n".join(lines),  # 列表项之间单个换行就够（列表项天然分行）
+        _bold_label("section.options", lang) + "\n\n" + "\n\n".join(lines),  # 选项行是普通段落（编号的点号已转义，不是列表项）：行间要空一行，单个换行会被折成空格
         _section("section.reasoning", lang, _text(payload, "reasoning")),
         _section("section.question", lang, _text(payload, "question")),
     ])

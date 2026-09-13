@@ -81,19 +81,19 @@ class RenderQuestionTest(unittest.TestCase):
             self.assertEqual(self.r.message.count(s), 1, s)
         # 每段带的是对应字段的内容：加粗的标记词 + 一个空格 + 内容；段与段之间空一行
         self.assertIn("**【正在做】** " + SAMPLE["doing"] + "\n\n**【背景】** " + SAMPLE["description"], self.r.message)
-        self.assertIn("**【卡点】** " + SAMPLE["blocker"] + "\n\n**【选项】**\n\n1. ", self.r.message)
+        self.assertIn("**【卡点】** " + SAMPLE["blocker"] + "\n\n**【选项】**\n\n1\\. ", self.r.message)
         self.assertIn("**【我的建议】** " + SAMPLE["reasoning"] + "\n\n**【要你定】** " + SAMPLE["question"], self.r.message)
 
-    # 推荐项在选项列表中标注「（推荐）」，全部选项按 Markdown 有序列表列出（各项之间单个换行，label 加粗）
+    # 推荐项在选项段里标注「（推荐）」，全部选项按「N\. 」编号逐行列出（各行之间空一行，label 加粗）
     def test_recommended_option_is_marked(self):
-        self.assertIn("1. **留固定目录**（推荐）→ " + SAMPLE["options"][0]["consequence"] + "\n2. **用完即删** → " + SAMPLE["options"][1]["consequence"], self.r.message)
+        self.assertIn("1\\. **留固定目录**（推荐）→ " + SAMPLE["options"][0]["consequence"] + "\n\n2\\. **用完即删** → " + SAMPLE["options"][1]["consequence"], self.r.message)
         self.assertEqual(self.r.message.count("（推荐）"), 1)
         five = render.render_question(with_options(5), tag="wD", reply_url=REPLY_URL, lang="zh")
         for i in range(5):
-            self.assertIn(f"\n{i + 1}. **选项{i}**", five.message)
+            self.assertIn(f"\n{i + 1}\\. **选项{i}**", five.message)
         # 推荐项在最后一个
         last = render.render_question({**with_options(5), "recommend": "o4"}, tag="wD", reply_url=REPLY_URL, lang="zh")
-        self.assertIn("\n5. **选项4**（推荐）→ 后果4", last.message)
+        self.assertIn("\n5\\. **选项4**（推荐）→ 后果4", last.message)
         self.assertEqual(last.message.count("（推荐）"), 1)
         self.assertEqual(last.actions[0]["body"], "选项4")
         # recommend 缺失 + 某项缺 id：谁都不该被标成推荐
@@ -101,12 +101,23 @@ class RenderQuestionTest(unittest.TestCase):
                                       tag="wD", reply_url=REPLY_URL, lang="zh")
         self.assertNotIn("（推荐）", none.message)
 
+    # 选项段不是 Markdown 有序列表：ntfy 的 Android 客户端把「1. 」列表渲染成圆点、编号就丢了。点号转义成「1\. 」后
+    # CommonMark 不再当列表、原样显示编号；每行是普通段落，行间要空一行，否则单个换行会被折成空格
+    def test_options_are_not_a_markdown_ordered_list(self):
+        for lang, payload in (("zh", with_options(5)), ("en", EN_SAMPLE)):
+            with self.subTest(lang=lang):
+                body = render.render_body(payload, lang)
+                self.assertEqual(re.findall(r"^[0-9]+\. ", body, re.M), [], body)  # 没有一行以「N. 」开头
+                numbered = re.findall(r"^[0-9]+\\\. ", body, re.M)
+                self.assertEqual(numbered, [f"{i}\\. " for i in range(1, len(payload["options"]) + 1)], body)  # 编号是「N\. 」且按序
+                self.assertNotRegex(body, r"\\\. \*\*[^\n]*\n(?!\n)")  # 选项行后面紧跟的是空行，不是下一行
+
     # label 首尾带空白（校验只要求 strip 后非空）：加粗标记必须紧贴文字，否则 ** 在 Markdown 里裸露；按钮 body 同步去空白
     def test_option_label_whitespace_is_stripped_inside_bold(self):
         padded = {**SAMPLE, "options": [{**SAMPLE["options"][0], "label": " 留固定目录 "}, {**SAMPLE["options"][1], "label": "用完即删\t"}]}
         r = render.render_question(padded, tag="wD", reply_url=REPLY_URL, lang="zh")
-        self.assertIn("1. **留固定目录**（推荐）→ ", r.message)
-        self.assertIn("2. **用完即删** → ", r.message)
+        self.assertIn("1\\. **留固定目录**（推荐）→ ", r.message)
+        self.assertIn("2\\. **用完即删** → ", r.message)
         self.assertEqual(r.actions[0]["body"], "留固定目录")
 
     # 固定提示出现在正文末尾，不在开头
@@ -142,8 +153,8 @@ class RenderQuestionTest(unittest.TestCase):
         self.assertEqual(self.r.actions[0]["url"], REPLY_URL)
         self.assertEqual(len(render.render_question(with_options(5), tag="wD", reply_url=REPLY_URL, lang="zh").actions), 1)
 
-    # Markdown 只用加粗 / 有序列表 / 分隔线：不用 # 标题（手机上太大）、表格、图片、链接（不渲染的客户端看到源码难读）
-    def test_markdown_is_limited_to_bold_list_and_rule(self):
+    # Markdown 只用加粗 / 分隔线（编号的点号已转义、不是列表）：不用 # 标题（手机上太大）、表格、图片、链接（不渲染的客户端看到源码难读）
+    def test_markdown_is_limited_to_bold_and_rule(self):
         self.assertEqual(render.SEPARATOR, "---")
         self.assertNotIn("──────────", self.r.message)
         for mark in ("__", "`", "](", "![", "|", "\n- ", "\n* "):
@@ -355,8 +366,8 @@ ZH_QUESTION = (
     "**【背景】** " + SAMPLE["description"] + "\n\n"
     "**【卡点】** " + SAMPLE["blocker"] + "\n\n"
     "**【选项】**\n\n"
-    "1. **留固定目录**（推荐）→ " + SAMPLE["options"][0]["consequence"] + "\n"
-    "2. **用完即删** → " + SAMPLE["options"][1]["consequence"] + "\n\n"
+    "1\\. **留固定目录**（推荐）→ " + SAMPLE["options"][0]["consequence"] + "\n\n"
+    "2\\. **用完即删** → " + SAMPLE["options"][1]["consequence"] + "\n\n"
     "**【我的建议】** " + SAMPLE["reasoning"] + "\n\n"
     "**【要你定】** " + SAMPLE["question"] + "\n\n"
     "---\n\n"
@@ -376,8 +387,8 @@ EN_QUESTION = (
     "**[Background]** " + EN_SAMPLE["description"] + "\n\n"
     "**[Blocker]** " + EN_SAMPLE["blocker"] + "\n\n"
     "**[Options]**\n\n"
-    "1. **Keep a fixed dir** (recommended) → " + EN_SAMPLE["options"][0]["consequence"] + "\n"
-    "2. **Delete after use** → " + EN_SAMPLE["options"][1]["consequence"] + "\n\n"
+    "1\\. **Keep a fixed dir** (recommended) → " + EN_SAMPLE["options"][0]["consequence"] + "\n\n"
+    "2\\. **Delete after use** → " + EN_SAMPLE["options"][1]["consequence"] + "\n\n"
     "**[My recommendation]** " + EN_SAMPLE["reasoning"] + "\n\n"
     "**[Your call]** " + EN_SAMPLE["question"] + "\n\n"
     "---\n\n"

@@ -25,14 +25,14 @@ from tests.test_texts import HAN
 
 URL = "https://ntfy.example/t"
 
-# zh 渲染结果的黄金样本：一个字都不许变（固定文案只是搬进了表里）。Markdown 版式：加粗分段标记、有序列表、--- 分隔线，段间空行
+# zh 渲染结果的黄金样本：一个字都不许变（固定文案只是搬进了表里）。Markdown 版式：加粗分段标记、转义点号的编号行、--- 分隔线，段间空行
 ZH_GOLDEN = (
     "**【正在做】** " + SAMPLE["doing"] + "\n\n"
     "**【背景】** " + SAMPLE["description"] + "\n\n"
     "**【卡点】** " + SAMPLE["blocker"] + "\n\n"
     "**【选项】**\n\n"
-    "1. **留固定目录**（推荐）→ " + SAMPLE["options"][0]["consequence"] + "\n"
-    "2. **用完即删** → " + SAMPLE["options"][1]["consequence"] + "\n\n"
+    "1\\. **留固定目录**（推荐）→ " + SAMPLE["options"][0]["consequence"] + "\n\n"
+    "2\\. **用完即删** → " + SAMPLE["options"][1]["consequence"] + "\n\n"
     "**【我的建议】** " + SAMPLE["reasoning"] + "\n\n"
     "**【要你定】** " + SAMPLE["question"] + "\n\n"
     "---\n\n"
@@ -91,7 +91,7 @@ class EnglishTest(unittest.TestCase):
         r = render.render_question(payload, tag="wD", reply_url=URL, lang="en")
         self.assertEqual(cjk(r.message + r.title + r.actions[0]["label"]), 0, r.message)
         self.assertIn("**[Doing]** d", r.message)
-        self.assertIn("1. **Keep** (recommended) → kept\n2. **Drop** → gone", r.message)
+        self.assertIn("1\\. **Keep** (recommended) → kept\n\n2\\. **Drop** → gone", r.message)
         self.assertIn("**[Your call]** q?\n\n---\n\n⚠️ The button is a shortcut.", r.message)
         self.assertEqual(r.actions[0], {"action": "http", "label": "Accept recommended", "url": URL, "method": "POST", "body": "Keep"})
         self.assertIn("**[My recommendation]** r", r.message)
