@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -91,7 +92,7 @@ class RootAndDirTest(unittest.TestCase):
             projstate.note(slot="slot1", confirmed=True, target="x")
         self.assertFalse((root / projstate.DIR_NAME).exists())
 
-    # 状态文件坏了（非法 UTF-8 / 非 JSON / 目录不可写）：load 当空，note 一声不吭——它不是命令的主事
+    # 状态文件坏了（非法 UTF-8 / 非 JSON）：load 当空，note 照写——它不是命令的主事
     def test_broken_state_file_never_raises(self):
         root = plain_dir(self)
         projstate.ensure(root)
@@ -100,6 +101,14 @@ class RootAndDirTest(unittest.TestCase):
         with chdir(root):
             projstate.note(slot="slot1", confirmed=True)  # 覆盖坏文件也行
         self.assertEqual(projstate.load(root)["slot"], "slot1")
+
+    # 目录不可写：note 吞掉，旧值保住（Windows 的只读位挡不住在目录里建文件；root 无视权限位）
+    @unittest.skipIf(sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0), "POSIX 目录权限位，且 root 无视 0500")
+    def test_unwritable_dir_is_swallowed_by_note(self):
+        root = plain_dir(self)
+        projstate.ensure(root)
+        with chdir(root):
+            projstate.note(slot="slot1", confirmed=True)
         os.chmod(root / projstate.DIR_NAME, 0o500)
         try:
             with chdir(root):

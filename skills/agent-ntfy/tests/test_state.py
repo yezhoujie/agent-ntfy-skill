@@ -183,7 +183,12 @@ class StateTest(unittest.TestCase):
         self.assertEqual(data["slot1"]["leased_by"], "wD:p1")
         self.assertRegex(data["slot1"]["leased_at"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$")
         self.assertEqual(data["slot2"], {"subscribed": False, "leased_by": None, "leased_at": None, "pane": None})
-        self.assertEqual(oct(self.leases_path.stat().st_mode & 0o777), oct(0o600))
+
+    # 租约文件只有属主可读写（Windows 的 st_mode 不表达权限位）
+    @unittest.skipIf(sys.platform == "win32", "POSIX 权限位")
+    def test_leases_file_is_owner_only(self):
+        self.state.acquire("wD:p1")
+        self.assertEqual(stat.S_IMODE(self.leases_path.stat().st_mode), 0o600)
 
     # 订阅状态跨租约保留：释放再租，不用重新过可达性闸
     def test_subscribed_survives_release(self):
@@ -585,6 +590,11 @@ class DefaultStoreTest(unittest.TestCase):
                 self.assertEqual(cm.exception.key, "store.bad_env")
                 self.assertIn(bad, str(cm.exception))
                 self.assertIn("keychain / file / dpapi", str(cm.exception))
+
+    # 测试进程的缺省：tests 包导入时把 AGENT_NTFY_STORE 钉成 file，没显式注入 store 的用例不会碰真钥匙串 / DPAPI
+    def test_test_process_defaults_to_file_store(self):
+        self.assertEqual(os.environ.get("AGENT_NTFY_STORE"), "file", "tests/__init__.py 把缺省钉成 file；shell 里导出了别的值先 unset")
+        self.assertIsInstance(state.default_store(self.home), state.FileStore)
 
     def test_platform_defaults(self):
         for env in (None, ""):  # 没给 / 空串都走平台缺省

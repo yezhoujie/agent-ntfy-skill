@@ -81,7 +81,7 @@ class DaemonProcessTest(unittest.TestCase):
         return p
 
     def cli(self, *args):
-        return subprocess.run([sys.executable, str(SCRIPT), "--home", str(self.home), *args], env=self.env, capture_output=True, text=True, timeout=60)
+        return subprocess.run([sys.executable, str(SCRIPT), "--home", str(self.home), *args], env=self.env, capture_output=True, encoding="utf-8", errors="replace", timeout=60)  # 子进程已 utf8_stdio，别按 locale 解
 
     def assert_clean(self):
         self.assertFalse(ipc.endpoint_path(self.home).exists())

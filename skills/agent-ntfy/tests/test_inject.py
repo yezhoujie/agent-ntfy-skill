@@ -5,8 +5,11 @@ herdr 用可替换的调用器替身：记录 argv、按预置返回 rc / stdout
 """
 
 import json
+import os
 import re
 import shlex
+import subprocess
+import sys
 import unittest
 
 import inject
@@ -31,6 +34,27 @@ def herdr_error(cmd: str, code: str, message: str = "") -> str:
 
 
 SPLIT_STDOUT = json.dumps({"id": "cli:pane:split", "result": {"pane": {"pane_id": "wD:p7", "workspace_id": "wD"}, "type": "pane_info"}})  # herdr 0.9.0 实物
+
+
+def split_pane_command(command: str) -> list[str]:
+    """把 run_in_pane 拼出来的整条命令拆回 argv，用的是它拼装时针对的那套规则：POSIX 是 sh（shlex），
+    Windows 是 list2cmdline 的逆 CommandLineToArgvW（MS C 运行时的 argv 解析）。"""
+    if sys.platform != "win32":
+        return shlex.split(command)
+    import ctypes
+    from ctypes import wintypes
+    shell32, kernel32 = ctypes.windll.shell32, ctypes.windll.kernel32
+    shell32.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
+    shell32.CommandLineToArgvW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+    kernel32.LocalFree.argtypes = [wintypes.HLOCAL]
+    argc = ctypes.c_int()
+    argv = shell32.CommandLineToArgvW(command, ctypes.byref(argc))
+    if not argv:
+        raise ctypes.WinError()
+    try:
+        return [argv[i] for i in range(argc.value)]
+    finally:
+        kernel32.LocalFree(argv)
 
 
 class FakeHerdr:
@@ -211,7 +235,7 @@ class PaneHelpersTest(unittest.TestCase):
         self.assertEqual(len(fake.calls), 1)
         self.assertEqual(fake.calls[0][:4], ["herdr", "pane", "run", "wD:p7"])
         self.assertEqual(len(fake.calls[0]), 5)  # 整条命令是一个参数
-        self.assertEqual(shlex.split(fake.calls[0][4]), argv)  # 经 shell 拆回来仍是原 argv：空格 / 单引号都没走样
+        self.assertEqual(split_pane_command(fake.calls[0][4]), argv)  # 按该平台的规则拆回来仍是原 argv：空格 / 单引号都没走样
         self.assertNotIn("$", fake.calls[0][4])
 
     # 以 = 开头的词 shlex.quote 不会加引号，而 zsh 会对它做等值展开（=ls → /bin/ls）：这类词强制用单引号包住
@@ -219,9 +243,10 @@ class PaneHelpersTest(unittest.TestCase):
         fake = FakeHerdr()
         self.assertTrue(inject.run_in_pane("wD:p7", ["echo", "=ls", "a=b", "=it's"], run=fake))
         command = fake.calls[0][4]
-        self.assertIn("'=ls'", command)
+        if sys.platform != "win32":  # 等值展开是 zsh 的事，Windows 那边按 list2cmdline 拼、没有这条规则
+            self.assertIn("'=ls'", command)
         self.assertIn(" a=b ", " " + command + " ")  # 不以 = 开头的照旧
-        self.assertEqual(shlex.split(command), ["echo", "=ls", "a=b", "=it's"])
+        self.assertEqual(split_pane_command(command), ["echo", "=ls", "a=b", "=it's"])
 
     def test_run_in_pane_failure_is_false(self):
         fake = FakeHerdr()
@@ -357,7 +382,19 @@ class ConfirmRequestTest(unittest.TestCase):
 
 
 class RunHerdrTest(unittest.TestCase):
-    """只验子进程包装本身，用无害的本地命令，不碰 herdr。"""
+    """只验子进程包装本身，用无害的本地命令（一律 sys.executable -c，不依赖 sh / sleep 这类 POSIX 工具），不碰 herdr。"""
+
+    # 子进程看自己的 stdin：是不是字符设备（/dev/null 与 NUL 都是；继承来的管道是 FIFO），以及 POSIX 上是否与 os.devnull 同一 inode。
+    # Windows 上 st_ino 可能为 0、os.stat(os.devnull) 是否可用未核，same 只记不判。
+    DEVNULL_PROBE = (
+        "import os, stat\n"
+        "st = os.fstat(0)\n"
+        "try:\n"
+        "    same = os.path.samestat(st, os.stat(os.devnull))\n"
+        "except OSError as e:\n"
+        "    same = type(e).__name__\n"
+        "print('chr=%s same=%s' % (stat.S_ISCHR(st.st_mode), same))"
+    )
 
     def test_missing_binary_is_rc_127(self):
         r = inject.run_herdr(["definitely-no-such-binary-agent-ntfy", "pane", "list"])
@@ -367,29 +404,31 @@ class RunHerdrTest(unittest.TestCase):
         self.assertIn("没装", r.summary("zh"))
 
     def test_timeout_is_flagged_with_the_actual_limit(self):
-        r = inject.run_herdr(["sleep", "5"], timeout=0.2)
+        r = inject.run_herdr([sys.executable, "-c", "import time; time.sleep(5)"], timeout=0.2)
         self.assertTrue(r.timed_out)
         self.assertFalse(r.ok)
         self.assertEqual(r.summary("zh"), "herdr 0.2 秒无响应")
 
     def test_child_stdin_is_devnull_not_inherited(self):
-        # 外层给一个管道当 stdin；里面 run_herdr 起的子进程若继承了它，等输入的命令会一直挂到超时
-        import os
-        import subprocess
-        import sys
-        probe = ("import inject; r = inject.run_herdr(['sh', '-c', 'test /dev/stdin -ef /dev/null && echo devnull || echo other'], timeout=5); "
-                 "print(r.stdout.strip(), r.timed_out)")
+        # 外层给一个管道当 stdin；里面 run_herdr 起的子进程若继承了它，看到的就是 FIFO 而不是字符设备
+        probe = (f"import sys, inject; r = inject.run_herdr([sys.executable, '-c', {self.DEVNULL_PROBE!r}], timeout=5); "
+                 "print(r.stdout.strip(), r.timed_out); sys.stderr.write(r.stderr)")  # 探针自己炸了时把 traceback 带出来
         outer = subprocess.run([sys.executable, "-c", probe], cwd=os.path.dirname(inject.__file__), stdin=subprocess.PIPE,
                                capture_output=True, text=True, timeout=20)
-        self.assertEqual(outer.stdout.strip(), "devnull False", outer.stderr)
+        out = outer.stdout.strip()
+        self.assertRegex(out, r"^chr=True same=\S+ False$", outer.stderr)  # 三平台：字符设备、没超时
+        if sys.platform != "win32":
+            self.assertEqual(out, "chr=True same=True False", outer.stderr)  # POSIX：与 `test -ef` 同强度
+        else:
+            print("devnull probe:", out)  # Windows 上 same 的实际值只进日志
 
     def test_undecodable_stderr_does_not_raise(self):
-        r = inject.run_herdr(["sh", "-c", "printf '\\xff\\xfe' >&2; exit 1"])
+        r = inject.run_herdr([sys.executable, "-c", "import sys; sys.stderr.buffer.write(b'\\x81\\xff'); sys.exit(1)"])  # UTF-8 与 cp1252 下都非法
         self.assertEqual((r.rc, r.ok), (1, False))
         self.assertEqual(r.summary("zh"), "退出码 1")
 
     def test_stdout_and_rc_are_captured(self):
-        r = inject.run_herdr(["sh", "-c", "printf '{\"a\":1}'; printf 'e' >&2; exit 3"])
+        r = inject.run_herdr([sys.executable, "-c", "import sys; sys.stdout.write('{\"a\":1}'); sys.stderr.write('e'); sys.exit(3)"])
         self.assertEqual((r.rc, r.stdout, r.stderr, r.ok), (3, '{"a":1}', "e", False))
         self.assertIsNone(r.error_code())
         self.assertEqual(r.summary("zh"), "退出码 3")

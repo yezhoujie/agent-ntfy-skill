@@ -1,0 +1,49 @@
+name: test
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: unittest (${{ matrix.os }}, py${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.10", "3.13"]
+    defaults:
+      run:
+        shell: bash  # Windows 走 Git Bash，三平台复用同一条命令
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python }}
+      - name: unittest (offline)
+        run: cd skills/agent-ntfy && AGENT_NTFY_OFFLINE=1 python -m unittest -v
+
+  pyright:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+        working-directory: skills/agent-ntfy
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: pip install pyright==1.1.413  # 与开发机 / pyrightconfig 约定一致；升级时同步改
+      - name: pyright (host platform)
+        run: pyright scripts/*.py tests/*.py
+      - name: pyright (Windows platform)  # macOS / Linux 上 win32 分支被当不可达，得再按 Windows 分析一遍
+        run: pyright --pythonplatform Windows scripts/*.py

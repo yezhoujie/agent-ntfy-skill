@@ -266,7 +266,7 @@ class TcpIpcTest(_IpcCases, unittest.TestCase):
 
 class TransportSelectionTest(unittest.TestCase):
     def test_env_unix_returned_as_is(self) -> None:
-        with mock.patch.dict(os.environ, {ipc.ENV_VAR: "unix"}):
+        with mock.patch.dict(os.environ, {ipc.ENV_VAR: "unix"}), mock.patch.object(ipc, "_platform", return_value="darwin"):  # 真 win32 会拒绝 unix
             self.assertEqual(ipc.transport(), "unix")
 
     def test_env_tcp_returned_as_is(self) -> None:

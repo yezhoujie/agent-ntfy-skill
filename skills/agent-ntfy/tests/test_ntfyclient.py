@@ -1,6 +1,7 @@
 """ntfy 客户端层：发布 / 更新 / clear / 订阅，对真实 ntfy.sh 跑，不 mock。
 
 网络不可达时用例直接报错，不 skip——「OK (skipped=N)」与全绿在观感上一样，会把坏的当好的。
+唯一的跳过开关是 AGENT_NTFY_OFFLINE=1（CI / 省配额用）：整类 RealNtfyTest 显式 skip，本地替身照跑。
 每次运行随机生成测试 topic（前缀 agent-ntfy-test-，与正式池的 agent-ntfy- 区分开），不订阅、不清理，
 服务端 12 小时自动过期。
 ntfy.sh 对同一来源 IP 每天限 250 条消息（docs.ntfy.sh/publish → Limitations），每条真网用例要发 1~3 条，
@@ -422,8 +423,9 @@ class LocalStreamTest(unittest.TestCase):
         self.assertEqual([e["event"] for e in events], ["open"])
 
 
+@unittest.skipIf(os.environ.get("AGENT_NTFY_OFFLINE") == "1", "AGENT_NTFY_OFFLINE=1：不打真 ntfy.sh（CI / 省配额）")
 class RealNtfyTest(unittest.TestCase):
-    """对真实 ntfy.sh 跑的部分。"""
+    """对真实 ntfy.sh 跑的部分（每次约 16 条配额；ntfy.sh 限 250 条/天/IP）。"""
 
     @classmethod
     def setUpClass(cls):

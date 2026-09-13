@@ -4,7 +4,6 @@ import contextlib
 import io
 import json
 import os
-import shlex
 import shutil
 import sys
 import tempfile
@@ -19,6 +18,7 @@ import inject
 import ipc
 import platform_
 import projstate
+import tests.test_inject as ti
 import texts
 from inject import HerdrResult
 from tests.test_daemon import Harness, wait_until
@@ -856,17 +856,17 @@ class HerdrHelpersTest(unittest.TestCase):
 
     # daemon 已 bind 但还没进主循环（比如卡在初始化）：探活要在有限时间内放弃，不能让 away on 挂死
     def test_probe_gives_up_on_a_silent_listener(self):
-        import socket
         home = Path(tempfile.mkdtemp(prefix="home-"))
         self.addCleanup(shutil.rmtree, home, ignore_errors=True)
-        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        srv.bind(str(agent_ntfy.sock_path(home)))
-        srv.listen(1)
+        srv, cleanup = ipc.listen(home)  # 按当前传输起监听（unix 的 sock 文件 / tcp 的 port 文件都到位），只 bind 不 accept
+        self.addCleanup(cleanup)
         self.addCleanup(srv.close)
         started = time.monotonic()
         with mock.patch("agent_ntfy.PROBE_TIMEOUT", 0.3):
             self.assertIsNone(agent_ntfy.probe(home))
-        self.assertLess(time.monotonic() - started, 1.5)
+        elapsed = time.monotonic() - started
+        self.assertGreaterEqual(elapsed, 0.25)  # 真等到了监听端超时，不是连都没连上就返回（那样任何传输下都会「通过」）；留 50 ms 给 Windows 的定时器粒度（实测早醒 0.2 ms）
+        self.assertLess(elapsed, 1.5)
 
     def test_probe_returns_status_event(self):
         h = Harness(self)
@@ -893,7 +893,7 @@ class ConfirmSubPaneTest(unittest.TestCase):
         self.assertEqual(split[split.index("--cwd") + 1], os.getcwd())
         self.assertEqual(ran[3], "wD:p7")
         self.assertTrue(ran[4].startswith("env AGENT_NTFY_LANG=zh "), ran[4])  # 新窗格是新 shell，不继承调用方的语言：显式带上
-        argv = shlex.split(ran[4])[2:]
+        argv = ti.split_pane_command(ran[4])[2:]
         self.assertEqual(argv[:2], [sys.executable, os.path.abspath(agent_ntfy.__file__)])
         self.assertEqual(argv[2:], ["--home", str(h.home), "confirm-sub", "slot4", "--again"])  # --home 在子命令前；--again 原样转进去
         # 本进程不碰 daemon：没发测试通知、没进确认中；topic 名不进本进程的输出
@@ -924,7 +924,7 @@ class ConfirmSubPaneTest(unittest.TestCase):
             code, out, err = run(["--home", str(h.home), "confirm-sub", "slot2", "--again", "--timeout", "45"], env=HERDR)
             self.assertEqual(code, 0, err)
             self.assertIn("wD:p7", out)
-        self.assertEqual(shlex.split(fake.calls[-1][4])[-5:], ["confirm-sub", "slot2", "--again", "--timeout", "45"])  # 两个旗标都原样转进去
+        self.assertEqual(ti.split_pane_command(fake.calls[-1][4])[-5:], ["confirm-sub", "slot2", "--again", "--timeout", "45"])  # 两个旗标都原样转进去
 
     # daemon 没跑 ⇒ 退 3（同现状），不开窗格
     def test_non_tty_without_daemon_exits_3(self):
@@ -1003,7 +1003,7 @@ class AwayOnTest(unittest.TestCase):
         return json.loads(projstate.state_path(self.root).read_text(encoding="utf-8"))
 
     def pane_commands(self):
-        return [shlex.split(c[4]) for c in self.fake.calls if c[1:3] == ["pane", "run"]]
+        return [ti.split_pane_command(c[4]) for c in self.fake.calls if c[1:3] == ["pane", "run"]]
 
     # 本项目已租且已过闸：直接就绪，不碰 herdr
     def test_ready_when_own_lease_is_confirmed(self):
@@ -1130,12 +1130,10 @@ class AwayOnTest(unittest.TestCase):
 
     # daemon 已 bind 但不应答（卡在初始化）：总耗时仍以 DAEMON_START_TIMEOUT 为准，单次探活超时不能把它撑长
     def test_silent_listener_respects_the_overall_budget(self):
-        import socket
         home = Path(tempfile.mkdtemp(prefix="home-"))
         self.addCleanup(shutil.rmtree, home, ignore_errors=True)
-        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        srv.bind(str(agent_ntfy.sock_path(home)))
-        srv.listen(1)
+        srv, cleanup = ipc.listen(home)  # 按当前传输起监听（unix 的 sock 文件 / tcp 的 port 文件都到位），只 bind 不 accept
+        self.addCleanup(cleanup)
         self.addCleanup(srv.close)
         started = time.monotonic()
         with mock.patch("agent_ntfy.DAEMON_START_TIMEOUT", 0.5), mock.patch("agent_ntfy.PROBE_TIMEOUT", 2.0):

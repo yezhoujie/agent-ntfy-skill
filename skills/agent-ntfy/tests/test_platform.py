@@ -196,10 +196,11 @@ class InstallStopSignalsTests(unittest.TestCase):
         with mock.patch.object(platform_, "_platform", return_value="darwin"), \
                 mock.patch.object(signal, "signal", fake_signal):
             result = platform_.install_stop_signals(self._fn)
-        self.assertEqual(set(installed), {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
-        self.assertEqual(set(result), {signal.SIGTERM, signal.SIGINT, signal.SIGHUP})
+        sighup = getattr(signal, "SIGHUP")  # 按 Windows 平台分析时 signal 模块没有它；用例本身已 skipIf(win32)
+        self.assertEqual(set(installed), {signal.SIGTERM, signal.SIGINT, sighup})
+        self.assertEqual(set(result), {signal.SIGTERM, signal.SIGINT, sighup})
 
-    def test_windows_names_on_macos_only_installs_sigint(self):
+    def test_windows_names_install_only_the_signals_this_platform_has(self):
         installed = []
 
         def fake_signal(sig, handler):
@@ -208,8 +209,9 @@ class InstallStopSignalsTests(unittest.TestCase):
         with mock.patch.object(platform_, "_platform", return_value="win32"), \
                 mock.patch.object(signal, "signal", fake_signal):
             result = platform_.install_stop_signals(self._fn)
-        self.assertEqual(installed, [signal.SIGINT])
-        self.assertEqual(result, [signal.SIGINT])
+        expected = [signal.SIGINT] + ([getattr(signal, "SIGBREAK")] if hasattr(signal, "SIGBREAK") else [])  # SIGBREAK 只有真 Windows 有
+        self.assertEqual(installed, expected)
+        self.assertEqual(result, expected)
 
     def test_windows_names_with_sigbreak_present_installs_both(self):
         installed = []
