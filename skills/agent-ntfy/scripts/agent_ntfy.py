@@ -46,6 +46,7 @@ notify 的退出码同 ask 的 0 / 1 / 3 / 4（0 = 已发出），没有 2——
 import argparse
 import json
 import os
+import select
 import socket
 import subprocess
 import sys
@@ -436,10 +437,17 @@ def cmd_confirm_sub(args) -> int:
                     # stdin 到头（< /dev/null 之类）：没等到回车就不能发——先发再订阅正是两段式要避免的
                     err(texts.t("cli.confirm.no_enter", lang))
                     return EXIT_NEEDS_HUMAN
-                try:
-                    send_request(sock, {"ready": True})
-                except OSError:
-                    pass  # 等回车期间 daemon 已经收掉这条（超时 / 停止）：真实终态还在缓冲区里，继续读它，别报成通道故障
+                # 等回车期间 daemon 可能已经收掉这条（超时 / 停止）并关了连接，真实终态在缓冲区里。发之前先探一眼：
+                # socket 已可读（终态事件或 EOF 已到）就不发，让读循环去读它——Windows 上向对端已关的连接 send 会把连接
+                # abort（WSAECONNABORTED），缓冲区里的终态跟着丢、之后的 recv 也失败；POSIX 上只是 EPIPE 被吞、事件还在。
+                # 先探再发在三个平台上都确定；探过之后才关的那条极窄窗口仍走下面的 except。
+                # 「可读 ⇒ 终态或 EOF」靠的是 daemon 在 topic 段不往这条连接发任何非终态事件（_warn_pending 与收到文字时的
+                # warning 都以 msg_id 为门，sent / warning 都在 ready 之后）——那边若放宽，这里会把 ready 静默吞掉
+                if not select.select([sock], [], [], 0)[0]:
+                    try:
+                        send_request(sock, {"ready": True})
+                    except OSError:
+                        pass  # 探完才关的：真实终态还在缓冲区里，继续读它，别报成通道故障
             elif kind == "sent":
                 sent = True
                 err(texts.t("cli.confirm.sent", lang, button=texts.t("confirm.button", lang), seconds=f"{args.timeout:g}"))  # 进度走 stderr：stdout 只在退出 0 时有内容

@@ -167,13 +167,15 @@ class Subscription:
     """一条订阅流。迭代得到事件 dict；close() 从任何线程调用都能让阻塞中的迭代立刻结束。
 
     自己持有 HTTP 连接（不经 urlopen）是为了拿到 socket：另一个线程要收掉这条流，只有
-    shutdown(SHUT_RDWR) 能把阻塞在 recv 里的读线程叫醒——单纯 close 文件对象不行，
-    对一个正在执行的生成器调 close() 更是直接 ValueError。读线程醒来后看到 _closed 标记，
+    shutdown(SHUT_RDWR)（Windows 上还得真关句柄，见 close()）能把阻塞在 recv 里的读线程叫醒——
+    单纯 close 文件对象不行，对一个正在执行的生成器调 close() 更是直接 ValueError。读线程醒来后看到 _closed 标记，
     抛 NtfyClosed 而不是「断线」，daemon 据此分辨是自己关的还是网络断了。
     响应与连接对象只在持有 _lock 时释放：读线程整个 readline 期间都握着锁，关流线程
     shutdown 之后再拿锁去释放，就不会撞上 http.client 内部把 fp 置 None 的那一刻
     （HTTPConnection.close() 会顺带 close 它持有的响应，与读线程并发时读线程会 AttributeError）。
     """
+
+    _WAKE_GRACE = 0.2  # shutdown 之后等读线程醒来的时间；超过就当它叫不醒（Windows），改为真关句柄
 
     def __init__(self, conn: http.client.HTTPConnection, sock: socket.socket, resp: http.client.HTTPResponse, poll: bool):
         self._conn = conn
@@ -236,14 +238,34 @@ class Subscription:
                 return event
 
     def close(self) -> None:
-        """可从任何线程调用。先 shutdown 叫醒读线程，等它退出 readline 后再释放连接；重复调用无害。"""
+        """可从任何线程调用。先 shutdown 叫醒读线程，等它退出 readline 后再释放连接；重复调用无害。
+
+        shutdown 叫不醒它（Windows：阻塞中的 recv 不受 shutdown 影响，只有 closesocket 能取消）就把句柄真关掉：
+        判据是「_WAKE_GRACE 内没拿到锁」这个行为，不按平台分支。_sock.close() 在这里不够——响应对象持着
+        makefile 的引用，close() 只减引用不关句柄；detach 出真句柄交给 socket.close(fd) 去关才是真关。
+        真关之后读线程还会对旧号再碰一次：明文流是已在内核里的那次 recv / select（Windows 上被 closesocket 取消），
+        SSL 流则是 OpenSSL 的 BIO 自己记着句柄号，醒来后还会对旧号发一次 recv——结果都是 OSError，_closed 已为 True
+        ⇒ NtfyClosed。旧号被复用成另一个 socket 的窗口靠这一点兜住：关流的只有主线程（它此刻正阻塞在这里），
+        进程里别的线程（herdr-inject）只起子进程、不建 socket，旧号即使被复用也是 pipe，recv 只会 ENOTSOCK。
+        随后的 SocketIO.close / HTTPConnection.close 拿到的 fd 已是 -1，都是空操作。
+        """
         self._closed = True
         try:
             self._sock.shutdown(socket.SHUT_RDWR)
         except OSError:
             pass  # 对端已经断了
-        with self._lock:
+        if not self._lock.acquire(timeout=self._WAKE_GRACE):
+            fd = self._sock.detach()
+            if fd != -1:
+                try:
+                    socket.close(fd)
+                except OSError:
+                    pass  # 句柄已经不在了（别处先关掉的）：读线程反正会以自己的超时醒来
+            self._lock.acquire()
+        try:
             self._release()
+        finally:
+            self._lock.release()
 
     def _release(self) -> None:
         """只在持有 _lock 时调用；幂等。"""

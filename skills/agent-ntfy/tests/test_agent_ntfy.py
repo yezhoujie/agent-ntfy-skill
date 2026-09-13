@@ -539,6 +539,48 @@ class ConfirmSubTest(unittest.TestCase):
         self.assertNotIn("Broken pipe", err)
         self.assertEqual(h.client.published, [])
 
+    # 同一形态在 Windows 上：向 daemon 已关掉的连接发 ready 会把连接 abort（WSAECONNABORTED），缓冲区里的 timeout 事件跟着丢，
+    # 之后的 recv 也失败 ⇒ 退 3「通信失败」。CLI 发 ready 之前先探一眼 socket：终态已到就不发——根本没发，就没有 abort
+    def test_timeout_while_waiting_for_enter_does_not_send_ready_into_a_closed_connection(self):
+        h = Harness(self, subscribed=())
+
+        class SlowStdin(io.StringIO):
+            def readline(self, *a):
+                time.sleep(1.2)
+                return "\n"
+
+        class AbortableSocket:
+            """真 socket 的替身：aborted 之后 recv 也抛 10053，像 Windows 上被 abort 的连接那样把缓冲区一并作废。"""
+
+            def __init__(self, real):
+                self.real, self.aborted = real, False
+
+            def recv(self, n):
+                if self.aborted:
+                    raise OSError(10053, "An established connection was aborted by the software in your host machine")
+                return self.real.recv(n)
+
+            def __getattr__(self, name):  # sendall / fileno / close 原样交给真 socket
+                return getattr(self.real, name)
+
+        real_connect, real_send = agent_ntfy.connect, agent_ntfy.send_request
+        ready_sent = []
+
+        def fake_send(sock, req, *, home=None):
+            if req == {"ready": True}:
+                ready_sent.append(req)
+                sock.aborted = True
+                raise OSError(10053, "An established connection was aborted by the software in your host machine")
+            real_send(sock, req, home=home)
+
+        with mock.patch.object(agent_ntfy, "connect", lambda home: AbortableSocket(real_connect(home))), \
+                mock.patch.object(agent_ntfy, "send_request", fake_send):
+            code, out, err = self.run_on_tty(["--home", str(h.home), "confirm-sub", "slot4", "--timeout", "0.5"], stdin=SlowStdin())
+        self.assertEqual(code, 2, err)  # 不探就发：3 + 「通信失败 … 10053」
+        self.assertEqual(ready_sent, [], "终态已在缓冲区里，ready 就不该发")
+        self.assertIn("还没发出", err)
+        self.assertEqual(h.client.published, [])
+
     def test_stdin_eof_on_tty_cancels_instead_of_sending(self):
         h = Harness(self, subscribed=())
         code, out, err = self.run_on_tty(["--home", str(h.home), "confirm-sub", "slot4", "--timeout", "5"], stdin=io.StringIO(""))

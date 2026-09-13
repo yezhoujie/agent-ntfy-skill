@@ -15,6 +15,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import threading
 import time
 import unittest
@@ -316,6 +317,73 @@ class LocalStreamTest(unittest.TestCase):
         self.assertLess(outcome["elapsed"], 1.0)
         with self.assertRaises(NtfyClosed):
             next(sub)  # 关掉之后再迭代也是 NtfyClosed，不是 StopIteration
+
+    # Windows 上 shutdown(SHUT_RDWR) 叫不醒阻塞在 recv 的读线程（实测：close() 等满了 stream_timeout 才返回）——只有把句柄
+    # 真关掉它才醒。三平台都能跑的替身：读线程等在 socketpair 的一端，shutdown 是空操作，detach 出去的另一端被真关才让 recv 抛。
+    # 验的是 close() 的顺序（shutdown → 等不到锁 → detach 出真句柄关掉 → 读线程以 NtfyClosed 结束），不是 Windows 的
+    # closesocket 能否叫醒 select——那由上面那条真 socket 用例在 Windows CI 上验
+    def test_close_really_closes_the_handle_when_shutdown_does_not_wake_the_reader(self):
+        class StubbornSocket:
+            def __init__(self):
+                self.ours, self.reader_end = socket.socketpair()
+                self.shutdown_calls, self.detached = 0, False
+
+            def shutdown(self, how):
+                self.shutdown_calls += 1  # 什么都不做：读线程醒不了
+
+            def detach(self):
+                self.detached = True
+                return self.ours.detach()  # 交出真句柄；调用方把它关掉，对端的 recv 才会返回
+
+            def close(self):
+                pass  # 真实语义：响应对象还持着 makefile 的引用，close() 只减引用、关不掉句柄——读线程照样醒不了
+
+        class StubbornResponse:
+            in_recv = threading.Event()  # 读线程已握着 _lock、正要进 recv：测试等到这一刻才 close()，别撞上它还没拿锁
+
+            def __init__(self, end):
+                self.end, self.closed = end, False
+                end.settimeout(5)
+
+            def readline(self):
+                self.in_recv.set()
+                if not self.end.recv(1):
+                    raise OSError(10038, "An operation was attempted on something that is not a socket")  # 句柄被关后 Windows 给的那个
+                return b"{}\n"
+
+            def close(self):
+                self.closed = True
+                self.end.close()
+
+        sock, conn = StubbornSocket(), mock.Mock()
+        resp = StubbornResponse(sock.reader_end)
+        self.addCleanup(sock.ours.close)  # detach 过就是空操作；没 detach（实现退化）才由这里收掉
+        self.addCleanup(resp.close)
+        sub = ntfyclient.Subscription(conn, sock, resp, poll=False)  # type: ignore[arg-type]  # 替身按鸭子类型
+        outcome = {}
+
+        def reader():
+            try:
+                outcome["event"] = next(sub)
+            except NtfyError as e:
+                outcome["exc"] = e
+
+        thread = threading.Thread(target=reader)
+        thread.start()
+        self.assertTrue(resp.in_recv.wait(5), "reader 没进到 readline")
+        started = time.monotonic()
+        sub.close()
+        close_elapsed = time.monotonic() - started
+        thread.join(6)
+        self.assertFalse(thread.is_alive(), "reader 线程没结束")
+        self.assertLess(close_elapsed, 1.0, "close() 等到了读线程自己超时")
+        self.assertTrue(sock.detached, "shutdown 没叫醒读线程就该 detach 出真句柄去关，_sock.close() 关不掉（响应对象还持着引用）")
+        self.assertIsInstance(outcome.get("exc"), NtfyClosed, outcome)  # 句柄是自己关的 ⇒ 是 NtfyClosed，不是「断线」
+        self.assertEqual(sock.shutdown_calls, 1)  # 先 shutdown（POSIX 上这一下就够）
+        self.assertTrue(resp.closed)
+        conn.close.assert_called_once()
+        with self.assertRaises(NtfyClosed):
+            next(sub)
 
     # stream_timeout 内一个字节都没来 ⇒ 当连接死了：抛的是 NtfyError 而不是 NtfyClosed，耗时约等于 stream_timeout
     def test_stream_timeout_raises_disconnect_not_closed(self):

@@ -6,6 +6,7 @@
 import json
 import os
 import queue
+import select
 import sys
 import tempfile
 import threading
@@ -1235,6 +1236,37 @@ class ConfirmTest(unittest.TestCase):
         self.assertEqual(warn["event"], "warning")
         self.assertIn("断开", warn["message"])
         sock.close()
+
+    # CLI 发 ready 之前只凭「socket 可读」判断终态是否已到（agent_ntfy.cmd_confirm_sub）：前提是 topic 段 daemon 不往这条连接
+    # 发任何非终态事件——断线 / 恢复告警与手机来文字的 warning 都以 msg_id 为门，等测试消息发出之后才发。拿一条正等着的 ask
+    # 当对照：同一时刻它收到了两条 warning，确认连接一行都没有
+    def test_nothing_reaches_the_confirm_connection_between_topic_and_ready(self):
+        h = Harness(self, subscribed=("slot1",), backoff_base=0.01, backoff_max=0.02, warn_after_failures=2)
+        ask_sock, first, ask_events = h.ask()
+        self.addCleanup(ask_sock.close)
+        self.assertEqual(first["event"], "sent")
+        sock = h.connect()
+        self.addCleanup(sock.close)
+        sock.settimeout(5)
+        agent_ntfy.send_request(sock, {"cmd": "confirm-sub", "slot": "slot4", "again": False, "timeout": 30}, home=h.home)
+        buf = b""
+        while b"\n" not in buf:
+            buf += sock.recv(65536)
+        self.assertEqual(buf.count(b"\n"), 1, buf)  # 恰好一行
+        self.assertEqual(json.loads(buf)["event"], "topic")
+        h.client.fail_subscribe = 2
+        h.client.drop()  # 触发一：断线 + 两次重连失败 ⇒ 告警；第三次连上 ⇒ 「已恢复」——两条 warning 正等着的 ask 都收到了
+        self.assertIn("断开", next(ask_events)["message"])
+        self.assertIn("恢复", next(ask_events)["message"])
+        with self.assertLogs("agent-ntfy.daemon", "INFO") as logs:
+            h.client.message(h.topic("slot4"), "我收到了")  # 触发二：手机来的文字（不是按钮）
+            wait_until(lambda: any("确认中收到文字" in r.getMessage() for r in logs.records), what="daemon 处理了那条文字")
+        self.assertEqual(select.select([sock], [], [], 0.5), ([], [], []))  # 0.5 s 内一行都没有
+        agent_ntfy.send_request(sock, {"ready": True})
+        events = agent_ntfy.read_events(sock)
+        self.assertEqual(next(events)["event"], "sent")
+        h.client.message(h.topic("slot4"), inject.control_mark("confirmed", "slot4"))
+        self.assertEqual(next(events)["event"], "confirmed")
 
     def test_publish_failure_is_error_not_sent_and_leaves_nothing(self):
         h = Harness(self, subscribed=())
