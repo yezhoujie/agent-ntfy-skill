@@ -16,6 +16,8 @@ from unittest import mock
 
 import agent_ntfy
 import inject
+import ipc
+import platform_
 import projstate
 import texts
 from inject import HerdrResult
@@ -624,10 +626,8 @@ class ConfirmSubTest(unittest.TestCase):
 
     # --detach 起子进程的参数顺序：--home 是顶层选项，必须在子命令前面（放后面 argparse 直接退 2，daemon 根本没起）
     def test_detach_spawns_child_with_home_before_subcommand(self):
-        import socket as socketmod
         import subprocess
-        import shutil
-        h = tempfile.mkdtemp(prefix="an-")  # 短路径：unix socket 路径限 104 字节
+        h = tempfile.mkdtemp(prefix="an-")  # 短路径：unix 传输下 socket 路径有长度上限
         self.addCleanup(shutil.rmtree, h, ignore_errors=True)
         recorded = {}
 
@@ -635,14 +635,12 @@ class ConfirmSubTest(unittest.TestCase):
             pid = 4242
 
             def __init__(self, argv, **kw):
-                recorded["argv"] = argv
-                recorded["session"] = kw.get("start_new_session")
-                srv = socketmod.socket(socketmod.AF_UNIX, socketmod.SOCK_STREAM)
-                srv.bind(str(Path(h) / "daemon.sock"))
-                srv.listen(1)
-                recorded["srv"] = srv
+                recorded["argv"], recorded["kw"] = argv, kw
+                srv, cleanup = ipc.listen(Path(h))  # 像 daemon 一样占住端点、回一条 status，pid 就是这个「子进程」的
+                srv.setblocking(True)
+                recorded["srv"], recorded["cleanup"] = srv, cleanup
 
-                def serve():  # 像 daemon 一样回一条 status，pid 就是这个「子进程」的
+                def serve():
                     conn, _ = srv.accept()
                     conn.recv(4096)
                     conn.sendall(b'{"event":"status","pid":4242,"subscribed":true,"disconnected_for":null,"pending":0,"confirming":0,"pool":5}\n')
@@ -655,12 +653,29 @@ class ConfirmSubTest(unittest.TestCase):
         with mock.patch.object(subprocess, "Popen", FakePopen):
             code, out, err = run(["--home", h, "daemon", "--detach"])
         recorded["srv"].close()
+        recorded["cleanup"]()
         self.assertEqual(code, 0, err)
         argv = recorded["argv"]
         self.assertLess(argv.index("--home"), argv.index("daemon"))
         self.assertEqual(argv[argv.index("--home") + 1], h)
-        self.assertTrue(recorded["session"])
+        kw = recorded["kw"]
+        self.assertEqual((kw["stdin"], kw["stdout"], kw["stderr"]), (subprocess.DEVNULL,) * 3)
+        if sys.platform == "win32":
+            self.assertEqual(kw["creationflags"], platform_.DETACHED_PROCESS | platform_.CREATE_NEW_PROCESS_GROUP)
+            self.assertNotIn("start_new_session", kw)
+        else:
+            self.assertIs(kw["start_new_session"], True)
+            self.assertNotIn("creationflags", kw)
         self.assertIn("pid 4242", out)
+
+    # 已有 daemon 在跑：--detach 不起第二个（判据是探活，不是 pid 文件）
+    def test_detach_refuses_when_a_daemon_answers(self):
+        h = Harness(self)
+        with mock.patch("agent_ntfy._spawn_daemon") as spawn:
+            code, out, err = run(["--home", str(h.home), "daemon", "--detach"])
+        self.assertEqual((code, out), (3, ""))
+        self.assertIn(Z("cli.detach.already"), err)
+        spawn.assert_not_called()
 
     def test_commands_without_daemon(self):
         code, out, err = run(["--home", "/nonexistent/agent-ntfy-home", "slots"])
@@ -672,12 +687,105 @@ class ConfirmSubTest(unittest.TestCase):
     # 刚起来还没连上 ntfy 时，--status 不能打出「断开 None 秒」
     def test_status_before_first_connection_says_connecting(self):
         h = Harness(self)
-        with mock.patch.object(agent_ntfy, "request", return_value={"event": "status", "pid": os.getpid(), "subscribed": False,
-                                                                     "disconnected_for": None, "pending": 0, "confirming": 0, "pool": 5}):
+        with mock.patch.object(agent_ntfy, "probe", return_value={"event": "status", "pid": os.getpid(), "subscribed": False,
+                                                                   "disconnected_for": None, "pending": 0, "confirming": 0, "pool": 5}):
             code, out, err = run(["--home", str(h.home), "daemon", "--status"])
         self.assertEqual(code, 0)
         self.assertIn("连接中", out)
         self.assertNotIn("None", out)
+
+    # --status 行尾打传输类型；探活走 socket，不看 pid 文件
+    def test_status_prints_transport(self):
+        h = Harness(self)
+        code, out, err = run(["--home", str(h.home), "daemon", "--status"])
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn(f"pid {os.getpid()}", out)
+        self.assertIn(Z("cli.status.transport", transport=h.transport), out)
+
+    # pid 文件在、socket 无应答（daemon 死了没清文件，或卡在初始化）：说「无应答」而不是「未运行」，rc 1
+    def test_status_with_stale_pid_file_says_no_answer(self):
+        home = Path(tempfile.mkdtemp(prefix="an-")) / "h"
+        self.addCleanup(shutil.rmtree, home.parent, ignore_errors=True)
+        home.mkdir()
+        (home / "daemon.pid").write_text("4242\n")
+        code, out, err = run(["--home", str(home), "daemon", "--status"])
+        self.assertEqual((code, out), (1, Z("cli.status.no_socket", pid=4242) + "\n"))
+        code, out, err = run(["--home", "/nonexistent/agent-ntfy-home", "daemon", "--status"])
+        self.assertEqual((code, out), (1, Z("cli.status.not_running") + "\n"))
+
+    # --stop 的等待有总预算（30 s）：daemon 答应了 stopping 却一直不退，到点报超时 rc 1，不会因为每轮探活各等一会儿而拖成几分钟
+    def test_stop_gives_up_after_the_overall_budget(self):
+        home = Path(tempfile.mkdtemp(prefix="an-")) / "h"
+        self.addCleanup(shutil.rmtree, home.parent, ignore_errors=True)
+        home.mkdir()
+        (home / "daemon.pid").write_text("4242\n")
+        started = time.monotonic()
+        with mock.patch.object(agent_ntfy, "probe", return_value={"event": "status", "pid": 4242}), \
+                mock.patch.object(agent_ntfy, "request", return_value={"event": "stopping", "pid": 4242}), \
+                mock.patch.object(agent_ntfy, "STOP_TIMEOUT", 0.5):
+            code, out, err = run(["--home", str(home), "daemon", "--stop"])
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn(Z("cli.stop.timeout", pid=4242), err)
+        self.assertLess(time.monotonic() - started, 1.5)
+
+    # --stop 碰到「已 bind 但不应答」（卡在初始化）的 daemon：与 --status 同口径——无应答 + pid 文件仍在 ⇒ rc 1，不说「未运行」
+    def test_stop_on_a_silent_listener_says_no_answer(self):
+        home = Path(tempfile.mkdtemp(prefix="an-")) / "h"
+        self.addCleanup(shutil.rmtree, home.parent, ignore_errors=True)
+        home.mkdir()
+        (home / "daemon.pid").write_text("4242\n")
+        listener, cleanup = ipc.listen(home)  # 端点绑上了（连接能进 backlog），但没人 accept、没人回话：就是卡在初始化的样子
+        self.addCleanup(cleanup)
+        self.addCleanup(listener.close)
+        with mock.patch("agent_ntfy.PROBE_TIMEOUT", 0.3):
+            code, out, err = run(["--home", str(home), "daemon", "--stop"])
+        self.assertEqual((code, out), (1, Z("cli.status.no_socket", pid=4242) + "\n"))
+
+    # 在 Windows 分支下 --detach 起子进程用的是 creationflags（经 CLI 一路走到 platform_.spawn_detached）
+    def test_detach_on_windows_uses_creationflags(self):
+        import subprocess
+        h = tempfile.mkdtemp(prefix="an-")
+        self.addCleanup(shutil.rmtree, h, ignore_errors=True)
+        recorded = {}
+
+        class FakePopen:
+            pid = 4242
+
+            def __init__(self, argv, **kw):
+                recorded["kw"] = kw
+
+            def poll(self):
+                return 7  # 起来就退：daemon_detach 报退出码，用例只看 Popen 参数
+
+        with mock.patch.object(subprocess, "Popen", FakePopen), mock.patch("platform_._platform", return_value="win32"):
+            code, out, err = run(["--home", h, "daemon", "--detach"])
+        self.assertEqual(code, 3)
+        self.assertEqual(recorded["kw"]["creationflags"], platform_.DETACHED_PROCESS | platform_.CREATE_NEW_PROCESS_GROUP)
+        self.assertNotIn("start_new_session", recorded["kw"])
+
+    # AGENT_NTFY_IPC 给了非法值：每个子命令都在入口响亮退 1 + 人读文案，不是 traceback、不静默回退
+    def test_invalid_env_ipc_fails_loudly_everywhere(self):
+        for argv, stdin in ((["slots"], ""), (["ask"], json.dumps(SAMPLE)), (["daemon", "--status"], ""), (["daemon", "--stop"], ""),
+                            (["daemon", "--detach"], ""), (["daemon"], ""), (["release"], "")):
+            code, out, err = run(["--home", "/nonexistent/agent-ntfy-home", *argv], stdin, env={"AGENT_NTFY_IPC": "bogus"})
+            self.assertEqual((code, out), (1, ""), (argv, err))
+            self.assertIn("bogus", err)
+            self.assertIn("unix / tcp", err)
+            self.assertNotIn("Traceback", err)
+
+    # --stop 经 socket 的 stop 命令停 daemon，等它退干净；不再向 pid 发信号（三平台同一条路）
+    def test_stop_goes_through_the_socket_not_a_signal(self):
+        h = Harness(self)
+        with mock.patch.object(agent_ntfy.os, "kill", side_effect=AssertionError("must not signal")):
+            code, out, err = run(["--home", str(h.home), "daemon", "--stop"])
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out, Z("cli.stop.done", pid=os.getpid()) + "\n")
+        h.thread.join(5)
+        self.assertFalse(h.thread.is_alive())
+        self.assertFalse(h.endpoint.exists())
+        self.assertFalse((h.home / "daemon.pid").exists())
+        code, out, err = run(["--home", str(h.home), "daemon", "--stop"])  # 已经停了：说未运行，rc 0
+        self.assertEqual((code, out), (0, Z("cli.status.not_running") + "\n"))
 
 
 class HerdrHelpersTest(unittest.TestCase):

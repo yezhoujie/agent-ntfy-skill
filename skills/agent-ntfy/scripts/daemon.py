@@ -5,7 +5,9 @@
 
 只做通路：把提问送到手机、把人的话原样送回 ask；不解释内容、不代答。
 
-文件都在 AGENT_NTFY_HOME（默认 ~/.agent-ntfy/，0700）：leases.json · daemon.sock · daemon.pid · daemon.log（0600）。
+文件都在 AGENT_NTFY_HOME（默认 ~/.agent-ntfy/，0700）：leases.json · daemon.sock（unix 传输）或 daemon.port（tcp 传输：端口 + token）·
+daemon.pid（只供人看：探活 / 停机都走 socket）· daemon.log（0600）。传输由 ipc 模块按 AGENT_NTFY_IPC / 平台选；tcp 下每条请求的
+首行都要带 token，不符即拒绝。
 日志只写槽位名 / 消息 id / 事件类型 / 错误类别——topic 是密码，正文与回复是用户的项目信息，都不落日志。
 
 socket 协议是 JSON Lines：客户端连上后发一行 {"cmd": ...}，daemon 回若干行事件（每行一个 JSON 对象）。
@@ -33,15 +35,17 @@ import logging
 import os
 import queue
 import selectors
-import signal
 import socket
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import inject
+import ipc
+import platform_
 import render
 import texts
 import validate
@@ -92,22 +96,7 @@ def _tag_for(tag: object, slot: str) -> str:
 
 
 def paths(home: Path) -> dict[str, Path]:
-    return {"sock": home / "daemon.sock", "pid": home / "daemon.pid", "log": home / "daemon.log", "leases": home / "leases.json"}
-
-
-def pid_alive(pid_file: Path) -> int | None:
-    """pid 文件指向的进程还活着就返回 pid，否则 None（文件不存在 / 内容坏 / 进程没了）。"""
-    try:
-        pid = int(pid_file.read_text().strip())
-    except (OSError, ValueError):
-        return None
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return None
-    except PermissionError:
-        return pid
-    return pid
+    return {"sock": home / "daemon.sock", "port": home / "daemon.port", "pid": home / "daemon.pid", "log": home / "daemon.log", "leases": home / "leases.json"}
 
 
 @dataclass
@@ -240,9 +229,13 @@ class Daemon:
         self._disconnected_since: float | None = None
         self._failures = 0
         self._warned_disconnect = False
-        self._wake_r = self._wake_w = -1
+        self._wake_r: socket.socket | None = None  # 唤醒对：订阅线程往 _wake_w 发一个字节，主循环从 _wake_r 收
+        self._wake_w: socket.socket | None = None
         self._sel: selectors.DefaultSelector | None = None
         self._listener: socket.socket | None = None
+        self._transport = ""  # 监听用的传输（unix / tcp），status 事件里报出去
+        self._token: str | None = None  # tcp 传输的连接口令；unix 为 None
+        self._cleanup_endpoint: Callable[[], None] | None = None  # 删监听端点文件（sock / port）
         self._thread: threading.Thread | None = None
         self._log_handlers: list[logging.Handler] = []
         self._wrote_pid = False
@@ -250,15 +243,15 @@ class Daemon:
     # ---------------------------------------------------------------- 生命周期
 
     def run(self) -> None:
-        """前台运行直到 stop() / SIGTERM / SIGINT / SIGHUP。另一个实例还活着就拒绝启动。
+        """前台运行直到 stop()（socket 的 stop 命令）或平台的停机信号（POSIX SIGTERM / SIGINT / SIGHUP，Windows SIGINT / SIGBREAK）。
+        另一个实例还活着就拒绝启动。
 
-        单例靠 socket 的 bind 而不是 pid 文件：bind 是原子的，pid 文件既有窗口（写它之前别人已经起来）
-        又有 pid 复用的误判。pid 文件紧跟 bind 之后写，钥匙串卡住时 --status / --stop 也有把手。
+        单例靠监听端点的 bind 而不是 pid 文件：bind 是原子的，pid 文件既有窗口（写它之前别人已经起来）
+        又有 pid 复用的误判。pid 文件紧跟 bind 之后写，只供人看。
         """
-        self.home.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(self.home, 0o700)  # 目录早就存在时 mkdir 的 mode 不生效
+        platform_.restrict_private_dir(self.home)
         self._setup_logging()
-        self._wake_r, self._wake_w = os.pipe()
+        self._wake_r, self._wake_w = ipc.wake_pair()
         self._sel = selectors.DefaultSelector()
         try:
             self._listen()  # 先占 socket：已有实例 / 路径太长 / 目录不可写在这里就能判定，别等状态都建好了再死
@@ -272,14 +265,13 @@ class Daemon:
         except OSError as e:
             LOG.error("启动失败：%s: %s", type(e).__name__, e)
             self._abort()
-            raise DaemonError("socket", path=self.paths["sock"], error=e) from e
+            raise self._listen_error(e) from e
         except StateError as e:
             LOG.error("启动失败：%s: %s", type(e).__name__, e)  # state 层的报错文案不含 topic
             self._abort()
             raise DaemonError("state_init", error=e) from e
         if threading.current_thread() is threading.main_thread():
-            for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
-                signal.signal(sig, lambda *_: self.stop())
+            platform_.install_stop_signals(lambda *_: self.stop())
         self._thread = threading.Thread(target=self._subscribe_loop, name="ntfy-subscriber", daemon=True)
         self._thread.start()
         self._inject_thread = threading.Thread(target=self._inject_loop, name="herdr-inject", daemon=True)
@@ -302,7 +294,7 @@ class Daemon:
     def _setup_logging(self) -> None:
         LOG_ROOT.setLevel(logging.INFO)
         fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
-        os.close(os.open(self.paths["log"], os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600))  # 先以 0600 建好再交给 FileHandler
+        os.close(platform_.open_private(self.paths["log"], os.O_WRONLY | os.O_CREAT | os.O_APPEND))  # 先以 0600 建好再交给 FileHandler
         handlers: list[logging.Handler] = [logging.FileHandler(self.paths["log"], encoding="utf-8")]
         if self.log_to_stderr:
             handlers.append(logging.StreamHandler(sys.stderr))
@@ -324,47 +316,38 @@ class Daemon:
         self._slot_of = {t: s for s, t in zip(self.state.slot_names(), self._topics)}
 
     def _write(self, path: Path, text: str) -> None:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        fd = platform_.open_private(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
 
     def _listen(self) -> None:
-        sock_path = self.paths["sock"]
-        if sock_path.exists():
-            # 文件在：要么另一个实例活着（能连上 ⇒ 拒绝），要么是上次没清干净的残骸（连不上 ⇒ 清掉重来）
-            probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            try:
-                probe.settimeout(1.0)
-                probe.connect(str(sock_path))
-            except OSError:
-                sock_path.unlink()
-            else:
-                raise DaemonError("already_running", path=sock_path)
-            finally:
-                probe.close()
-        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        """占监听端点。已有实例活着（端点连得上）⇒ 拒绝启动；残骸由 ipc 清掉重来。传输与口令由 ipc 定。"""
         try:
-            listener.bind(str(sock_path))
-            os.chmod(sock_path, 0o600)
-            listener.listen(16)
-        except OSError:
-            listener.close()
-            raise
-        listener.setblocking(False)
-        self._listener = listener
-        assert self._sel is not None
+            self._transport = ipc.transport(self.home)
+        except ValueError as e:
+            raise DaemonError("bad_ipc", error=e) from e
+        try:
+            listener, cleanup = ipc.listen(self.home)
+        except ipc.AlreadyRunning as e:
+            raise DaemonError("already_running", path=e.path) from e
+        self._listener, self._cleanup_endpoint = listener, cleanup
+        self._token = ipc.token_of(self.home)
+        assert self._sel is not None and self._wake_r is not None
         self._sel.register(listener, selectors.EVENT_READ, "listener")
         self._sel.register(self._wake_r, selectors.EVENT_READ, "wake")
+
+    def _listen_error(self, e: OSError) -> DaemonError:
+        """监听端点占不了：报平台中立的文案；unix 传输再提一句路径长度上限（数值随系统，不写死）。"""
+        hint = texts.Ref("daemon_error.socket.unix_hint") if self._transport == "unix" else ""
+        return DaemonError("socket", path=ipc.endpoint_path(self.home), error=e, hint=hint)
 
     def _abort(self) -> None:
         """启动半途失败：把已占的东西放掉，别留下让下次启动误判的残骸。"""
         if self._listener is not None:
             self._listener.close()
             self._listener = None
-            try:
-                self.paths["sock"].unlink()
-            except FileNotFoundError:
-                pass
+            if self._cleanup_endpoint is not None:
+                self._cleanup_endpoint()
         if self._wrote_pid:
             try:
                 self.paths["pid"].unlink()
@@ -394,11 +377,12 @@ class Daemon:
             self._listener.close()
         for c in list(self._clients.values()):
             self._drop_client(c)
-        for key in ("sock", "pid"):
-            try:
-                self.paths[key].unlink()
-            except FileNotFoundError:
-                pass
+        if self._cleanup_endpoint is not None:
+            self._cleanup_endpoint()
+        try:
+            self.paths["pid"].unlink()
+        except FileNotFoundError:
+            pass
         LOG.info("daemon 已退出")
         self._teardown_logging()
         self._close_fds()
@@ -443,13 +427,13 @@ class Daemon:
         if self._sel is not None:
             self._sel.close()
             self._sel = None
-        for fd in (self._wake_r, self._wake_w):
-            if fd >= 0:
+        for s in (self._wake_r, self._wake_w):
+            if s is not None:
                 try:
-                    os.close(fd)
+                    s.close()
                 except OSError:
                     pass
-        self._wake_r = self._wake_w = -1  # 关掉后再 _wake() 不能往被复用的 fd 里写
+        self._wake_r = self._wake_w = None  # 关掉后再 _wake() 就是空操作
 
     def _teardown_logging(self) -> None:
         for h in self._log_handlers:
@@ -460,10 +444,11 @@ class Daemon:
     # ---------------------------------------------------------------- 主循环
 
     def _wake(self) -> None:
-        if self._wake_w < 0:
+        w = self._wake_w
+        if w is None:
             return
         try:
-            os.write(self._wake_w, b"x")
+            w.send(b"x")
         except OSError:
             pass
 
@@ -475,12 +460,22 @@ class Daemon:
                 if key.data == "listener":
                     self._accept()
                 elif key.data == "wake":
-                    os.read(self._wake_r, 4096)
+                    self._drain_wake()
                     self._drain_events()
                 else:
                     self._read_client(key.data)
             self._expire()
             self._check_disconnect_warning()
+
+    def _drain_wake(self) -> None:
+        """把唤醒字节收掉（非阻塞 socket：没有就算了），下一轮 select 才不会空转。"""
+        r = self._wake_r
+        if r is None:
+            return
+        try:
+            r.recv(4096)
+        except OSError:
+            pass
 
     def _next_timeout(self) -> float:
         now = time.monotonic()
@@ -542,6 +537,13 @@ class Daemon:
             self._send(c.sock, {"event": "error", "kind": "bad_request", "sent": False, "message": texts.t("daemon.bad_request.not_object", self.lang)})
             self._drop_client(c)
             return
+        if not ipc.authenticate(req, self._token):
+            # tcp 传输：本机任何进程都连得上端口，口令是唯一的门。只记「被拒」，不记对方发了什么
+            LOG.warning("拒绝未认证的连接")
+            self._send(c.sock, {"event": "error", "kind": "unauthorized", "sent": False, "message": texts.t("daemon_error.unauthorized", self._req_lang(req))})
+            self._drop_client(c)
+            return
+        req.pop("token", None)
         self._dispatch(c, req)
         if c.confirm is not None and c.buf:
             self._consume_ready(c)  # 请求行与 ready 行同一个包到达：余量里可能已经有它
@@ -601,6 +603,9 @@ class Daemon:
             self._reply_once(c, self._cmd_release(req))
         elif cmd == "status":
             self._reply_once(c, self._status())
+        elif cmd == "stop":
+            self._reply_once(c, {"event": "stopping", "pid": os.getpid()})  # 先答应再停：客户端据此开始等文件消失
+            self.stop()
         elif cmd == "confirm-sub":
             self._cmd_confirm(c, req)
         elif cmd == "add-slot":
@@ -651,7 +656,7 @@ class Daemon:
         return existing
 
     def _status(self) -> dict:
-        return {"event": "status", "pid": os.getpid(), "subscribed": self._connected,
+        return {"event": "status", "pid": os.getpid(), "transport": self._transport, "subscribed": self._connected,
                 "disconnected_for": None if self._connected or self._disconnected_since is None
                 else round(time.monotonic() - self._disconnected_since, 1),
                 "pending": len(self._pending), "confirming": len(self._confirming), "pool": len(self._topics),

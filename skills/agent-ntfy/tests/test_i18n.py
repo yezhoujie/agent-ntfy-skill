@@ -10,6 +10,7 @@ from pathlib import Path
 import agent_ntfy
 import daemon
 import inject
+import ipc
 import render
 import texts
 import validate
@@ -338,7 +339,7 @@ class SameSequenceTest(unittest.TestCase):
     def test_confirm_card_follows_the_request_language(self):
         h = Harness(self, subscribed=(), lang="en")
         sock = h.connect()
-        agent_ntfy.send_request(sock, {"cmd": "confirm-sub", "slot": "slot4", "subscribed": True, "timeout": 30, "lang": "zh"})
+        agent_ntfy.send_request(sock, {"cmd": "confirm-sub", "slot": "slot4", "subscribed": True, "timeout": 30, "lang": "zh"}, home=h.home)
         events = agent_ntfy.read_events(sock)
         self.assertEqual(next(events)["event"], "sent")
         self.assertEqual(h.client.published[-1]["title"], "[slot4] 确认你能收到通知")
@@ -377,9 +378,11 @@ class RemainingLiteralsTest(unittest.TestCase):
             daemon.Daemon(home, lang="nope")
         self.assertEqual(cjk(cm.exception.text("en")), 0)
         self.assertIn("zh / en", cm.exception.text("zh"))
-        e = daemon.DaemonError("socket", path="/x/daemon.sock", error="too long")
-        self.assertTrue(str(e).startswith("起不了 socket /x/daemon.sock：too long。"))  # zh 原样
+        e = daemon.DaemonError("socket", path="/x/daemon.sock", error="too long", hint=texts.Ref("daemon_error.socket.unix_hint"))  # 提示句按取值语言解析
+        self.assertTrue(str(e).startswith("无法监听 IPC：/x/daemon.sock：too long。unix socket 路径有长度上限"), str(e))  # zh 原样
         self.assertEqual(cjk(e.text("en")), 0)
+        if ipc.transport(Path("/")) != "unix":
+            self.skipTest("路径长度上限只属于 unix socket")  # tcp 没有这个上限，跑下去会在测试进程里真起一个 daemon（读真钥匙串、订真 topic）
         code, out, err = run(["--home", "/tmp/definitely-not-a-dir-xyz/" + "x" * 120, "daemon"], env={"AGENT_NTFY_LANG": "en"})  # socket 路径超长：起不了
         cli_lines = [l for l in err.splitlines() if l.startswith("agent-ntfy:")]  # 前台 daemon 的日志也打在 stderr，日志按约定保持中文，只看 CLI 那行
         self.assertEqual(code, 3, err)

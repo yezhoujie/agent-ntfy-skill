@@ -6,14 +6,17 @@
 import json
 import os
 import queue
+import sys
 import tempfile
 import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import agent_ntfy
 import daemon
+import ipc
 import render
 from ntfyclient import NtfyClient, NtfyClosed, NtfyError
 from state import State
@@ -146,12 +149,20 @@ def wait_until(cond, timeout=5, what="条件"):
 
 
 class Harness:
-    """临时 home 里起一个 daemon（后台线程），用真实的 unix socket 协议与它说话。"""
+    """临时 home 里起一个 daemon（后台线程），用真实的 IPC 协议与它说话。
+
+    传输跟着环境走（AGENT_NTFY_IPC，由 ipc.transport() 在起 daemon 那一刻决定；缺省 = 平台缺省）：要在别的传输下跑同一批用例，
+    用例 setUp 里设环境变量即可。`transport` / `endpoint` 记下这个实例用的传输与端点文件，用例据此断言。
+    """
+
+    transport: str = ""
 
     def __init__(self, case, *, subscribed=("slot1", "slot2", "slot3", "slot4", "slot5"), pool_size=5, lang="zh", **kw):
         self.tmp = tempfile.TemporaryDirectory()
         case.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name) / "home"
+        self.transport = ipc.transport(self.home)
+        self.endpoint = ipc.endpoint_path(self.home)
         self.store = MemoryStore()
         self.state = State(self.store, self.home / "leases.json", pool_size=pool_size)
         self.state.topics()
@@ -163,7 +174,7 @@ class Harness:
         self.thread = threading.Thread(target=self.daemon.run, daemon=True)
         self.thread.start()
         case.addCleanup(self.stop)
-        wait_until(lambda: (self.home / "daemon.sock").exists(), what="socket 文件出现")
+        wait_until(lambda: self.endpoint.exists(), what="监听端点文件出现")
         self.client.wait_subscription(1)
 
     def stop(self):
@@ -178,15 +189,15 @@ class Harness:
         return agent_ntfy.connect(self.home)
 
     def request(self, **req):
-        """一问一答的命令：发一行，收全部事件直到对端关连接。"""
+        """一问一答的命令：发一行（按传输补口令），收全部事件直到对端关连接。"""
         with self.connect() as sock:
-            agent_ntfy.send_request(sock, req)
+            agent_ntfy.send_request(sock, req, home=self.home)
             return list(agent_ntfy.read_events(sock))
 
     def confirm(self, slot, *, again=False, timeout: float = 30):
         """发 confirm-sub 并读到第一条事件（topic / already_confirmed / error），把连接交回去继续。"""
         sock = self.connect()
-        agent_ntfy.send_request(sock, {"cmd": "confirm-sub", "slot": slot, "again": again, "timeout": timeout})
+        agent_ntfy.send_request(sock, {"cmd": "confirm-sub", "slot": slot, "again": again, "timeout": timeout}, home=self.home)
         events = agent_ntfy.read_events(sock)
         return sock, next(events), events
 
@@ -198,7 +209,7 @@ class Harness:
     def ask(self, *, leased_by="wD:p1", tag: str | None = "wD:p1", timeout: float = 30, payload=None, **extra):
         """发 ask 并读到 sent（或首个终态事件），把连接交回去继续读。extra（pane / require_confirmed …）原样进请求；不给就是旧客户端形态。"""
         sock = self.connect()
-        agent_ntfy.send_request(sock, {"cmd": "ask", "payload": payload or SAMPLE, "leased_by": leased_by, "tag": tag, "timeout": timeout, **extra})
+        agent_ntfy.send_request(sock, {"cmd": "ask", "payload": payload or SAMPLE, "leased_by": leased_by, "tag": tag, "timeout": timeout, **extra}, home=self.home)
         events = agent_ntfy.read_events(sock)
         first = next(events)
         return sock, first, events
@@ -624,6 +635,25 @@ class CommandsTest(unittest.TestCase):
         self.assertEqual(st["pid"], os.getpid())
         self.assertEqual((st["subscribed"], st["pending"], st["pool"]), (True, 0, 5))
 
+    # status 事件带传输类型（unix / tcp）：CLI 的 --status 行尾要打它
+    def test_status_reports_transport(self):
+        h = Harness(self)
+        self.assertEqual(h.request(cmd="status")[0]["transport"], h.transport)
+
+    # stop 命令：回 stopping（带 pid）后走正常收尾——pending 收到 daemon_stopping、文件删干净；这是三平台统一的停机路径
+    def test_stop_command_replies_stopping_then_shuts_down_cleanly(self):
+        h = Harness(self)
+        sock, first, events = h.ask()
+        self.assertEqual(h.request(cmd="stop"), [{"event": "stopping", "pid": os.getpid()}])
+        ev = next(events)
+        self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "daemon_stopping", True))
+        sock.close()
+        h.thread.join(5)
+        self.assertFalse(h.thread.is_alive())
+        self.assertFalse((h.home / "daemon.pid").exists())
+        self.assertFalse(h.endpoint.exists())
+        self.assertTrue(h.client.subscriptions[-1].closed)
+
     def test_add_slot_extends_pool_and_resubscribes(self):
         h = Harness(self)
         ev = h.request(cmd="add-slot")[0]
@@ -637,10 +667,11 @@ class CommandsTest(unittest.TestCase):
 
     def test_request_split_across_two_sends(self):
         h = Harness(self)
+        line = json.dumps(ipc.stamp({"cmd": "slots"}, h.home)).encode("utf-8")  # 按传输带口令，再切成两段发
         with h.connect() as sock:
-            sock.sendall(b'{"cmd": "sl')
+            sock.sendall(line[:8])
             time.sleep(0.1)
-            sock.sendall(b'ots"}\n')
+            sock.sendall(line[8:] + b"\n")
             evs = list(agent_ntfy.read_events(sock))
         self.assertEqual(evs[0]["event"], "slots")
 
@@ -667,7 +698,10 @@ class CommandsTest(unittest.TestCase):
                 tail = b""
             self.assertTrue(tail == b"" or tail.startswith(b'{"event": "error", "kind": "bad_request"'), tail[:80])
             if tail:
-                self.assertEqual(sock.recv(65536), b"")  # 事件之后就是 EOF
+                try:
+                    self.assertEqual(sock.recv(65536), b"")  # 事件之后就是 EOF
+                except OSError:
+                    pass  # tcp 上对端带着没读完的数据关连接 ⇒ 这里收到的是 RST，同样是「已关」
         self.assertEqual(h.request(cmd="slots")[0]["event"], "slots")  # daemon 没被拖垮
 
     def test_bad_request_line(self):
@@ -762,7 +796,7 @@ class SubscriptionTest(unittest.TestCase):
         ev = next(events)
         self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "daemon_stopping", True))
         sock.close()
-        self.assertFalse((h.home / "daemon.sock").exists())
+        self.assertFalse(h.endpoint.exists())
         self.assertFalse((h.home / "daemon.pid").exists())
         self.assertTrue(h.client.subscriptions[-1].closed)
         self.assertEqual(h.client.updates, [])  # 不改手机上的卡片
@@ -772,6 +806,8 @@ class SubscriptionTest(unittest.TestCase):
         import shutil
         base = Path(tempfile.mkdtemp(prefix="an-"))
         self.addCleanup(shutil.rmtree, base, ignore_errors=True)
+        if ipc.transport(base) != "unix":
+            self.skipTest("路径长度上限只属于 unix socket")
         deep = base / ("d" * 120)
         d = daemon.Daemon(deep, client=FakeNtfyClient(), store=MemoryStore())
         with self.assertRaises(daemon.DaemonError) as cm:
@@ -794,6 +830,8 @@ class SubscriptionTest(unittest.TestCase):
         home = Path(tempfile.mkdtemp(prefix="an-")) / "h"
         self.addCleanup(shutil.rmtree, home.parent, ignore_errors=True)
         home.mkdir(mode=0o700)
+        if ipc.transport(home) != "unix":
+            self.skipTest("socket 文件残骸只属于 unix 传输（tcp 的残骸在 test_ipc 里测）")
         (home / "daemon.pid").write_text("999999999\n")
         (home / "daemon.sock").touch()
         d = daemon.Daemon(home, client=FakeNtfyClient(), store=MemoryStore(), pool_size=2)
@@ -802,7 +840,7 @@ class SubscriptionTest(unittest.TestCase):
         self.addCleanup(lambda: (d.stop(), th.join(5)))
         wait_until(lambda: (home / "daemon.pid").read_text().strip() == str(os.getpid()) if (home / "daemon.pid").exists() else False, what="新实例写了自己的 pid")
         with agent_ntfy.connect(home) as sock:
-            agent_ntfy.send_request(sock, {"cmd": "status"})
+            agent_ntfy.send_request(sock, {"cmd": "status"}, home=home)
             self.assertEqual(next(agent_ntfy.read_events(sock))["pid"], os.getpid())
 
     # 单例靠 bind 而不是 pid 文件：状态初始化再慢，第二个实例也拿不到 socket
@@ -821,14 +859,14 @@ class SubscriptionTest(unittest.TestCase):
         ta = threading.Thread(target=a.run, daemon=True)
         ta.start()
         self.addCleanup(lambda: (a.stop(), ta.join(5)))
-        wait_until(lambda: (home / "daemon.sock").exists(), what="A 先占住 socket")
+        wait_until(lambda: ipc.endpoint_path(home).exists(), what="A 先占住监听端点")
         b = daemon.Daemon(home, client=FakeNtfyClient(), store=MemoryStore(), pool_size=2)
         with self.assertRaises(daemon.DaemonError):
             b.run()
         gate.set()
         wait_until(lambda: a.state is not None, what="A 完成初始化")
         with agent_ntfy.connect(home) as sock:
-            agent_ntfy.send_request(sock, {"cmd": "status"})
+            agent_ntfy.send_request(sock, {"cmd": "status"}, home=home)
             self.assertEqual(next(agent_ntfy.read_events(sock))["pool"], 2)
 
     # 状态初始化失败（钥匙串读写失败是首跑最常见的失败）：要落日志、包成 DaemonError、不留 socket 残骸
@@ -847,7 +885,7 @@ class SubscriptionTest(unittest.TestCase):
             d.run()
         self.assertIn("钥匙串", str(cm.exception))
         self.assertIn("StateError", (home / "daemon.log").read_text(encoding="utf-8"))
-        self.assertFalse((home / "daemon.sock").exists())
+        self.assertFalse(ipc.endpoint_path(home).exists())
         self.assertFalse((home / "daemon.pid").exists())
 
     # 没注入 store 时按 default_store 选实现（AGENT_NTFY_STORE=file ⇒ 池子落在 <home>/topics.json，不碰钥匙串）；
@@ -867,7 +905,7 @@ class SubscriptionTest(unittest.TestCase):
             t = threading.Thread(target=d.run, daemon=True)
             t.start()
             try:  # 断言失败也要在 patch 撤销之前把 daemon 停掉：线程若在撤销后才走到选实现那一步，会去碰真钥匙串
-                wait_until(lambda: (home / "daemon.sock").exists(), what="socket 文件出现")
+                wait_until(lambda: ipc.endpoint_path(home).exists(), what="监听端点文件出现")
                 client.wait_subscription(1)
                 self.assertEqual(len(json.loads((home / "topics.json").read_text(encoding="utf-8"))), 2)  # 池子在文件里，没去碰 security
             finally:
@@ -884,7 +922,7 @@ class SubscriptionTest(unittest.TestCase):
             self.assertIn("AGENT_NTFY_STORE=file", str(cm.exception))
             self.assertNotIn("socket", str(cm.exception))
             self.assertIn("StateError", (home2 / "daemon.log").read_text(encoding="utf-8"))
-            self.assertFalse((home2 / "daemon.sock").exists())
+            self.assertFalse(ipc.endpoint_path(home2).exists())
             self.assertFalse((home2 / "daemon.pid").exists())
 
     # restart 恰好落在「建连返回 → 采纳这条流」之间：采纳时必须发现代次已变、立刻换掉，不能永久挂在旧列表上
@@ -989,7 +1027,7 @@ class ConfirmTest(unittest.TestCase):
     def test_subscribed_flag_skips_topic_phase_and_publishes_at_once(self):
         h = Harness(self, subscribed=())
         sock = h.connect()
-        agent_ntfy.send_request(sock, {"cmd": "confirm-sub", "slot": "slot4", "subscribed": True, "timeout": 30})
+        agent_ntfy.send_request(sock, {"cmd": "confirm-sub", "slot": "slot4", "subscribed": True, "timeout": 30}, home=h.home)
         events = agent_ntfy.read_events(sock)
         first = next(events)
         self.assertEqual(first["event"], "sent", first)  # 没有 topic 事件：topic 名不出 daemon
@@ -1140,7 +1178,7 @@ class ConfirmTest(unittest.TestCase):
     def test_ready_in_same_packet_as_request_is_honoured(self):
         h = Harness(self, subscribed=())
         sock = h.connect()
-        req = json.dumps({"cmd": "confirm-sub", "slot": "slot4", "timeout": 30}) + "\n" + json.dumps({"ready": True}) + "\n"
+        req = json.dumps(ipc.stamp({"cmd": "confirm-sub", "slot": "slot4", "timeout": 30}, h.home)) + "\n" + json.dumps({"ready": True}) + "\n"
         sock.sendall(req.encode("utf-8"))  # 两行一个包到达
         events = agent_ntfy.read_events(sock)
         self.assertEqual(next(events)["event"], "topic")
@@ -1202,7 +1240,7 @@ class ConfirmTest(unittest.TestCase):
         h = Harness(self, subscribed=())
         h.client.fail_publish = "ntfy 不通"
         sock = h.connect()
-        agent_ntfy.send_request(sock, {"cmd": "confirm-sub", "slot": "slot4", "subscribed": True, "timeout": 30})
+        agent_ntfy.send_request(sock, {"cmd": "confirm-sub", "slot": "slot4", "subscribed": True, "timeout": 30}, home=h.home)
         events = agent_ntfy.read_events(sock)
         ev = next(events)
         self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "publish_failed", False))
@@ -1225,7 +1263,7 @@ class ConfirmTest(unittest.TestCase):
         h.client.fail_publish = "暂时不通"
         h.client.publish = fail_once  # type: ignore[method-assign]
         sock = h.connect()
-        req = json.dumps({"cmd": "confirm-sub", "slot": "slot4", "timeout": 30}) + "\n" + json.dumps({"ready": True}) + "\n" + json.dumps({"ready": True}) + "\n"
+        req = json.dumps(ipc.stamp({"cmd": "confirm-sub", "slot": "slot4", "timeout": 30}, h.home)) + "\n" + json.dumps({"ready": True}) + "\n" + json.dumps({"ready": True}) + "\n"
         sock.sendall(req.encode("utf-8"))
         events = agent_ntfy.read_events(sock)
         self.assertEqual(next(events)["event"], "topic")
@@ -1632,6 +1670,65 @@ class InjectTest(unittest.TestCase):
         self.assertNotIn("回执场景的正文也不该进日志", log)
         for t in h.state.topics():
             self.assertNotIn(t, log)
+
+
+class ProtocolSmokeMixin:
+    """协议在两种传输下都通：ask 往返 / notify / slots / stop 各一条。派生类把 transport 钉进环境；其余用例只跑平台缺省传输。"""
+
+    transport = ""
+
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, {"AGENT_NTFY_IPC": self.transport})
+        self.env.start()
+        self.addCleanup(self.env.stop)  # type: ignore[attr-defined]
+
+    def test_ask_roundtrip(self):
+        h = Harness(self)  # type: ignore[arg-type]
+        self.assertEqual(h.transport, self.transport)  # type: ignore[attr-defined]
+        sock, first, events = h.ask()
+        self.assertEqual(first["event"], "sent")  # type: ignore[attr-defined]
+        h.client.message(h.topic("slot1"), "答")
+        self.assertEqual(next(events), {"event": "reply", "text": "答"})  # type: ignore[attr-defined]
+        sock.close()
+        wait_until(lambda: len(h.client.clears) == 1)
+
+    def test_notify(self):
+        h = Harness(self)  # type: ignore[arg-type]
+        ev = h.notify()[0]
+        self.assertEqual((ev["event"], ev["slot"]), ("sent", "slot1"))  # type: ignore[attr-defined]
+
+    def test_slots_and_status_carry_transport(self):
+        h = Harness(self)  # type: ignore[arg-type]
+        self.assertEqual(set(h.request(cmd="slots")[0]["slots"]), {f"slot{i}" for i in range(1, 6)})  # type: ignore[attr-defined]
+        self.assertEqual(h.request(cmd="status")[0]["transport"], self.transport)  # type: ignore[attr-defined]
+
+    def test_stop(self):
+        h = Harness(self)  # type: ignore[arg-type]
+        self.assertEqual(h.request(cmd="stop")[0]["event"], "stopping")  # type: ignore[attr-defined]
+        h.thread.join(5)
+        self.assertFalse(h.thread.is_alive())  # type: ignore[attr-defined]
+        self.assertFalse(h.endpoint.exists())  # type: ignore[attr-defined]
+
+
+@unittest.skipIf(sys.platform == "win32", "unix socket 在 Windows 上没有")
+class UnixProtocolTest(ProtocolSmokeMixin, unittest.TestCase):
+    transport = "unix"
+
+
+class TcpProtocolTest(ProtocolSmokeMixin, unittest.TestCase):
+    transport = "tcp"
+
+    # tcp 下口令是唯一的门：不带 / 带错都被拒，连接断开，daemon 照常活着
+    def test_missing_or_wrong_token_is_rejected(self):
+        h = Harness(self)
+        with h.connect() as sock:
+            agent_ntfy.send_request(sock, {"cmd": "status"})  # 不带口令
+            events = list(agent_ntfy.read_events(sock))
+        self.assertEqual((events[0]["event"], events[0]["kind"], events[0]["sent"]), ("error", "unauthorized", False))
+        with h.connect() as sock:
+            agent_ntfy.send_request(sock, {"cmd": "status", "token": "x" * 32})
+            self.assertEqual(list(agent_ntfy.read_events(sock))[0]["kind"], "unauthorized")
+        self.assertEqual(h.request(cmd="status")[0]["event"], "status")  # 带对口令的照常
 
 
 if __name__ == "__main__":

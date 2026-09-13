@@ -29,8 +29,8 @@ ask 的退出码（三种结局不能都表现为空输出）:
 
 notify 的退出码同 ask 的 0 / 1 / 3 / 4（0 = 已发出），没有 2——它不等回复。提问挂着时也能发。
 
-除 daemon 外的子命令都是瘦客户端：经 unix socket 向 daemon 说话（一行 JSON 请求，若干行 JSON 事件），
-不读租约文件、不碰钥匙串。
+除 daemon 外的子命令都是瘦客户端：经本机 IPC（unix socket；Windows 上是 127.0.0.1 上的 tcp + 口令，由 ipc 模块按平台选）
+向 daemon 说话（一行 JSON 请求，若干行 JSON 事件），不读租约文件、不碰钥匙串。探活 / 停机也都走这条通路，不看 pid、不发信号。
 
 租约主体是项目（git 仓根，否则 cwd）：同一项目里任意窗格 / 会话共用一个槽位。每次跑命令都把本项目租约的
 注入窗格刷新成当前 herdr 窗格（不在 herdr 里 ⇒ 清空，手机消息走「未送达」回执）。卡片 Title 的 [<tag>] 是项目目录名。
@@ -46,7 +46,6 @@ notify 的退出码同 ask 的 0 / 1 / 3 / 4（0 = 已发出），没有 2——
 import argparse
 import json
 import os
-import signal
 import socket
 import subprocess
 import sys
@@ -56,6 +55,8 @@ from pathlib import Path
 from typing import NamedTuple
 
 import inject
+import ipc
+import platform_
 import projstate
 import texts
 import validate
@@ -71,6 +72,7 @@ EXIT_BY_KIND = {"invalid_input": EXIT_INVALID, "unknown_slot": EXIT_INVALID, "bu
 CONFIRM_TIMEOUT = 600  # 与 daemon.CONFIRM_TIMEOUT 同步（这里刻意不 import daemon）
 DAEMON_START_TIMEOUT = 5.0  # away on 起 daemon 后等它在 socket 上应答的上限（秒）
 PROBE_TIMEOUT = 2.0  # 单次探活的 socket 超时：daemon 已 bind 但还没进主循环（卡在初始化）时不能让调用方挂死
+STOP_TIMEOUT = 30.0  # --stop 等 daemon 退干净的总预算（关停最坏拖 2 + 5×N 秒：在途注入的宽限期 + 每张未送达回执的发布上限）
 STATE_KEYS = ("unassigned", "idle", "active", "confirming")  # daemon 的 slots 事件里 state_key 的取值；显示文案按语言取
 
 
@@ -146,21 +148,19 @@ def open_confirm_pane(home: Path, slot: str, lang: str, *, again: bool = False, 
 # ---------------------------------------------------------------- socket 协议（客户端侧）
 
 def sock_path(home: Path = HOME) -> Path:
-    return home / "daemon.sock"
+    """当前传输的监听端点文件（unix：daemon.sock；tcp：daemon.port），只用于报错文案。"""
+    return ipc.endpoint_path(home)
 
 
 def connect(home: Path = HOME) -> socket.socket:
-    """连 daemon；连不上抛 OSError（调用方决定怎么说）。"""
-    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    try:
-        s.connect(str(sock_path(home)))
-    except OSError:
-        s.close()
-        raise
-    return s
+    """连 daemon；连不上抛 OSError（调用方决定怎么说）。传输由 ipc 按环境 / 平台选。"""
+    return ipc.connect(home)
 
 
-def send_request(sock: socket.socket, req: dict) -> None:
+def send_request(sock: socket.socket, req: dict, *, home: Path | None = None) -> None:
+    """发一行请求。给了 home 就按传输补口令（tcp 每条连接的首行都要带）；同一连接后续的行（confirm-sub 的 ready）不必带。"""
+    if home is not None:
+        req = ipc.stamp(req, home)
     sock.sendall((json.dumps(req, ensure_ascii=False) + "\n").encode("utf-8"))
 
 
@@ -240,7 +240,7 @@ def cmd_ask(args) -> int:
     sent = False
     try:
         send_request(sock, {"cmd": "ask", "payload": payload, "leased_by": leased_by, "pane": pane, "tag": tag, "timeout": args.timeout, "lang": lang,
-                            "require_confirmed": require_confirmed(root)})
+                            "require_confirmed": require_confirmed(root)}, home=home)
         for ev in read_events(sock):
             kind = ev.get("event")
             if kind == "sent":
@@ -312,7 +312,7 @@ def request(home: Path, req: dict, lang: str, *, not_sent: bool = False) -> dict
     not_sent：这条命令会发消息（notify），失败提示里要点明「消息未发送」。"""
     try:
         with connect(home) as s:
-            send_request(s, {**req, "lang": lang})
+            send_request(s, {**req, "lang": lang}, home=home)
             return next(read_events(s), {"event": "error", "kind": "protocol", "sent": False, "message": texts.t("cli.no_response", lang)})
     except OSError as e:
         err(texts.t("cli.connect_failed.not_sent" if not_sent else "cli.connect_failed", lang, path=sock_path(home), error=e.strerror or e))
@@ -418,7 +418,7 @@ def cmd_confirm_sub(args) -> int:
         return EXIT_CHANNEL
     sent = False
     try:
-        send_request(sock, {"cmd": "confirm-sub", "slot": slot, "again": args.again, "subscribed": args.subscribed, "timeout": args.timeout, "lang": lang})
+        send_request(sock, {"cmd": "confirm-sub", "slot": slot, "again": args.again, "subscribed": args.subscribed, "timeout": args.timeout, "lang": lang}, home=home)
         for ev in read_events(sock):
             kind = ev.get("event")
             if kind == "already_confirmed":
@@ -652,15 +652,19 @@ def cmd_daemon(args) -> int:
     return 0
 
 
+def _stale_pid(home: Path) -> int | None:
+    """pid 文件里的数（只供人看：探活不靠它）；没有 / 读不出就 None。"""
+    try:
+        return int((home / "daemon.pid").read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
 def daemon_status(home: Path, lang: str) -> int:
-    import daemon
-    pid = daemon.pid_alive(home / "daemon.pid")
-    if not pid:
-        print(texts.t("cli.status.not_running", lang))
-        return 1
-    ev = request(home, {"cmd": "status"}, lang)
-    if ev is None or ev.get("event") != "status":
-        print(texts.t("cli.status.no_socket", lang, pid=pid))
+    ev = probe(home)
+    if ev is None:
+        pid = _stale_pid(home)
+        print(texts.t("cli.status.no_socket", lang, pid=pid) if pid else texts.t("cli.status.not_running", lang))
         return 1
     if ev["subscribed"]:
         sub = texts.t("cli.status.sub.connected", lang)
@@ -668,28 +672,26 @@ def daemon_status(home: Path, lang: str) -> int:
         sub = texts.t("cli.status.sub.connecting", lang)  # 刚起来还没连上，或从没连上过
     else:
         sub = texts.t("cli.status.sub.disconnected", lang, seconds=ev["disconnected_for"])
-    print(texts.t("cli.status.line", lang, pid=ev["pid"], sub=sub, pending=ev["pending"], confirming=ev.get("confirming", 0), pool=ev["pool"]))
+    line = texts.t("cli.status.line", lang, pid=ev["pid"], sub=sub, pending=ev["pending"], confirming=ev.get("confirming", 0), pool=ev["pool"])
+    print(line + (texts.t("cli.status.transport", lang, transport=ev["transport"]) if ev.get("transport") else ""))
     return 0
 
 
 def daemon_stop(home: Path, lang: str) -> int:
-    import daemon
-    pid = daemon.pid_alive(home / "daemon.pid")
-    if not pid:
-        print(texts.t("cli.status.not_running", lang))
-        return 0
-    # pid 文件可能是残留而 pid 被别的进程复用：先经 socket 问一声，对得上再发信号
-    ev = request(home, {"cmd": "status"}, lang)
-    if ev is None or ev.get("pid") != pid:
-        err(texts.t("cli.stop.pid_mismatch", lang, pid=pid, other=ev.get("pid") if ev else texts.t("cli.stop.no_response", lang)))
+    """经 socket 的 stop 命令停 daemon（三平台同一条路，不发信号），等它把端点文件与 pid 文件都删干净。"""
+    ev = probe(home)
+    if ev is None:
+        pid = _stale_pid(home)  # 与 --status 同口径：已 bind 但不应答（卡在初始化）不是「未运行」，也停不了它
+        print(texts.t("cli.status.no_socket", lang, pid=pid) if pid else texts.t("cli.status.not_running", lang))
+        return 1 if pid else 0
+    pid = ev.get("pid")
+    ack = request(home, {"cmd": "stop"}, lang)
+    if ack is None or ack.get("event") != "stopping":
+        err(texts.t("cli.stop.no_ack", lang, pid=pid, other=ack.get("message") if ack else texts.t("cli.stop.no_response", lang)))
         return 1
-    try:
-        os.kill(pid, signal.SIGTERM)
-    except OSError as e:
-        err(texts.t("cli.stop.signal_failed", lang, pid=pid, error=e))
-        return 1
-    for _ in range(300):  # 关停最坏拖 2 + 5×N 秒（在途注入的宽限期 + 每张未送达回执的发布上限）
-        if daemon.pid_alive(home / "daemon.pid") is None:
+    deadline = time.monotonic() + STOP_TIMEOUT  # 总预算按墙钟算：每轮探活自己会等一会儿，不能按轮数计
+    while time.monotonic() < deadline:
+        if probe(home, timeout=0.5) is None and not sock_path(home).exists() and not (home / "daemon.pid").exists():
             print(texts.t("cli.stop.done", lang, pid=pid))
             return 0
         time.sleep(0.1)
@@ -698,28 +700,20 @@ def daemon_stop(home: Path, lang: str) -> int:
 
 
 def probe(home: Path, *, timeout: float | None = None) -> dict | None:
-    """静默探活：连上 socket 问一声 status，返回那条事件；连不上 / 答非所问 / timeout 秒内没应答就 None，
-    stderr 一个字都不打（调用方拿它做分支，不是报错）。"""
-    try:
-        with connect(home) as s:
-            s.settimeout(PROBE_TIMEOUT if timeout is None else timeout)  # socket.timeout 是 OSError：超时同样算「没应答」
-            send_request(s, {"cmd": "status"})
-            ev = next(read_events(s), None)
-    except (OSError, ValueError):
-        return None
-    return ev if isinstance(ev, dict) and ev.get("event") == "status" else None
+    """静默探活（ipc.probe 的薄包装，缺省超时按本模块的 PROBE_TIMEOUT）：连上问一声 status，返回那条事件；
+    连不上 / 答非所问 / 超时都是 None，stderr 一个字都不打（调用方拿它做分支，不是报错）。"""
+    return ipc.probe(home, timeout=PROBE_TIMEOUT if timeout is None else timeout)
 
 
 def _spawn_daemon(home: Path) -> subprocess.Popen:
-    """脱离会话起 daemon：新会话、stdio 接 /dev/null。子进程继承环境，语言由它自己再解析。--home 是顶层选项，必须放在子命令前面。"""
-    return subprocess.Popen([sys.executable, os.path.abspath(__file__), "--home", str(home), "daemon"],
-                            start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    """脱离会话 / 控制台起 daemon（怎么脱离由平台层定），stdio 全接空设备。子进程继承环境，语言由它自己再解析。
+    --home 是顶层选项，必须放在子命令前面。"""
+    return platform_.spawn_detached([sys.executable, os.path.abspath(__file__), "--home", str(home), "daemon"])
 
 
 def daemon_detach(home: Path, lang: str) -> int:
-    """脱离会话起 daemon；起来后核一次 socket 能连上才算成功。"""
-    import daemon
-    if daemon.pid_alive(home / "daemon.pid"):
+    """脱离会话起 daemon；起来后核一次它在 socket 上报出自己的 pid 才算成功。"""
+    if probe(home) is not None:
         err(texts.t("cli.detach.already", lang))
         return EXIT_CHANNEL
     proc = _spawn_daemon(home)
@@ -789,12 +783,18 @@ def build_parser(lang: str) -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    platform_.utf8_stdio()  # Windows 的管道 stdio 缺省是 ANSI 代码页：JSON 与回复里的非 ASCII 会炸
     try:
         lang = env_lang()  # 先于一切：语言错了连 --help 都会错
     except BadEnvLang as e:
         err(texts.t("cli.bad_env_lang", texts.DEFAULT_LANG, value=str(e)))
         return EXIT_INVALID
     args = build_parser(lang).parse_args(argv)
+    try:
+        ipc.transport(Path(args.home))  # 同 lang：传输选错了每条命令都会错，入口就拦
+    except ipc.BadTransport as e:
+        err(texts.t("cli.bad_env_ipc", lang, value=repr(e.value)))
+        return EXIT_INVALID
     return args.fn(args)
 
 
