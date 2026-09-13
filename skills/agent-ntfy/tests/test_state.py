@@ -6,10 +6,14 @@
 import json
 import os
 import secrets
+import shutil
+import stat
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import state
 from state import Lease, NeedsUserDecision, SecretStore, SlotState, State
@@ -367,6 +371,19 @@ class KeychainStoreTest(unittest.TestCase):
         with self.assertRaises(state.StateError):
             self.store(run).save(self.TOPICS)
 
+    # security 命令不存在（非 macOS，或 PATH 不对）：是状态层的报错，不是 socket 错；文案指路 AGENT_NTFY_STORE=file
+    def test_missing_security_binary_is_keychain_missing(self):
+        def no_binary(argv, **kw):
+            raise FileNotFoundError(2, "No such file or directory", "security")
+        for op in ("load", "save"):
+            with self.subTest(op=op):
+                s = self.store(no_binary)
+                with self.assertRaises(state.StateError) as cm:
+                    getattr(s, op)(*([] if op == "load" else [self.TOPICS]))
+                self.assertEqual(cm.exception.key, "keychain.missing")
+                self.assertIn("AGENT_NTFY_STORE=file", str(cm.exception))
+                self.assertIn("security", str(cm.exception))
+
     def test_error_messages_do_not_leak_payload(self):
         payload = json.dumps(self.TOPICS).encode().hex()
         run = FakeRun(**{"add-generic-password": (1, "", f'security: unknown command "{payload}"')})
@@ -374,6 +391,212 @@ class KeychainStoreTest(unittest.TestCase):
             self.store(run).save(self.TOPICS)
         self.assertNotIn(payload, str(cm.exception))
         self.assertNotIn(self.TOPICS[0], str(cm.exception))
+
+
+class FileStoreTest(unittest.TestCase):
+    """0600 明文文件实现（Linux 与兜底）：读写 / 不存在 / 坏内容 / 权限位 / 文件层错误都包成 StateError。"""
+
+    TOPICS = ["agent-ntfy-abcdefghijklmnopqrst", "agent-ntfy-0123456789abcdefghij"]
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp(prefix="an-")) / "home"
+        self.addCleanup(shutil.rmtree, self.home.parent, ignore_errors=True)
+        self.path = self.home / "topics.json"
+
+    def test_missing_file_is_none_and_roundtrip(self):
+        store = state.FileStore(self.path)
+        self.assertIsNone(store.load())
+        self.assertFalse(self.home.exists())  # 只读不建目录
+        store.save(self.TOPICS)
+        self.assertEqual(store.load(), self.TOPICS)
+        self.assertEqual(json.loads(self.path.read_text(encoding="utf-8")), self.TOPICS)  # 就是一个 JSON 数组
+        self.assertFalse(self.path.with_name("topics.json.tmp").exists())  # 临时文件已 rename 掉
+        store.save(self.TOPICS[:1])  # 整体覆盖
+        self.assertEqual(state.FileStore(self.path).load(), self.TOPICS[:1])
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX 权限位")
+    def test_file_and_dir_are_private(self):
+        state.FileStore(self.path).save(self.TOPICS)
+        self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(self.home.stat().st_mode), 0o700)
+
+    def test_corrupt_content_is_state_error(self):
+        self.home.mkdir(parents=True)
+        for bad in ("not json", '{"a": 1}', '["ok", 2]', ""):
+            with self.subTest(bad=bad):
+                self.path.write_text(bad, encoding="utf-8")
+                with self.assertRaises(state.StateError) as cm:
+                    state.FileStore(self.path).load()
+                self.assertEqual(cm.exception.key, "file.corrupt")
+                self.assertIn(str(self.path), str(cm.exception))
+
+    @unittest.skipIf(sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0), "POSIX 权限位，且 root 无视 0000")
+    def test_read_and_write_failures_are_state_errors(self):
+        self.home.mkdir(parents=True)
+        self.path.write_text(json.dumps(self.TOPICS), encoding="utf-8")
+        self.path.chmod(0)
+        self.addCleanup(lambda: self.path.chmod(0o600))
+        with self.assertRaises(state.StateError) as cm:
+            state.FileStore(self.path).load()
+        self.assertEqual(cm.exception.key, "file.read_failed")
+        self.path.chmod(0o600)
+        blocked = self.home / "not-a-dir" / "topics.json"
+        (self.home / "not-a-dir").write_text("file", encoding="utf-8")  # 父「目录」是个文件：建不了目录、写不进去
+        with self.assertRaises(state.StateError) as cm:
+            state.FileStore(blocked).save(self.TOPICS)
+        self.assertEqual(cm.exception.key, "file.write_failed")
+
+
+def fake_protect(data: bytes) -> bytes:
+    return b"DPAPI:" + bytes(b ^ 0x5A for b in data)
+
+
+def fake_unprotect(data: bytes) -> bytes:
+    if not data.startswith(b"DPAPI:"):
+        raise OSError("not our blob")
+    return bytes(b ^ 0x5A for b in data[6:])
+
+
+class DpapiStoreTest(unittest.TestCase):
+    """DPAPI 实现的模块逻辑：编解码经注入的 protect / unprotect；ctypes 那两个真函数只在 Windows CI 上 smoke。"""
+
+    TOPICS = ["agent-ntfy-abcdefghijklmnopqrst", "agent-ntfy-0123456789abcdefghij"]
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp(prefix="an-")) / "home"
+        self.addCleanup(shutil.rmtree, self.home.parent, ignore_errors=True)
+        self.path = self.home / "topics.dpapi"
+
+    def store(self, **kw):
+        return state.DpapiStore(self.path, protect=fake_protect, unprotect=fake_unprotect, **kw)
+
+    def test_missing_file_is_none_and_roundtrip_is_ciphertext_on_disk(self):
+        store = self.store()
+        self.assertIsNone(store.load())
+        store.save(self.TOPICS)
+        raw = self.path.read_bytes()
+        self.assertTrue(raw.startswith(b"DPAPI:"))
+        for t in self.TOPICS:
+            self.assertNotIn(t.encode("utf-8"), raw)  # 磁盘上是密文，topic 名不明文落盘
+        self.assertEqual(store.load(), self.TOPICS)
+        self.assertEqual(self.store().load(), self.TOPICS)
+        self.assertFalse(self.path.with_name("topics.dpapi.tmp").exists())
+
+    @unittest.skipIf(sys.platform == "win32", "POSIX 权限位")
+    def test_file_and_dir_are_private(self):
+        self.store().save(self.TOPICS)
+        self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(self.home.stat().st_mode), 0o700)
+
+    def test_unprotect_failure_is_state_error(self):
+        self.home.mkdir(parents=True)
+        self.path.write_bytes(b"garbage from another user or machine")
+        with self.assertRaises(state.StateError) as cm:
+            self.store().load()
+        self.assertEqual(cm.exception.key, "dpapi.unprotect_failed")
+        self.assertIn(str(self.path), str(cm.exception))
+
+    def test_decrypted_content_that_is_not_a_pool_is_corrupt(self):
+        self.home.mkdir(parents=True)
+        self.path.write_bytes(fake_protect(b'{"a": 1}'))
+        with self.assertRaises(state.StateError) as cm:
+            self.store().load()
+        self.assertEqual(cm.exception.key, "file.corrupt")
+
+    @unittest.skipIf(sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0), "POSIX 权限位，且 root 无视 0000")
+    def test_read_and_write_failures_are_state_errors(self):
+        self.home.mkdir(parents=True)
+        self.path.write_bytes(fake_protect(json.dumps(self.TOPICS).encode()))
+        self.path.chmod(0)
+        self.addCleanup(lambda: self.path.chmod(0o600))
+        with self.assertRaises(state.StateError) as cm:
+            self.store().load()
+        self.assertEqual(cm.exception.key, "file.read_failed")
+        self.path.chmod(0o600)
+        (self.home / "not-a-dir").write_text("file", encoding="utf-8")
+        with self.assertRaises(state.StateError) as cm:
+            state.DpapiStore(self.home / "not-a-dir" / "topics.dpapi", protect=fake_protect, unprotect=fake_unprotect).save(self.TOPICS)
+        self.assertEqual(cm.exception.key, "file.write_failed")
+
+    # 加密本身失败（比如 SSH 会话里用户主密钥不可用）：包成 StateError，且什么都不写
+    def test_protect_failure_is_state_error_and_writes_nothing(self):
+        def broken(data: bytes) -> bytes:
+            raise OSError(13, "CryptProtectData failed")
+        with self.assertRaises(state.StateError) as cm:
+            state.DpapiStore(self.path, protect=broken, unprotect=fake_unprotect).save(self.TOPICS)
+        self.assertEqual(cm.exception.key, "file.write_failed")
+        self.assertFalse(self.home.exists())
+
+    # 缺省就指向真函数：非 Windows 上一碰就是 dpapi.unavailable，不会静默存成明文
+    @unittest.skipIf(sys.platform == "win32", "非 Windows 才会不可用")
+    def test_real_dpapi_is_unavailable_off_windows(self):
+        with self.assertRaises(state.StateError) as cm:
+            state._protect(b"x")
+        self.assertEqual(cm.exception.key, "dpapi.unavailable")
+        with self.assertRaises(state.StateError) as cm:
+            state._unprotect(b"x")
+        self.assertEqual(cm.exception.key, "dpapi.unavailable")
+        with self.assertRaises(state.StateError) as cm:
+            state.DpapiStore(self.path).save(self.TOPICS)
+        self.assertEqual(cm.exception.key, "dpapi.unavailable")
+        self.assertFalse(self.path.exists())
+
+    @unittest.skipUnless(sys.platform == "win32", "真 DPAPI 只在 Windows 上跑")
+    def test_real_dpapi_roundtrip_on_windows(self):
+        store = state.DpapiStore(self.path)
+        store.save(self.TOPICS)
+        raw = self.path.read_bytes()
+        for t in self.TOPICS:
+            self.assertNotIn(t.encode("utf-8"), raw)
+        self.assertEqual(state.DpapiStore(self.path).load(), self.TOPICS)
+        self.path.write_bytes(b"not a dpapi blob")
+        with self.assertRaises(state.StateError) as cm:
+            state.DpapiStore(self.path).load()
+        self.assertEqual(cm.exception.key, "dpapi.unprotect_failed")
+
+
+class DefaultStoreTest(unittest.TestCase):
+    """default_store(home)：环境变量三值 / 非法 / 空串当没给 / 三个平台的缺省。环境变量只在这一个函数里读。"""
+
+    def setUp(self):
+        self.home = Path(tempfile.mkdtemp(prefix="an-")) / "home"
+        self.addCleanup(shutil.rmtree, self.home.parent, ignore_errors=True)
+
+    def with_env(self, value):
+        return mock.patch.dict(os.environ, {"AGENT_NTFY_STORE": value} if value is not None else {}, clear=False)
+
+    def test_env_selects_implementation(self):
+        with self.with_env("keychain"):
+            self.assertIsInstance(state.default_store(self.home), state.KeychainStore)
+        with self.with_env("file"):
+            s = state.default_store(self.home)
+            assert isinstance(s, state.FileStore)
+            self.assertEqual(s.path, self.home / "topics.json")
+        with self.with_env("dpapi"):
+            s = state.default_store(self.home)
+            assert isinstance(s, state.DpapiStore)
+            self.assertEqual(s.path, self.home / "topics.dpapi")
+
+    def test_invalid_env_fails_loudly(self):
+        for bad in ("Keychain", "sqlite", " file"):
+            with self.subTest(value=bad), self.with_env(bad):
+                with self.assertRaises(state.StateError) as cm:
+                    state.default_store(self.home)
+                self.assertEqual(cm.exception.key, "store.bad_env")
+                self.assertIn(bad, str(cm.exception))
+                self.assertIn("keychain / file / dpapi", str(cm.exception))
+
+    def test_platform_defaults(self):
+        for env in (None, ""):  # 没给 / 空串都走平台缺省
+            with self.subTest(env=env):
+                with mock.patch.dict(os.environ, {k: v for k, v in os.environ.items() if k != "AGENT_NTFY_STORE"}, clear=True), self.with_env(env):
+                    with mock.patch.object(state.sys, "platform", "darwin"):
+                        self.assertIsInstance(state.default_store(self.home), state.KeychainStore)
+                    with mock.patch.object(state.sys, "platform", "win32"):
+                        self.assertIsInstance(state.default_store(self.home), state.DpapiStore)
+                    for other in ("linux", "freebsd14", "cygwin"):
+                        with mock.patch.object(state.sys, "platform", other):
+                            self.assertIsInstance(state.default_store(self.home), state.FileStore)
 
 
 @unittest.skipUnless(os.environ.get("AGENT_NTFY_SMOKE") == "1", "设 AGENT_NTFY_SMOKE=1 才真调 security（会在钥匙串建一个临时条目，跑完删除）")

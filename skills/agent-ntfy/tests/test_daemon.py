@@ -850,6 +850,43 @@ class SubscriptionTest(unittest.TestCase):
         self.assertFalse((home / "daemon.sock").exists())
         self.assertFalse((home / "daemon.pid").exists())
 
+    # 没注入 store 时按 default_store 选实现（AGENT_NTFY_STORE=file ⇒ 池子落在 <home>/topics.json，不碰钥匙串）；
+    # 选了 keychain 而 security 命令不存在 ⇒ 走 StateError 分支（keychain.missing），不能被当成 socket 错误，也不留 socket / pid 残骸
+    def test_default_store_selection_and_missing_security_binary(self):
+        import shutil
+        from unittest import mock
+        home = Path(tempfile.mkdtemp(prefix="an-")) / "h"
+        self.addCleanup(shutil.rmtree, home.parent, ignore_errors=True)
+
+        def no_binary(self_, argv, **kw):
+            raise FileNotFoundError(2, "No such file or directory", "security")
+
+        with self.subTest(store="file"), mock.patch.dict(os.environ, {"AGENT_NTFY_STORE": "file"}), mock.patch("state.KeychainStore._run", no_binary):
+            client = FakeNtfyClient()
+            d = daemon.Daemon(home, client=client, pool_size=2)
+            t = threading.Thread(target=d.run, daemon=True)
+            t.start()
+            try:  # 断言失败也要在 patch 撤销之前把 daemon 停掉：线程若在撤销后才走到选实现那一步，会去碰真钥匙串
+                wait_until(lambda: (home / "daemon.sock").exists(), what="socket 文件出现")
+                client.wait_subscription(1)
+                self.assertEqual(len(json.loads((home / "topics.json").read_text(encoding="utf-8"))), 2)  # 池子在文件里，没去碰 security
+            finally:
+                d.stop()
+                t.join(5)
+            self.assertFalse(t.is_alive())
+        home2 = home.parent / "h2"
+        with self.subTest(store="keychain"), mock.patch.dict(os.environ, {"AGENT_NTFY_STORE": "keychain"}), mock.patch("state.KeychainStore._run", no_binary):
+            d = daemon.Daemon(home2, client=FakeNtfyClient())
+            with self.assertRaises(daemon.DaemonError) as cm:
+                d.run()
+            self.assertEqual(cm.exception.key, "state_init")
+            self.assertIn("security", str(cm.exception))
+            self.assertIn("AGENT_NTFY_STORE=file", str(cm.exception))
+            self.assertNotIn("socket", str(cm.exception))
+            self.assertIn("StateError", (home2 / "daemon.log").read_text(encoding="utf-8"))
+            self.assertFalse((home2 / "daemon.sock").exists())
+            self.assertFalse((home2 / "daemon.pid").exists())
+
     # restart 恰好落在「建连返回 → 采纳这条流」之间：采纳时必须发现代次已变、立刻换掉，不能永久挂在旧列表上
     def test_restart_between_connect_and_adopt_is_not_lost(self):
         h = Harness(self, backoff_base=0.05, backoff_max=0.05)

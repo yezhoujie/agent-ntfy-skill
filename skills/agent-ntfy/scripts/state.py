@@ -1,7 +1,7 @@
 """状态层：topic 池（密钥存储）+ 槽位租约（~/.agent-ntfy/leases.json）。
 
 两层分开存：
-    密钥层  topic 名的池子（JSON 数组），存 macOS 钥匙串，几乎不变
+    密钥层  topic 名的池子（JSON 数组），存密钥存储（macOS 钥匙串 / 0600 文件 / Windows DPAPI 密文），几乎不变
     租约层  各槽位的订阅状态与当前占用者（leased_by：项目 id，由 CLI 给，本层不解释形态）
             与占用者最近一次跑命令所在的 herdr 窗格（pane，可空），存明文 JSON，频繁变
 
@@ -17,7 +17,11 @@ topic 名就是密码（公共 ntfy 实例知道名字即可读写、可对本�
 
 本模块预期只被 daemon 一个进程持有（其余子命令经 socket 向它查询），因此不做文件锁。
 
-环境变量: AGENT_NTFY_KEYCHAIN / AGENT_NTFY_TOPIC_PREFIX / AGENT_NTFY_HOME
+密钥层三种实现一个选择：KeychainStore（macOS 钥匙串，按 app 授权）· FileStore（0600 文件，Linux 与兜底）·
+DpapiStore（Windows DPAPI 密文文件）。后两种「只有本用户（与管理员）可读、同一用户下的其它进程也能读」，
+比钥匙串宽——是跨平台时用户要接受的放宽。default_store(home) 按 AGENT_NTFY_STORE > 平台选。
+
+环境变量: AGENT_NTFY_KEYCHAIN / AGENT_NTFY_TOPIC_PREFIX / AGENT_NTFY_HOME / AGENT_NTFY_STORE（只在 default_store 里读）
 """
 
 import json
@@ -26,6 +30,7 @@ import re
 import secrets
 import string
 import subprocess
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import Collection
 from dataclasses import dataclass, field
@@ -99,7 +104,7 @@ class Lease:
 # ---------------------------------------------------------------- 密钥存储
 
 class SecretStore(ABC):
-    """topic 池的存取接口。钥匙串是 macOS 专有，其他平台补一个实现即可，其余代码不用动。"""
+    """topic 池的存取接口。三个实现（钥匙串 / 文件 / DPAPI）只在这一层分叉，其余代码不用动。"""
 
     @abstractmethod
     def load(self) -> list[str] | None:
@@ -139,12 +144,20 @@ class KeychainStore(SecretStore):
     def _run(self, argv, **kw):
         return subprocess.run(argv, capture_output=True, text=True, **kw)
 
+    def _security(self, argv):
+        """跑一条 security 命令。命令本身不存在（非 macOS，或 PATH 不对）是状态层的错（keychain.missing），
+        不能以 FileNotFoundError 的形态漏出去——那会在 daemon 入口被当成 socket 错误。"""
+        try:
+            return self._run(argv)
+        except FileNotFoundError as e:
+            raise StateError("keychain.missing") from e
+
     def _fail(self, what, r):
         detail = HEX_RUN_RE.sub("<hex>", r.stderr.strip().splitlines()[0] if r.stderr.strip() else "")
         raise StateError(what, service=self.service, rc=r.returncode, detail=detail)
 
     def load(self):
-        r = self._run(["security", "find-generic-password", "-a", self.account, "-s", self.service, "-w"])
+        r = self._security(["security", "find-generic-password", "-a", self.account, "-s", self.service, "-w"])
         if r.returncode == self.NOT_FOUND_RC:
             return None
         if r.returncode != 0:
@@ -160,11 +173,162 @@ class KeychainStore(SecretStore):
     def save(self, topics):
         topics = list(topics)
         payload = json.dumps(topics).encode("utf-8").hex()
-        r = self._run(["security", "add-generic-password", "-U", "-a", self.account, "-s", self.service, "-X", payload])
+        r = self._security(["security", "add-generic-password", "-U", "-a", self.account, "-s", self.service, "-X", payload])
         if r.returncode != 0:
             self._fail("keychain.write_failed", r)
         if self.load() != topics:
             raise StateError("keychain.readback_mismatch", service=self.service)
+
+
+def _write_private(path: Path, data: bytes) -> None:
+    """0600 原子写：父目录 0700、临时文件 + os.replace（与租约文件同款）。OSError 由调用方按自己的文案包。"""
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    if hasattr(os, "fchmod"):
+        os.fchmod(fd, 0o600)  # open 的 mode 只在创建时生效：残留的宽权限 .tmp 也要收紧
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+    os.replace(tmp, path)
+
+
+def _parse_pool(path: Path, raw: bytes) -> list[str]:
+    """池子文件的内容必须是字符串数组；其它形态一律 file.corrupt（文案里不带内容：坏了的内容里也可能有 topic 名）。"""
+    try:
+        topics = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise StateError("file.corrupt", path=path, error=type(e).__name__) from e
+    if not isinstance(topics, list) or not all(isinstance(t, str) for t in topics):
+        raise StateError("file.corrupt", path=path, error="not a string array")
+    return topics
+
+
+class FileStore(SecretStore):
+    """明文 JSON 文件实现（Linux 与兜底）：<home>/topics.json，0600 + 0700 目录——只有本用户（与 root）能读。
+    同一用户下的其它进程也读得到，这是相对钥匙串（按 app 授权）的放宽，用户要知情。"""
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+
+    def load(self):
+        try:
+            raw = self.path.read_bytes()
+        except FileNotFoundError:
+            return None
+        except OSError as e:
+            raise StateError("file.read_failed", path=self.path, error=e) from e
+        return _parse_pool(self.path, raw)
+
+    def save(self, topics):
+        data = (json.dumps(list(topics)) + "\n").encode("utf-8")
+        try:
+            _write_private(self.path, data)
+        except OSError as e:
+            raise StateError("file.write_failed", path=self.path, error=e) from e
+
+
+# ---- Windows DPAPI（crypt32.CryptProtectData / CryptUnprotectData，经 ctypes）
+# ctypes 只在 win32 路径里导入：没有 _ctypes 的精简 Python（自编译缺 libffi、瘦容器镜像）上 Linux 用户只用 FileStore，不该在 import 就挂
+
+CRYPTPROTECT_UI_FORBIDDEN = 0x1  # 无头 / 远程会话下不许弹任何 UI；不用 CRYPTPROTECT_LOCAL_MACHINE（那会放宽到本机任何用户）
+
+
+def _dpapi(func_name: str, data: bytes) -> bytes:
+    """CryptProtectData / CryptUnprotectData 的公共调用形态：入参 DATA_BLOB，出参由系统 LocalAlloc、用完 LocalFree。
+    失败抛 OSError（带 winerror）：crypt32 以 use_last_error 加载，错误码是这一次调用的，不是别处残留的。"""
+    if sys.platform != "win32":
+        raise StateError("dpapi.unavailable", platform=sys.platform)
+    import ctypes
+
+    class DataBlob(ctypes.Structure):  # DWORD cbData; BYTE* pbData
+        _fields_ = [("cbData", ctypes.c_uint32), ("pbData", ctypes.POINTER(ctypes.c_char))]
+
+    crypt32 = ctypes.WinDLL("crypt32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    buf = ctypes.create_string_buffer(data, len(data))
+    blob_in = DataBlob(len(data), ctypes.cast(buf, ctypes.POINTER(ctypes.c_char)))
+    blob_out = DataBlob()
+    ok = getattr(crypt32, func_name)(ctypes.byref(blob_in), None, None, None, None, CRYPTPROTECT_UI_FORBIDDEN, ctypes.byref(blob_out))
+    if not ok:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        return ctypes.string_at(blob_out.pbData, blob_out.cbData)
+    finally:
+        kernel32.LocalFree(blob_out.pbData)
+
+
+def _protect(data: bytes) -> bytes:
+    """明文 → DPAPI 密文（当前 Windows 用户 + 本机）。非 Windows ⇒ StateError(dpapi.unavailable)。"""
+    return _dpapi("CryptProtectData", data)
+
+
+def _unprotect(data: bytes) -> bytes:
+    """DPAPI 密文 → 明文。解不开（别的用户 / 别的机器 / 不是 DPAPI blob）抛 OSError，由 DpapiStore 包成 StateError。"""
+    return _dpapi("CryptUnprotectData", data)
+
+
+def _brief(e: BaseException) -> str:
+    """异常进文案的形态：类名 + 数值错误码（winerror / errno），不带 str(e)——入参里可能有明文池子。"""
+    code = getattr(e, "winerror", None) or getattr(e, "errno", None)
+    return f"{type(e).__name__}({code})" if code is not None else type(e).__name__
+
+
+class DpapiStore(SecretStore):
+    """Windows 实现：<home>/topics.dpapi 是 CryptProtectData 的密文——只有加密它的那个用户在同一台机器上能解；
+    同一用户下的其它进程也能解（与钥匙串按 app 授权不同）。protect / unprotect 可注入：模块逻辑在别的平台上也能测。"""
+
+    def __init__(self, path: Path, *, protect=_protect, unprotect=_unprotect):
+        self.path = Path(path)
+        self._protect, self._unprotect = protect, unprotect
+
+    def load(self):
+        try:
+            raw = self.path.read_bytes()
+        except FileNotFoundError:
+            return None
+        except OSError as e:
+            raise StateError("file.read_failed", path=self.path, error=e) from e
+        try:
+            plain = self._unprotect(raw)
+        except StateError:
+            raise
+        except Exception as e:  # ctypes 层的失败形态不止 OSError；解不开就是解不开，文案里不带密文
+            raise StateError("dpapi.unprotect_failed", path=self.path, error=_brief(e)) from e
+        return _parse_pool(self.path, plain)
+
+    def save(self, topics):
+        try:
+            data = self._protect(json.dumps(list(topics)).encode("utf-8"))  # 先加密再碰文件：加密不了就什么都不写
+        except StateError:
+            raise
+        except Exception as e:  # 比如 SSH 会话里用户主密钥不可用
+            raise StateError("file.write_failed", path=self.path, error=_brief(e)) from e
+        try:
+            _write_private(self.path, data)
+        except OSError as e:
+            raise StateError("file.write_failed", path=self.path, error=e) from e
+
+
+# ---------------------------------------------------------------- 选择实现
+
+STORE_ENV = "AGENT_NTFY_STORE"
+STORE_CHOICES = ("keychain", "file", "dpapi")
+
+
+def default_store(home: Path) -> SecretStore:
+    """按 AGENT_NTFY_STORE（keychain / file / dpapi）选实现，非法值响亮报错；不设就按平台：darwin 钥匙串、win32 DPAPI、其余 0600 文件。
+    环境变量只在这里读一次——本模块唯一的例外，且只被 daemon 入口调用。"""
+    choice = os.environ.get(STORE_ENV) or None  # 空串当没给
+    if choice is None:
+        choice = "keychain" if sys.platform == "darwin" else "dpapi" if sys.platform == "win32" else "file"
+    elif choice not in STORE_CHOICES:
+        raise StateError("store.bad_env", value=repr(choice), choices=" / ".join(STORE_CHOICES))
+    home = Path(home)
+    if choice == "keychain":
+        return KeychainStore()
+    if choice == "dpapi":
+        return DpapiStore(home / "topics.dpapi")
+    return FileStore(home / "topics.json")
 
 
 # ---------------------------------------------------------------- 状态

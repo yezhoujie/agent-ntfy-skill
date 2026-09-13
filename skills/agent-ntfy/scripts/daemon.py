@@ -314,8 +314,8 @@ class Daemon:
     def _init_state(self) -> None:
         store = self._store
         if store is None:
-            from state import KeychainStore  # 只有 daemon 碰钥匙串
-            store = KeychainStore()
+            from state import default_store  # 只有 daemon 碰密钥存储；按 AGENT_NTFY_STORE > 平台选实现（注入的 store 优先）
+            store = default_store(self.home)
         if self._pool_size:
             self.state = State(store, self.paths["leases"], pool_size=self._pool_size)
         else:
