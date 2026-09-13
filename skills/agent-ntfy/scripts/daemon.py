@@ -9,8 +9,9 @@
 日志只写槽位名 / 消息 id / 事件类型 / 错误类别——topic 是密码，正文与回复是用户的项目信息，都不落日志。
 
 socket 协议是 JSON Lines：客户端连上后发一行 {"cmd": ...}，daemon 回若干行事件（每行一个 JSON 对象）。
-带 leased_by 的请求（ask / slots / release）可选带 pane：带了这个键就把本项目租约的注入窗格刷新成它（null = 不在 herdr 里，清空）；
-ask 另可带 require_confirmed（用户离席：只用已过闸的槽位）。不带这些字段的旧客户端行为不变（窗格不动）。
+带 leased_by 的请求（ask / notify / slots / release）可选带 pane：带了这个键就把本项目租约的注入窗格刷新成它（null = 不在 herdr 里，清空）；
+ask / notify 另可带 require_confirmed（用户离席：只用已过闸的槽位）。不带这些字段的旧客户端行为不变（窗格不动）。
+notify（单向通知：无按钮、不等回复）与 ask 共用租约解析，但不占「提问中」——提问挂着时照样放行，回 sent 后即关连接。
 ask 的连接保持到终态（reply / timeout / error）：daemon 若死了，连接当场断开，ask 立刻失败——这就是它的响亮信号；
 confirm-sub 同样保持到终态，且中途客户端会再发一行 {"ready": true}（用户订阅好了，可以发测试通知了）；
 其余命令一问一答即关。error 事件必带 sent：调用方要据此知道消息发出去了没有。
@@ -81,6 +82,13 @@ def _pane_of(req: dict) -> str | None:
     """请求里的注入窗格：非空字符串才算，null / 空 / 别的类型都当不在 herdr 里。键不在的情形由调用方先判（那是旧客户端，窗格不动）。"""
     pane = req.get("pane")
     return pane if isinstance(pane, str) and pane else None
+
+
+def _tag_for(tag: object, slot: str) -> str:
+    """卡片 Title 里的 [<tag>]：客户端没给就用槽位名；超长截断不报错——tag 是通路自己的东西。"""
+    if not isinstance(tag, str) or not tag:
+        tag = slot
+    return tag.encode("utf-8")[:render.TAG_MAX_BYTES].decode("utf-8", errors="ignore")
 
 
 def paths(home: Path) -> dict[str, Path]:
@@ -584,6 +592,9 @@ class Daemon:
         if cmd == "ask":
             self._cmd_ask(c, req)
             return
+        if cmd == "notify":
+            self._cmd_notify(c, req)
+            return
         if cmd == "slots":
             self._reply_once(c, self._cmd_slots(req))
         elif cmd == "release":
@@ -696,52 +707,10 @@ class Daemon:
             self._reply_once(c, {"event": "error", "kind": "invalid_input", "sent": False, "message": texts.t("daemon.invalid_input", lang, problems=joined)})
             return
         assert isinstance(payload, dict)
-        state = self._state()
-        pane, require_confirmed = _pane_of(req), req.get("require_confirmed") is True
-        try:
-            slots = state.slots()  # 视图只在这里读一次；刷新窗格与 acquire() 各自再读写一次，那是状态层的事
-            existing = self._touch_pane(slots, leased_by, req)  # 同一项目换了窗格再问：手机消息要注到新窗格
-        except StateError as e:
-            self._reply_once(c, {"event": "error", "kind": "state", "sent": False, "message": e.text(lang)})
+        lease = self._resolve_lease(c, req, leased_by, lang, check_busy=True)
+        if lease is None:
             return
-        if existing in self._pending:
-            self._reply_once(c, {"event": "error", "kind": "busy", "sent": False, "message": texts.t("daemon.busy.pending", lang, slot=existing)})
-            return
-        if existing in self._confirming:
-            self._reply_once(c, {"event": "error", "kind": "busy", "sent": False, "message": texts.t("daemon.busy.confirming", lang, slot=existing)})
-            return
-        try:
-            if existing:
-                # 同一个目标复用自己的租约（一个目标一个 topic），不刷新 leased_at——那是租约起点，不是上次提问时间
-                lease = Lease(slot=existing, topic=state.topic_of(existing), subscribed=slots[existing]["subscribed"])
-            else:
-                lease = state.acquire(leased_by, self._active(), require_confirmed=require_confirmed, pane=pane)
-        except NeedsUserDecision as e:
-            cands = [{"slot": s, "subscribed": slots[s]["subscribed"]} for s in e.candidates]
-            listed = (", ".join(texts.t("daemon.candidate.confirmed" if x["subscribed"] else "daemon.candidate.unconfirmed", lang, slot=x["slot"]) for x in cands)
-                      if cands else texts.t("daemon.no_free_slot.none", lang))
-            key = "daemon.no_confirmed_slot" if require_confirmed else "daemon.no_free_slot"  # 离席时槽位未必全满，新建的也没人过闸：不指 add-slot
-            self._reply_once(c, {"event": "error", "kind": "no_free_slot", "sent": False, "candidates": cands,
-                                 "message": texts.t(key, lang, candidates=listed)})
-            return
-        except StateError as e:
-            self._reply_once(c, {"event": "error", "kind": "state", "sent": False, "message": e.text(lang)})
-            return
-        if lease.slot in self._confirming:
-            if not existing:
-                try:
-                    state.release(lease.slot, self._active())  # busy 就是什么都没动：刚租到的退回去，重试时再租
-                except StateError as e:
-                    LOG.warning("退回租约失败 slot=%s：%s", lease.slot, e)
-            self._reply_once(c, {"event": "error", "kind": "busy", "sent": False, "message": texts.t("daemon.busy.confirming", lang, slot=lease.slot)})
-            return
-        if not lease.subscribed:
-            self._reply_once(c, {"event": "error", "kind": "unconfirmed", "sent": False, "slot": lease.slot, "message": texts.t("daemon.unconfirmed", lang, slot=lease.slot)})
-            return
-        if not isinstance(tag, str) or not tag:
-            tag = lease.slot
-        tag = tag.encode("utf-8")[:render.TAG_MAX_BYTES].decode("utf-8", errors="ignore")  # tag 是通路自己的东西，超了截不报错
-        rendered = render.render_question(payload, tag=tag, reply_url=self.client.topic_url(lease.topic), lang=lang)
+        rendered = render.render_question(payload, tag=_tag_for(tag, lease.slot), reply_url=self.client.topic_url(lease.topic), lang=lang)
         try:
             msg_id = self._publish_own(lease.topic, rendered.message, title=rendered.title, actions=rendered.actions)
         except NtfyError as e:
@@ -756,6 +725,84 @@ class Daemon:
         self._send(c.sock, {"event": "sent", "slot": lease.slot, "id": msg_id})
         if self._warned_disconnect:  # 订阅正断着：发布走 HTTP 照样通，但回复此刻收不到，得让它知道
             self._send(c.sock, {"event": "warning", "message": texts.t("daemon.warning.disconnected_at_send", lang)})
+
+    def _resolve_lease(self, c: Client, req: dict, leased_by: str, lang: str, *, check_busy: bool) -> Lease | None:
+        """ask / notify 共用：本项目租着的槽位（顺手刷新窗格）就用它，没有就租一个；拿到的必须已过闸。
+        走不通的每一条都在这里 _reply_once 错误并返回 None。check_busy：提问 / 确认挂着的槽位要不要拒绝——ask 要（一个槽位
+        同一时刻只能挂一个提问），notify 不要（等裁决期间也得能通报进展）。"""
+        state = self._state()
+        pane, require_confirmed = _pane_of(req), req.get("require_confirmed") is True
+        try:
+            slots = state.slots()  # 视图只在这里读一次；刷新窗格与 acquire() 各自再读写一次，那是状态层的事
+            existing = self._touch_pane(slots, leased_by, req)  # 同一项目换了窗格再来：手机消息要注到新窗格
+        except StateError as e:
+            self._reply_once(c, {"event": "error", "kind": "state", "sent": False, "message": e.text(lang)})
+            return None
+        if check_busy and existing in self._pending:
+            self._reply_once(c, {"event": "error", "kind": "busy", "sent": False, "message": texts.t("daemon.busy.pending", lang, slot=existing)})
+            return None
+        if check_busy and existing in self._confirming:
+            self._reply_once(c, {"event": "error", "kind": "busy", "sent": False, "message": texts.t("daemon.busy.confirming", lang, slot=existing)})
+            return None
+        try:
+            if existing:
+                # 同一个目标复用自己的租约（一个目标一个 topic），不刷新 leased_at——那是租约起点，不是上次提问时间
+                lease = Lease(slot=existing, topic=state.topic_of(existing), subscribed=slots[existing]["subscribed"])
+            else:
+                lease = state.acquire(leased_by, self._active(), require_confirmed=require_confirmed, pane=pane)
+        except NeedsUserDecision as e:
+            cands = [{"slot": s, "subscribed": slots[s]["subscribed"]} for s in e.candidates]
+            listed = (", ".join(texts.t("daemon.candidate.confirmed" if x["subscribed"] else "daemon.candidate.unconfirmed", lang, slot=x["slot"]) for x in cands)
+                      if cands else texts.t("daemon.no_free_slot.none", lang))
+            key = "daemon.no_confirmed_slot" if require_confirmed else "daemon.no_free_slot"  # 离席时槽位未必全满，新建的也没人过闸：不指 add-slot
+            self._reply_once(c, {"event": "error", "kind": "no_free_slot", "sent": False, "candidates": cands,
+                                 "message": texts.t(key, lang, candidates=listed)})
+            return None
+        except StateError as e:
+            self._reply_once(c, {"event": "error", "kind": "state", "sent": False, "message": e.text(lang)})
+            return None
+        if check_busy and lease.slot in self._confirming:
+            if not existing:
+                try:
+                    state.release(lease.slot, self._active())  # busy 就是什么都没动：刚租到的退回去，重试时再租
+                except StateError as e:
+                    LOG.warning("退回租约失败 slot=%s：%s", lease.slot, e)
+            self._reply_once(c, {"event": "error", "kind": "busy", "sent": False, "message": texts.t("daemon.busy.confirming", lang, slot=lease.slot)})
+            return None
+        if not lease.subscribed:
+            self._reply_once(c, {"event": "error", "kind": "unconfirmed", "sent": False, "slot": lease.slot, "message": texts.t("daemon.unconfirmed", lang, slot=lease.slot)})
+            return None
+        return lease
+
+    # ---------------------------------------------------------------- notify
+
+    def _cmd_notify(self, c: Client, req: dict) -> None:
+        """单向通知：租约解析同 ask（但提问 / 确认挂着也放行），渲染无按钮的通知卡，发出即回 sent 并关连接。
+        不进 _pending（没有回复要等）、不进回执与在途表；用户随后的消息走无 pending 分支注入。"""
+        payload = req.get("payload")
+        leased_by = req.get("leased_by")
+        lang = str(req["lang"]) if texts.is_lang(req.get("lang")) else validate.lang_of(payload, self.lang)
+        if not isinstance(leased_by, str) or not leased_by:
+            self._reply_once(c, {"event": "error", "kind": "bad_request", "sent": False, "message": texts.t("daemon.bad_request.notify_args", lang)})
+            return
+        problems = validate.check_notify(payload, lang)  # CLI 已在本地校验过；这里再核一次作防御
+        if problems:
+            joined = texts.t("daemon.invalid_input.sep", lang).join(f"{validate.field_label(p.field, lang, command='notify')}: {p.message}" for p in problems)
+            self._reply_once(c, {"event": "error", "kind": "invalid_input", "sent": False, "message": texts.t("daemon.invalid_input", lang, problems=joined)})
+            return
+        assert isinstance(payload, dict)
+        lease = self._resolve_lease(c, req, leased_by, lang, check_busy=False)
+        if lease is None:
+            return
+        rendered = render.render_notify(payload, tag=_tag_for(req.get("tag"), lease.slot), lang=lang)
+        try:
+            msg_id = self._publish_own(lease.topic, rendered.message, title=rendered.title, actions=rendered.actions)
+        except NtfyError as e:
+            LOG.warning("通知发布失败 slot=%s：%s", lease.slot, type(e).__name__)
+            self._reply_once(c, {"event": "error", "kind": "publish_failed", "sent": False, "message": texts.t("daemon.publish_failed", lang, error=e)})
+            return
+        LOG.info("通知已发 slot=%s id=%s", lease.slot, msg_id)
+        self._reply_once(c, {"event": "sent", "slot": lease.slot, "id": msg_id})
 
     # ---------------------------------------------------------------- confirm-sub / add-slot
 

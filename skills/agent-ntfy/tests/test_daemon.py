@@ -20,7 +20,7 @@ from state import State
 import inject
 import texts
 from tests.test_inject import FakeHerdr, herdr_error
-from tests.test_render import SAMPLE
+from tests.test_render import NOTIFY, SAMPLE
 from tests.test_state import MemoryStore
 
 CLOSE = object()
@@ -189,6 +189,11 @@ class Harness:
         agent_ntfy.send_request(sock, {"cmd": "confirm-sub", "slot": slot, "again": again, "timeout": timeout})
         events = agent_ntfy.read_events(sock)
         return sock, next(events), events
+
+    def notify(self, *, leased_by="proj:/w/me", tag: str | None = "me", **extra):
+        """发 notify（一问一答）：返回全部事件。extra（payload / pane / require_confirmed …）原样进请求；payload 不给就用样本。"""
+        extra.setdefault("payload", NOTIFY)
+        return self.request(cmd="notify", leased_by=leased_by, tag=tag, **extra)
 
     def ask(self, *, leased_by="wD:p1", tag: str | None = "wD:p1", timeout: float = 30, payload=None, **extra):
         """发 ask 并读到 sent（或首个终态事件），把连接交回去继续读。extra（pane / require_confirmed …）原样进请求；不给就是旧客户端形态。"""
@@ -476,6 +481,123 @@ class LeasePaneTest(unittest.TestCase):
         h.state.acquire(self.ME, pane="wD:p1")
         self.assertEqual(h.request(cmd="release", leased_by=self.ME, pane="wD:p1")[0], {"event": "released", "slot": "slot1"})
         self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot1"], {"state": "未分配", "state_key": "unassigned", "subscribed": True, "leased_by": None, "leased_at": None, "pane": None})
+
+
+class NotifyTest(unittest.TestCase):
+    """notify：与 ask 共用租约解析，但不占「提问中」、无按钮、一问一答即关。"""
+
+    ME = "proj:/w/me"
+
+    def test_notify_publishes_card_without_buttons_and_does_not_occupy_the_slot(self):
+        h = Harness(self)
+        events = h.notify(leased_by=self.ME, tag="me", pane="wD:p1")
+        pub = h.client.published[-1]
+        self.assertEqual(events, [{"event": "sent", "slot": "slot1", "id": pub["id"]}])  # 一问一答：sent 之后连接就关了
+        self.assertEqual(pub["title"], "[me] " + NOTIFY["title"])
+        self.assertEqual(pub["message"], render.notify_message(NOTIFY, "zh"))
+        self.assertEqual(pub["actions"], [])
+        self.assertIn(pub["id"], h.daemon._own_ids)  # 走 _publish_own：订阅流回显它时认得出不是回复
+        rec = h.request(cmd="slots")[0]["slots"]["slot1"]
+        self.assertEqual((rec["state_key"], rec["leased_by"], rec["pane"]), ("idle", self.ME, "wD:p1"))  # 租到了、记了窗格，但不「活跃」
+        self.assertEqual(h.request(cmd="status")[0]["pending"], 0)
+        # 用户随后发的消息没有提问在等 ⇒ 走注入（无 pending 分支），不会被当成回复
+        h.client.message(h.topic("slot1"), "收到")
+        wait_until(lambda: any(c[1:3] == ["agent", "prompt"] for c in h.herdr.calls), what="注入")
+        self.assertEqual(h.herdr.calls[-1][3], "wD:p1")
+        self.assertIn("收到", h.herdr.calls[-1][4])
+        self.assertEqual(len(h.client.published), 1)  # 通知卡不更新、不 clear
+
+    def test_notify_refreshes_pane_like_any_command(self):
+        h = Harness(self)
+        h.state.acquire(self.ME, pane="wD:p1")
+        self.assertEqual(h.notify(leased_by=self.ME, tag="me", pane="wD:p9")[0]["event"], "sent")
+        self.assertEqual(h.state.slots()["slot1"]["pane"], "wD:p9")
+        self.assertEqual(h.notify(leased_by=self.ME, tag="me", pane=None)[0]["event"], "sent")  # 不在 herdr 里发的
+        self.assertIsNone(h.state.slots()["slot1"]["pane"])
+
+    def test_notify_is_allowed_while_a_question_is_pending_and_reply_still_goes_to_the_question(self):
+        h = Harness(self)
+        sock, first, events = h.ask(leased_by=self.ME, tag="me")
+        notified = h.notify(leased_by=self.ME, tag="me")
+        self.assertEqual(notified[0]["event"], "sent")
+        self.assertEqual(notified[0]["slot"], first["slot"])  # 同一项目同一槽位
+        self.assertEqual(len(h.client.published), 2)
+        h.client.message(h.topic("slot1"), "答")
+        self.assertEqual(next(events), {"event": "reply", "text": "答"})  # 回复归提问（现有语义）
+        sock.close()
+        wait_until(lambda: len(h.client.clears) == 1)
+        self.assertEqual(h.client.updates[-1]["seq"], first["id"])  # 更新的是提问卡，通知卡不动
+        self.assertEqual(h.client.clears[-1]["seq"], first["id"])
+
+    def test_notify_is_allowed_while_the_slot_is_confirming(self):
+        h = Harness(self)
+        h.state.acquire(self.ME)
+        csock, cfirst, cevents = h.confirm("slot1", again=True)  # 换手机重新过闸：槽位「确认中」
+        self.assertEqual(cfirst["event"], "topic")
+        notified = h.notify(leased_by=self.ME, tag="me")
+        self.assertEqual((notified[0]["event"], notified[0]["slot"]), ("sent", "slot1"))
+        self.assertEqual(h.request(cmd="status")[0]["confirming"], 1)  # 确认态没被动
+        csock.close()
+
+    def test_notify_may_lease_a_slot_that_is_being_reconfirmed(self):
+        h = Harness(self)
+        csock, cfirst, cevents = h.confirm("slot1", again=True)  # 没人租的已过闸槽位正在重新确认
+        self.assertEqual(cfirst["event"], "topic")
+        notified = h.notify(leased_by=self.ME, tag="me")
+        self.assertEqual((notified[0]["event"], notified[0]["slot"]), ("sent", "slot1"))  # 不像 ask 那样退回租约报 busy
+        self.assertEqual(h.state.slots()["slot1"]["leased_by"], self.ME)  # 租约留着
+        csock.close()
+
+    def test_notify_unconfirmed_slot_is_refused_and_lease_is_kept(self):
+        h = Harness(self, subscribed=())
+        ev = h.notify(leased_by=self.ME, tag="me")[0]
+        self.assertEqual((ev["event"], ev["kind"], ev["sent"], ev["slot"]), ("error", "unconfirmed", False, "slot1"))
+        self.assertEqual(h.client.published, [])
+        self.assertEqual(h.state.slots()["slot1"]["leased_by"], self.ME)  # 租约留着，让用户去 confirm-sub 这个槽位
+
+    def test_notify_require_confirmed_reports_no_free_slot_with_confirmed_candidates_only(self):
+        h = Harness(self, pool_size=2, subscribed=("slot1",))
+        h.state.acquire("proj:/w/other")
+        ev = h.notify(leased_by=self.ME, tag="me", require_confirmed=True)[0]
+        self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "no_free_slot", False))
+        self.assertEqual(ev["candidates"], [{"slot": "slot1", "subscribed": True}])
+        self.assertNotIn("add-slot", ev["message"])
+        self.assertEqual(h.state.slots()["slot2"]["leased_by"], None)  # 没去租未过闸的
+        self.assertEqual(h.client.published, [])
+
+    def test_notify_invalid_input_is_refused_before_leasing(self):
+        h = Harness(self)
+        ev = h.notify(leased_by=self.ME, tag="me", payload={**NOTIFY, "body": "字" * 2000})[0]
+        self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "invalid_input", False))
+        self.assertIn("body:", ev["message"])  # 通知卡的 body 就是 JSON 字段，按原名报
+        ev = h.notify(leased_by=self.ME, tag="me", payload={"body": "x"})[0]
+        self.assertEqual((ev["event"], ev["kind"]), ("error", "invalid_input"))
+        self.assertIn("title", ev["message"])
+        for bad in ("str", [1], None):
+            ev = h.notify(leased_by=self.ME, tag="me", payload=bad)[0]
+            self.assertEqual((ev["event"], ev["kind"]), ("error", "invalid_input"), bad)
+        self.assertEqual(h.client.published, [])
+        self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot1"]["state_key"], "unassigned")  # 校验不过不租
+
+    def test_notify_without_leased_by_is_a_bad_request(self):
+        h = Harness(self)
+        ev = h.request(cmd="notify", payload=NOTIFY, tag="me")[0]
+        self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "bad_request", False))
+        self.assertEqual(ev["message"], Z("daemon.bad_request.notify_args"))  # notify 自己的那句，不是 ask 的、也不是「未知命令」
+
+    def test_notify_publish_failure_reports_not_sent(self):
+        h = Harness(self)
+        h.client.fail_publish = "HTTP 429"
+        ev = h.notify(leased_by=self.ME, tag="me")[0]
+        self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "publish_failed", False))
+        self.assertEqual(h.request(cmd="status")[0]["pending"], 0)
+
+    def test_notify_tag_defaults_to_slot_and_is_truncated(self):
+        h = Harness(self)
+        self.assertEqual(h.notify(leased_by=self.ME, tag=None)[0]["event"], "sent")
+        self.assertEqual(h.client.published[-1]["title"], "[slot1] " + NOTIFY["title"])
+        self.assertEqual(h.notify(leased_by=self.ME, tag="x" * 100)[0]["event"], "sent")
+        self.assertEqual(h.client.published[-1]["title"], "[" + "x" * render.TAG_MAX_BYTES + "] " + NOTIFY["title"])
 
 
 class CommandsTest(unittest.TestCase):

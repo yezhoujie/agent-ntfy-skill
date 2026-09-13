@@ -17,7 +17,7 @@ import inject
 import projstate
 import texts
 from tests.test_daemon import Harness, wait_until
-from tests.test_render import SAMPLE
+from tests.test_render import NOTIFY, SAMPLE
 
 
 def Z(key, **fmt):
@@ -293,6 +293,106 @@ class AskExitCodesTest(unittest.TestCase):
         code, out, err = run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), HERDR)
         self.assertEqual((code, out), (0, "答\n"))
         self.assertIn("提醒", err)
+
+
+class NotifyExitCodesTest(unittest.TestCase):
+    """notify 的退出码：0 已发 · 1 输入不合法 · 3 通道故障 · 4 需要人。没有 2——它不等回复。"""
+
+    # 0：发出去了，stdout 一行说明发到了哪个槽位；状态文件同 ask 回写；不占「提问中」
+    def test_sent_exit_0(self):
+        h = Harness(self)
+        root = temp_root(self)
+        projstate.ensure(root)
+        code, out, err = run(["--home", str(h.home), "notify"], json.dumps(NOTIFY), HERDR, root=root)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out, Z("cli.notify.sent", slot="slot1") + "\n")
+        pub = h.client.published[0]
+        self.assertEqual((pub["title"], pub["actions"]), (f"[{root.name}] " + NOTIFY["title"], []))
+        rec = h.state.slots()["slot1"]
+        self.assertEqual((rec["leased_by"], rec["pane"]), (owner(root), "wD:p1"))
+        st = projstate.load(root)
+        self.assertEqual((st["slot"], st["confirmed"], st["target"]), ("slot1", True, owner(root)))
+        self.assertEqual(h.request(cmd="status")[0]["pending"], 0)
+
+    # 0：提问挂着时也能通报进展
+    def test_sent_while_own_question_is_pending(self):
+        h = Harness(self)
+        root = temp_root(self)
+        sock, first, events = h.ask(leased_by=owner(root))
+        code, out, err = run(["--home", str(h.home), "notify"], json.dumps(NOTIFY), HERDR, root=root)
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn(first["slot"], out)
+        sock.close()
+
+    # 1：校验不过，消息未发送，stdout 空，不需要 daemon 在跑；抬头点名 notify
+    def test_invalid_input_exit_1_without_daemon(self):
+        code, out, err = run(["--home", "/nonexistent/agent-ntfy-home", "notify"], '{"title": "x"}')
+        self.assertEqual((code, out), (1, ""))
+        self.assertIn("agent-ntfy notify", err)
+        self.assertIn("消息未发送", err)
+        self.assertIn("body", err)
+        code, out, err = run(["--home", "/nonexistent/agent-ntfy-home", "notify"], json.dumps({**NOTIFY, "body": "字" * 2000}))
+        self.assertEqual(code, 1)
+        self.assertIn("body", err)
+        code, out, err = run(["--home", "/nonexistent/agent-ntfy-home", "notify"], '{"title":')
+        self.assertEqual((code, out), (1, ""))
+
+    # 3：daemon 没在跑 / 发布失败，stderr 写明「消息未发送」
+    def test_channel_failure_exit_3_says_not_sent(self):
+        code, out, err = run(["--home", "/nonexistent/agent-ntfy-home", "notify"], json.dumps(NOTIFY))
+        self.assertEqual((code, out), (3, ""))
+        self.assertIn("消息未发送", err)
+        self.assertIn("agent-ntfy daemon --detach", err)
+        h = Harness(self)
+        h.client.fail_publish = "HTTP 429"
+        code, out, err = run(["--home", str(h.home), "notify"], json.dumps(NOTIFY), HERDR)
+        self.assertEqual((code, out), (3, ""))
+        self.assertIn("消息未发送", err)
+
+    # 4：未过闸 / 离席且租不到已过闸槽位
+    def test_needs_human_exit_4(self):
+        h = Harness(self, subscribed=())
+        root = temp_root(self)
+        projstate.ensure(root)
+        code, out, err = run(["--home", str(h.home), "notify"], json.dumps(NOTIFY), HERDR, root=root)
+        self.assertEqual((code, out), (4, ""))
+        self.assertIn("confirm-sub slot1", err)
+        self.assertIn("消息未发送", err)
+        self.assertEqual((projstate.load(root)["slot"], projstate.load(root)["confirmed"]), ("slot1", False))  # 让 agent 知道该确认哪个
+        h2 = Harness(self, pool_size=2, subscribed=("slot1",))
+        h2.state.acquire("proj:/w/other")
+        root2 = temp_root(self)
+        projstate.save(root2, away=True)
+        code, out, err = run(["--home", str(h2.home), "notify"], json.dumps(NOTIFY), HERDR, root=root2)
+        self.assertEqual((code, out), (4, ""))
+        self.assertIn("slot1", err)
+        self.assertIn("已过闸", err)
+        self.assertNotIn("slot2", err)
+
+    # 3：daemon 回的东西不合协议——退 3 + 「消息未发送」，不是 traceback 退 1
+    def test_protocol_error_exit_3_says_not_sent(self):
+        h = Harness(self)
+
+        def broken(sock):
+            raise agent_ntfy.ProtocolError("not_object")
+            yield  # noqa: unreachable，只为让它是生成器
+
+        with mock.patch.object(agent_ntfy, "read_events", broken):
+            code, out, err = run(["--home", str(h.home), "notify"], json.dumps(NOTIFY), HERDR)
+        self.assertEqual((code, out), (3, ""))
+        self.assertIn("消息未发送", err)
+        self.assertNotIn("Traceback", err)
+
+    # 没有 --timeout：它不等回复（子命令本身在，只是没这个选项）
+    def test_no_timeout_option(self):
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"AGENT_NTFY_LANG": "zh"}), contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+            agent_ntfy.main(["notify", "--help"])
+        self.assertEqual(cm.exception.code, 0)
+        self.assertNotIn("--timeout", out.getvalue())
+        with self.assertRaises(SystemExit) as cm:
+            run(["--home", "/nonexistent/agent-ntfy-home", "notify", "--timeout", "5"], json.dumps(NOTIFY))
+        self.assertEqual(cm.exception.code, 2)
 
 
 class OtherCommandsTest(unittest.TestCase):

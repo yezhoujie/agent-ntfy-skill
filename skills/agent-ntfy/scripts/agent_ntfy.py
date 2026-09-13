@@ -3,6 +3,7 @@
 
 子命令:
     ask [--timeout 秒]      阻塞提问：从 stdin 读一段 JSON，推到手机，等到回复后把回复原文打到 stdout
+    notify                  单向通知：从 stdin 读 {"title", "body"}，推一张无按钮的卡片到手机，发出即返回（不等回复、不占「提问中」）
     daemon [--detach|--status|--stop]
                             常驻订阅进程（唯一的 ntfy 订阅者）：前台跑 / 脱离会话跑 / 看状态 / 停掉
     slots                   看槽位池与租约状态
@@ -24,6 +25,8 @@ ask 的退出码（三种结局不能都表现为空输出）:
     3  通道故障：daemon 没在跑 / 连接中途断开 / 向 ntfy 发布失败（stderr 写明是「未发送」还是「已发送但…」）
     4  需要人介入：槽位未过可达性闸 / 全部槽位已租用 / 该目标已有一个提问在等
   130  被 Ctrl-C 中断（stderr 仍说明消息发了没有）
+
+notify 的退出码同 ask 的 0 / 1 / 3 / 4（0 = 已发出），没有 2——它不等回复。提问挂着时也能发。
 
 除 daemon 外的子命令都是瘦客户端：经 unix socket 向 daemon 说话（一行 JSON 请求，若干行 JSON 事件），
 不读租约文件、不碰钥匙串。
@@ -59,6 +62,7 @@ PROG = "agent-ntfy"
 HOME = Path(os.environ.get("AGENT_NTFY_HOME", "~/.agent-ntfy")).expanduser()
 DEFAULT_TIMEOUT = 12 * 3600
 EXIT_REPLY, EXIT_INVALID, EXIT_TIMEOUT, EXIT_CHANNEL, EXIT_NEEDS_HUMAN, EXIT_INTERRUPTED = 0, 1, 2, 3, 4, 130
+EXIT_SENT = EXIT_REPLY  # notify 的 0：发出去了（它不等回复）
 # error 事件的 kind → 退出码
 EXIT_BY_KIND = {"invalid_input": EXIT_INVALID, "unknown_slot": EXIT_INVALID, "busy": EXIT_NEEDS_HUMAN, "no_free_slot": EXIT_NEEDS_HUMAN,
                 "unconfirmed": EXIT_NEEDS_HUMAN}  # 其余 kind（state / publish_failed / daemon_stopping / bad_request …）都是通道故障 3
@@ -212,14 +216,7 @@ def cmd_ask(args) -> int:
                 return EXIT_TIMEOUT
             elif kind == "error":
                 sent = bool(ev.get("sent", sent))
-                err(texts.t("cli.ask.error_sent" if sent else "cli.ask.error_not_sent", lang, message=ev.get("message")))
-                if ev.get("kind") == "unconfirmed" and ev.get("slot"):
-                    projstate.note(slot=ev["slot"], confirmed=False, target=leased_by)  # 租到了但没过闸：让 agent 知道该确认哪个
-                if ev.get("kind") == "no_free_slot":
-                    for cand in ev.get("candidates") or []:
-                        gate = texts.t("cli.ask.candidate.confirmed" if cand.get("subscribed") else "cli.ask.candidate.unconfirmed", lang)
-                        err(texts.t("cli.ask.candidate", lang, slot=cand["slot"], gate=gate))
-                return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
+                return report_send_error(ev, lang, leased_by, sent=sent)
         err(texts.t("cli.ask.disconnected", lang) + texts.t("cli.ask.disconnected.sent" if sent else "cli.ask.disconnected.not_sent", lang))
         return EXIT_CHANNEL
     except (OSError, ValueError) as e:
@@ -232,17 +229,57 @@ def cmd_ask(args) -> int:
         sock.close()
 
 
+def report_send_error(ev: dict, lang: str, leased_by: str, *, sent: bool) -> int:
+    """ask / notify 收到 error 事件：打人读文案（先说发没发出去），按 kind 回写状态文件、列候选，返回退出码。"""
+    err(texts.t("cli.ask.error_sent" if sent else "cli.ask.error_not_sent", lang, message=ev.get("message")))
+    if ev.get("kind") == "unconfirmed" and ev.get("slot"):
+        projstate.note(slot=ev["slot"], confirmed=False, target=leased_by)  # 租到了但没过闸：让 agent 知道该确认哪个
+    if ev.get("kind") == "no_free_slot":
+        for cand in ev.get("candidates") or []:
+            gate = texts.t("cli.ask.candidate.confirmed" if cand.get("subscribed") else "cli.ask.candidate.unconfirmed", lang)
+            err(texts.t("cli.ask.candidate", lang, slot=cand["slot"], gate=gate))
+    return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
+
+
+# ---------------------------------------------------------------- notify
+
+def cmd_notify(args) -> int:
+    """单向通知：校验 → 身份 → 一问一答。发出即返回 0；不等回复，所以没有超时一说。"""
+    home = Path(args.home)
+    payload, problems, lang = validate.check_notify_json(sys.stdin.read(), env_lang())
+    if problems:
+        sys.stderr.write(validate.format_problems(problems, lang, command="notify"))
+        return EXIT_INVALID
+    root = project_root_or_none(lang, not_sent=True)
+    if root is None:
+        return EXIT_CHANNEL
+    leased_by, pane, tag = identity(root)
+    ev = request(home, {"cmd": "notify", "payload": payload, "leased_by": leased_by, "pane": pane, "tag": tag, "require_confirmed": require_confirmed(root)},
+                 lang, not_sent=True)
+    if ev is None:
+        return EXIT_CHANNEL
+    if ev.get("event") == "sent":
+        print(texts.t("cli.notify.sent", lang, slot=ev.get("slot")))
+        projstate.note(slot=ev.get("slot"), confirmed=True, target=leased_by)  # 发出去了 ⇒ 这个槽位已过闸
+        return EXIT_SENT
+    return report_send_error(ev, lang, leased_by, sent=bool(ev.get("sent")))
+
+
 # ---------------------------------------------------------------- 一问一答的命令
 
-def request(home: Path, req: dict, lang: str) -> dict | None:
-    """发一个一问一答的命令（带上语言），返回第一条事件；连不上 daemon 返回 None（已打印提示）。"""
+def request(home: Path, req: dict, lang: str, *, not_sent: bool = False) -> dict | None:
+    """发一个一问一答的命令（带上语言），返回第一条事件；连不上 daemon / 对话中途出错 / 回的不合协议都返回 None（已打印提示）。
+    not_sent：这条命令会发消息（notify），失败提示里要点明「消息未发送」。"""
     try:
         with connect(home) as s:
             send_request(s, {**req, "lang": lang})
             return next(read_events(s), {"event": "error", "kind": "protocol", "sent": False, "message": texts.t("cli.no_response", lang)})
     except OSError as e:
-        err(texts.t("cli.connect_failed", lang, path=sock_path(home), error=e.strerror or e))
+        err(texts.t("cli.connect_failed.not_sent" if not_sent else "cli.connect_failed", lang, path=sock_path(home), error=e.strerror or e))
         start_hint(lang)
+        return None
+    except ValueError as e:  # 回的不是 JSON 对象（ProtocolError 也是它的子类）：通道故障，不是输入错，也不能是 traceback
+        err(texts.t("cli.ask.comm_failed", lang, error=describe(e, lang)) + (texts.t("cli.ask.disconnected.not_sent", lang) if not_sent else ""))
         return None
 
 
@@ -553,6 +590,7 @@ def build_parser(lang: str) -> argparse.ArgumentParser:
     a = sub.add_parser("ask", help=h("ask"))
     a.add_argument("--timeout", type=positive_seconds_in(lang), default=DEFAULT_TIMEOUT, help=h("ask.timeout"))
     a.set_defaults(fn=cmd_ask)
+    sub.add_parser("notify", help=h("notify")).set_defaults(fn=cmd_notify)
     d = sub.add_parser("daemon", help=h("daemon"))
     g = d.add_mutually_exclusive_group()
     g.add_argument("--detach", action="store_true", help=h("daemon.detach"))

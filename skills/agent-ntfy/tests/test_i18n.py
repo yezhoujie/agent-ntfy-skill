@@ -18,7 +18,7 @@ import tests.test_agent_ntfy as ta
 from tests.test_agent_ntfy import HERDR, run
 from tests.test_daemon import Harness, wait_until
 from tests.test_inject import FakeHerdr, herdr_error
-from tests.test_render import SAMPLE
+from tests.test_render import NOTIFY, SAMPLE
 
 from tests.test_texts import HAN
 
@@ -153,6 +153,23 @@ class EnglishTest(unittest.TestCase):
         code, out, err = run(["--home", "/nonexistent/agent-ntfy-home", "ask"], json.dumps({**SAMPLE, "lang": "en"}), env=env)
         self.assertEqual((code, cjk(err)), (3, 0), err)
         self.assertIn("Message NOT sent", err)
+
+    def test_notify_cli_outputs_have_no_cjk(self):
+        h = Harness(self, lang="en")
+        env = {"AGENT_NTFY_LANG": "en"}
+        code, out, err = run(["--home", str(h.home), "notify"], json.dumps({**NOTIFY, "title": "all green", "body": "42 tests passed."}), {**HERDR, **env})
+        self.assertEqual((code, cjk(out), err), (0, 0, ""), (out, err))
+        self.assertIn("slot1", out)
+        self.assertEqual(cjk(h.client.published[0]["message"]), 0)  # 卡片末尾那句提示也是 en
+        code, out, err = run(["--home", str(h.home), "notify"], '{"title": "x"}', env)
+        self.assertEqual((code, cjk(err)), (1, 0), err)
+        self.assertIn("Message NOT sent", err)
+        code, out, err = run(["--home", "/nonexistent/agent-ntfy-home", "notify"], json.dumps({"title": "t", "body": "b"}), env)
+        self.assertEqual((code, cjk(err)), (3, 0), err)
+        self.assertIn("Message NOT sent", err)
+        h2 = Harness(self, subscribed=(), lang="en")
+        code, out, err = run(["--home", str(h2.home), "notify"], json.dumps({"title": "t", "body": "b"}), {**HERDR, **env})
+        self.assertEqual((code, cjk(err)), (4, 0), err)
 
     def test_cli_protocol_error_wording_is_from_the_table(self):
         from unittest import mock
@@ -420,6 +437,22 @@ class HelpTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"AGENT_NTFY_LANG": "en"}), contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
             agent_ntfy.main(["confirm-sub", "--help"])
         self.assertEqual(cjk(out.getvalue()), 0, out.getvalue())
+
+    def test_notify_help_follows_env_language(self):
+        import contextlib
+        import io
+        from unittest import mock
+        for lang, argv in (("en", ["--help"]), ("en", ["notify", "--help"])):
+            out = io.StringIO()
+            with mock.patch.dict(os.environ, {"AGENT_NTFY_LANG": lang}), contextlib.redirect_stdout(out), self.assertRaises(SystemExit) as cm:
+                agent_ntfy.main(argv)
+            self.assertEqual(cm.exception.code, 0)
+            self.assertIn("notify", out.getvalue())
+            self.assertEqual(cjk(out.getvalue()), 0, out.getvalue())
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"AGENT_NTFY_LANG": "zh"}), contextlib.redirect_stdout(out), self.assertRaises(SystemExit):
+            agent_ntfy.main(["--help"])
+        self.assertIn(texts.t("help.notify", "zh"), out.getvalue())
 
 
 class BudgetTest(unittest.TestCase):
