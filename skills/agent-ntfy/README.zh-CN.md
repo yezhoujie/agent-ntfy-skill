@@ -24,6 +24,7 @@
 10. 已知行为
 11. CLI 参考
 12. 版本与升级
+13. 集成方式：让 skill 在整个会话周期里生效
 
 ## 1. 工作原理
 
@@ -356,3 +357,29 @@ npx skills add 'yezhoujie/agent-ntfy-skill#v0.1.0' --skill agent-ntfy
 5. 在 agent 工作的那个 herdr 窗格里跑一次 `agent-ntfy slots`（或 `ask` / `notify` / `away status`），让项目的租约记下这个窗格；手机消息就注入到它。
 
 其余不需要迁移：状态目录布局与 `state.json` 没变，缺省值（`AGENT_NTFY_IPC`、`AGENT_NTFY_STORE`）在 macOS 上就是原来的行为。
+
+## 13. 集成方式：让 skill 在整个会话周期里生效
+
+skill 只提供三条命令——`ask`、`notify`、`away`——**有意不规定什么时候用**（SKILL.md「When to use」）。不加约束的
+agent 只在碰巧想起这个 skill 时才用它，你离席时靠不住。触发策略要写进 agent 的**常驻指令**（它每个会话都会
+加载的那份文件），而且要覆盖四个时刻：
+
+1. **会话开始 / 上下文被清空后**：读 `<项目根>/.agent-ntfy/state.json`（`away status --json`）；`away: true`
+   就表示人不在、从现在起每个决定都走手机。
+2. **人要走了**（「我走了，有事发手机」）：趁他还在键盘旁跑 `away on`，把输出原样转告——手机上那两下
+   （订阅、点按钮）没人能代做。
+3. **离席期间**：每一次提问、确认、授权都变成一张 `ask`（放后台跑、同一时刻只挂一张、按退出码办）；手机来的
+   消息带 `[agent-ntfy remote] ` 前缀注入会话；`notify` 只用于回答手机上问的问题和**不需要拍板的重大事项**
+   ——任务完成、出错、任务无法继续——不用来报进展（配额，§8）。
+4. **人回来了**：先 `release`，再 `away off`；daemon 留着。
+
+skill 自带一份照这四条写好的规则：[`examples/remote-mode-rule.zh-CN.md`](examples/remote-mode-rule.zh-CN.md)（中文）、
+[`examples/remote-mode-rule.md`](examples/remote-mode-rule.md)（英文），也写了多个 agent 会话组队时怎么办
+（只让对接用户的那个会话持有远程模式）。Claude Code 的 `~/.claude/rules/` 会注入每个会话：
+
+```bash
+cp ~/.claude/skills/agent-ntfy/examples/remote-mode-rule.zh-CN.md ~/.claude/rules/agent-ntfy-remote-mode.md
+```
+
+其他 agent 放到它加载常驻指令的位置。按自己的习惯改开头的 `<skill dir>` 路径和触发用语（「我走了」「我回来了」），
+其余是产品行为，照写即可。

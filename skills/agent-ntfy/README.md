@@ -27,6 +27,7 @@ you never need to explain the tool to it.
 10. Known behaviours
 11. CLI reference
 12. Versions and upgrading
+13. Integration: keeping the skill in force for the whole session
 
 ## 1. How it works
 
@@ -385,3 +386,34 @@ npx skills add 'yezhoujie/agent-ntfy-skill#v0.1.0' --skill agent-ntfy
 5. In the herdr pane your agent works in, run `agent-ntfy slots` (or `ask` / `notify` / `away status`) so the project's lease records that pane; phone messages are injected there.
 
 Nothing else migrates: the state directory layout and `state.json` are unchanged, and the defaults (`AGENT_NTFY_IPC`, `AGENT_NTFY_STORE`) reproduce the previous behaviour on macOS.
+
+## 13. Integration: keeping the skill in force for the whole session
+
+The skill only provides the calls — `ask`, `notify`, `away` — and deliberately never decides *when* to use
+them (SKILL.md, "When to use"). Left alone, an agent uses agent-ntfy only when it happens to remember the
+skill exists, which is not what you want while you are away. The trigger policy belongs in the agent's
+**standing instructions** — the file it loads in every session — and it has to cover four moments:
+
+1. **Session start / context reset**: read `<project root>/.agent-ntfy/state.json` (`away status --json`);
+   `away: true` means the human is away and every decision goes to the phone from now on.
+2. **The human leaves** ("I'm leaving, send it to my phone"): run `away on` while they are still at the
+   keyboard and relay its output — the two taps on the phone (subscribe, press the button) cannot be done
+   for them.
+3. **While away**: every question, confirmation or authorization becomes an `ask` (run in the background,
+   one at a time, act on the exit code); phone messages arrive with the `[agent-ntfy remote] ` prefix;
+   `notify` is reserved for answering a question asked from the phone and for major events that need no
+   decision — task finished, an error, the task cannot continue — never for progress chatter (quota, §8).
+4. **The human is back**: `release`, then `away off`; the daemon keeps running.
+
+A ready-made rule that does exactly this ships with the skill: [`examples/remote-mode-rule.md`](examples/remote-mode-rule.md)
+(English) and [`examples/remote-mode-rule.zh-CN.md`](examples/remote-mode-rule.zh-CN.md) (Chinese). It also covers
+teams of agent sessions (only the session that talks to the human holds remote mode). For Claude Code, rules in
+`~/.claude/rules/` are injected into every session:
+
+```bash
+cp ~/.claude/skills/agent-ntfy/examples/remote-mode-rule.md ~/.claude/rules/agent-ntfy-remote-mode.md
+```
+
+For other agents, put it wherever that agent loads its standing instructions. Adjust the `<skill dir>`
+path at the top and the trigger phrases ("I'm leaving", "I'm back") to your own habits; the rest is
+product behaviour and should stay as written.

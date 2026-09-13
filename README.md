@@ -21,4 +21,5 @@ have unit-test coverage on CI only — no end-to-end test in a real environment 
 
 - Setup, platform support, troubleshooting, security notes, upgrading: [skills/agent-ntfy/README.md](skills/agent-ntfy/README.md) (English) · [skills/agent-ntfy/README.zh-CN.md](skills/agent-ntfy/README.zh-CN.md)（中文）
 - What the agent reads: [skills/agent-ntfy/SKILL.md](skills/agent-ntfy/SKILL.md)
+- Making it apply for the whole session (a ready-made rule for the agent, teams included): [README §13](skills/agent-ntfy/README.md#13-integration-keeping-the-skill-in-force-for-the-whole-session) · [`examples/remote-mode-rule.md`](skills/agent-ntfy/examples/remote-mode-rule.md)
 - Releases: [CHANGELOG.md](CHANGELOG.md) · License: [MIT](LICENSE)
