@@ -6,6 +6,8 @@
     更新  update()   POST /<topic>/<seq>，纯文本 body + Title 头。同一个 sequence ID 再发一次，
                      客户端原地替换那条通知，按钮随之消失；首次出现的 sequence ID 就是首发
     清除  clear()    PUT /<topic>/<seq>/clear，通知栏那条自动消失，消息列表里的记录还在
+发布与更新都无条件开 Markdown（首发 JSON 的 "markdown": true，更新的 Markdown: yes 头）：所有卡片的版式都是 Markdown，
+不支持 Markdown 的客户端看到的是源码，版式只用源码也读得通的那几样（见 render）。
 
 不提供删除：实测 ntfy 的删除端点两侧都不生效——服务端缓存里那条仍在（poll 查得到），
 手机 app 完全忽略，唯一效果是往 topic 里多塞一条事件。要让通知不再是活的，用 update 覆盖再 clear。
@@ -276,7 +278,7 @@ class NtfyClient:
         _check_name("topic", topic)
         _check_message(message)
         actions = _check_actions(actions)
-        body: dict = {"topic": topic, "message": message}
+        body: dict = {"topic": topic, "message": message, "markdown": True}
         if title:
             body["title"] = title
         if actions:
@@ -298,6 +300,7 @@ class NtfyClient:
         data = _check_message(message)
         req = urllib.request.Request(f"{self.base_url}/{topic}/{seq_id}", method="POST", data=data)
         req.add_header("Content-Type", "text/plain; charset=utf-8")
+        req.add_header("Markdown", "yes")  # 这个端点不解析 JSON，Markdown 只能靠头开
         if title:
             req.add_header("Title", _header_value(title))
         resp = self._call(req)

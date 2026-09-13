@@ -7,6 +7,7 @@ ntfy.sh 对同一来源 IP 每天限 250 条消息（docs.ntfy.sh/publish → Li
 别把整套放进循环里反复跑；收到 HTTP 429 先当限流，别怀疑代码。
 """
 
+import email.header
 import http.server
 import inspect
 import io
@@ -201,8 +202,73 @@ class ClosingStreamHandler(http.server.BaseHTTPRequestHandler):
         pass
 
 
+class RecordingPublishHandler(http.server.BaseHTTPRequestHandler):
+    """本机 ntfy 替身的发布端：记下每个 POST 的路径 / 头 / body，按 ntfy 的形态回显（首发 JSON 按字段回显；
+    更新纯文本从 URL 取 sequence_id、从 Title 头解 RFC 2047）——让 publish() / update() 走真实的 HTTP 路径到达这里。"""
+
+    protocol_version = "HTTP/1.1"
+    requests: list[dict] = []
+
+    def do_POST(self):
+        raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+        self.requests.append({"path": self.path, "headers": dict(self.headers), "body": raw})
+        if self.headers.get("Content-Type", "").startswith("application/json"):
+            body = json.loads(raw.decode("utf-8"))
+            echo = {"id": "m1", "time": 1, "event": "message", **body}
+        else:
+            topic, seq = self.path.rsplit("/", 2)[-2:]
+            echo = {"id": "m2", "time": 1, "event": "message", "topic": topic, "sequence_id": seq, "message": raw.decode("utf-8")}
+            if self.headers.get("Title"):
+                text, charset = email.header.decode_header(self.headers["Title"])[0]
+                echo["title"] = text.decode(charset or "ascii") if isinstance(text, bytes) else text
+        data = json.dumps(echo).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+        self.close_connection = True
+
+    def log_message(self, format, *args):
+        pass
+
+
 class LocalStreamTest(unittest.TestCase):
-    """订阅流的断线形态：ntfy.sh 上没法按需制造，用本机 HTTP 替身跑真实的 http.client 路径。"""
+    """订阅流的断线形态：ntfy.sh 上没法按需制造，用本机 HTTP 替身跑真实的 http.client 路径。发布 / 更新的请求形态同样在这里验。"""
+
+    def serve_publish(self):
+        RecordingPublishHandler.requests = []
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), RecordingPublishHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return NtfyClient(f"http://127.0.0.1:{server.server_port}")
+
+    # 所有卡片都是 Markdown：首发 JSON 带 markdown: true，无开关
+    def test_publish_sends_markdown_flag(self):
+        client = self.serve_publish()
+        button = http_action("采纳推荐", client.topic_url("t"), "留固定目录")
+        resp = client.publish("t", "**【正在做】** x", title="标题", actions=[button])
+        self.assertEqual(resp["id"], "m1")
+        req = RecordingPublishHandler.requests[-1]
+        self.assertEqual(req["path"], "/")
+        body = json.loads(req["body"].decode("utf-8"))
+        self.assertIs(body["markdown"], True)
+        self.assertEqual(body["message"], "**【正在做】** x")
+        self.assertEqual(body["title"], "标题")
+        self.assertEqual(len(body["actions"]), 1)
+
+    # 更新端点是纯文本 body，Markdown 靠请求头 Markdown: yes 开启
+    def test_update_sends_markdown_header(self):
+        client = self.serve_publish()
+        resp = client.update("t", "seq1", "**【你的回复】** 留固定目录", title=CHINESE_TITLE)
+        self.assertEqual(resp["sequence_id"], "seq1")
+        req = RecordingPublishHandler.requests[-1]
+        self.assertEqual(req["path"], "/t/seq1")
+        self.assertEqual(req["headers"].get("Markdown"), "yes")
+        self.assertTrue(req["headers"]["Content-Type"].startswith("text/plain"))
+        self.assertEqual(req["body"].decode("utf-8"), "**【你的回复】** 留固定目录")
 
     def serve(self, mode, stream_timeout=5):
         ClosingStreamHandler.mode = mode

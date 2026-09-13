@@ -24,19 +24,20 @@ from tests.test_texts import HAN
 
 URL = "https://ntfy.example/t"
 
-# zh 渲染结果的黄金样本：一个字都不许变（固定文案只是搬进了表里）
+# zh 渲染结果的黄金样本：一个字都不许变（固定文案只是搬进了表里）。Markdown 版式：加粗分段标记、有序列表、--- 分隔线，段间空行
 ZH_GOLDEN = (
-    "【正在做】" + SAMPLE["doing"] + "\n\n"
-    "【背景】" + SAMPLE["description"] + "\n\n"
-    "【卡点】" + SAMPLE["blocker"] + "\n\n"
-    "【选项】\n"
-    "  1. 留固定目录（推荐）→ " + SAMPLE["options"][0]["consequence"] + "\n"
-    "  2. 用完即删 → " + SAMPLE["options"][1]["consequence"] + "\n\n"
-    "【我的建议】" + SAMPLE["reasoning"] + "\n\n"
-    "【要你定】" + SAMPLE["question"] + "\n"
-    "──────────\n"
-    "⚠️ 按钮是快捷选项。有别的意见请在下方输入框直接回复。\n"
-    "   回复发出即生效，不能撤回、也无法追加——请一次说完。"
+    "**【正在做】** " + SAMPLE["doing"] + "\n\n"
+    "**【背景】** " + SAMPLE["description"] + "\n\n"
+    "**【卡点】** " + SAMPLE["blocker"] + "\n\n"
+    "**【选项】**\n\n"
+    "1. **留固定目录**（推荐）→ " + SAMPLE["options"][0]["consequence"] + "\n"
+    "2. **用完即删** → " + SAMPLE["options"][1]["consequence"] + "\n\n"
+    "**【我的建议】** " + SAMPLE["reasoning"] + "\n\n"
+    "**【要你定】** " + SAMPLE["question"] + "\n\n"
+    "---\n\n"
+    "⚠️ 按钮是快捷选项。\n\n"
+    "有别的意见请在下方输入框直接回复。\n\n"
+    "回复发出即生效，不能撤回、也无法追加——请一次说完。"
 )
 
 
@@ -61,7 +62,7 @@ class ZhRegressionTest(unittest.TestCase):
         self.assertEqual(r.actions[0]["label"], "采纳推荐")
         answered = render.render_answered(r, "留固定目录")
         self.assertEqual(answered.title, "✅ 已回复 · [wD] " + SAMPLE["title"])
-        self.assertTrue(answered.message.startswith("【你的回复】留固定目录\n──────────\n（以下为当时的提问）\n【正在做】"))
+        self.assertTrue(answered.message.startswith("**【你的回复】** 留固定目录\n\n---\n\n（以下为当时的提问）\n\n**【正在做】** "))
 
     def test_zh_column_matches_the_golden_snapshot(self):
         # 改任何一个中文字都必须显式改 tests/zh_golden.json（`python3 tests/zh_golden.py --write`），不能顺手润色
@@ -88,14 +89,14 @@ class EnglishTest(unittest.TestCase):
                    "reasoning": "r", "question": "q?"}
         r = render.render_question(payload, tag="wD", reply_url=URL, lang="en")
         self.assertEqual(cjk(r.message + r.title + r.actions[0]["label"]), 0, r.message)
-        self.assertIn("[Doing] d", r.message)
-        self.assertIn("  1. Keep (recommended) → kept\n  2. Drop → gone", r.message)
-        self.assertIn("[Your call] q?\n──────────\n⚠️ The button is a shortcut.", r.message)
+        self.assertIn("**[Doing]** d", r.message)
+        self.assertIn("1. **Keep** (recommended) → kept\n2. **Drop** → gone", r.message)
+        self.assertIn("**[Your call]** q?\n\n---\n\n⚠️ The button is a shortcut.", r.message)
         self.assertEqual(r.actions[0], {"action": "http", "label": "Accept recommended", "url": URL, "method": "POST", "body": "Keep"})
-        self.assertIn("[My recommendation] r", r.message)
+        self.assertIn("**[My recommendation]** r", r.message)
         a = render.render_answered(r, "Keep")
         self.assertEqual(a.title, "✅ Answered · [wD] Keep or drop the temp dir")
-        self.assertTrue(a.message.startswith("[Your reply] Keep\n──────────\n(the question as asked)\n[Doing] d"))
+        self.assertTrue(a.message.startswith("**[Your reply]** Keep\n\n---\n\n(the question as asked)\n\n**[Doing]** d"))
         self.assertEqual(cjk(a.message + a.title), 0)
 
     def test_receipts_and_confirm_message(self):
@@ -241,7 +242,7 @@ class PriorityTest(unittest.TestCase):
         env["AGENT_NTFY_LANG"] = ""  # run() 缺省会塞 zh：这里显式清空，模拟两者都没有
         code, out, err = run(["--home", str(h.home), "ask", "--timeout", "5"], json.dumps(SAMPLE), env)
         self.assertEqual(code, 0, err)
-        self.assertIn("[Doing] ", h.client.published[0]["message"])
+        self.assertIn("**[Doing]** ", h.client.published[0]["message"])
         self.assertNotIn("【", h.client.published[0]["message"])
 
     def test_invalid_env_lang_fails_loudly_everywhere(self):
@@ -278,7 +279,7 @@ class SameSequenceTest(unittest.TestCase):
         wait_until(lambda: len(h.client.clears) == 1)
         upd = h.client.updates[-1]
         self.assertTrue(upd["title"].startswith("✅ 已回复 · "), upd["title"])
-        self.assertTrue(upd["message"].startswith("【你的回复】"))
+        self.assertTrue(upd["message"].startswith("**【你的回复】** "))
         sock2, first2, events2 = h.ask(payload={**SAMPLE, "lang": "zh"}, timeout=0.5)
         self.assertEqual(next(events2), {"event": "timeout"})
         sock2.close()
@@ -301,7 +302,7 @@ class SameSequenceTest(unittest.TestCase):
         wait_until(lambda: len(h.client.clears) == 1)
         upd = h.client.updates[-1]
         self.assertEqual(upd["title"], "✅ Released · [slot1] Message not delivered")
-        self.assertTrue(upd["message"].startswith("Slot slot1 released"))
+        self.assertTrue(upd["message"].startswith("**Slot slot1 released"))
         self.assertEqual(cjk(upd["title"] + upd["message"]), 0)
 
     def test_receipt_close_uses_the_receipt_language_not_the_daemon_language(self):
@@ -423,8 +424,9 @@ class HelpTest(unittest.TestCase):
 
 class BudgetTest(unittest.TestCase):
     def test_fixed_overhead_and_tag_budget(self):
-        self.assertEqual(render.fixed_overhead_bytes("zh"), 196)
-        self.assertEqual(render.fixed_overhead_bytes("en"), 216)
+        # 固定开销 = 分隔线 "\n\n---\n\n"（7 B）+ 末尾提示：zh 提示 164 B ⇒ 171；en 提示 183 B ⇒ 190
+        self.assertEqual(render.fixed_overhead_bytes("zh"), 171)
+        self.assertEqual(render.fixed_overhead_bytes("en"), 190)
         self.assertEqual(render.PREFIX_MAX_BYTES, 20)  # 提问 Title 前缀里最长的是「⚠️ 已取消 · 」/「⚠️ Cancelled · 」
         self.assertEqual(render.TAG_MAX_BYTES, 41)
         longest_tag = "x" * render.TAG_MAX_BYTES

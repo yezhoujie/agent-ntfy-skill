@@ -226,7 +226,7 @@ class AskFlowTest(unittest.TestCase):
         upd = h.client.updates[-1]
         self.assertEqual(upd["seq"], pub["id"])
         self.assertEqual(upd["title"], Z("prefix.answered") + pub["title"])
-        self.assertTrue(upd["message"].startswith("【你的回复】留固定目录\n"))
+        self.assertTrue(upd["message"].startswith("**【你的回复】** 留固定目录\n"))
         self.assertEqual(h.client.clears[-1]["seq"], pub["id"])
 
     def test_own_published_messages_are_ignored(self):
@@ -255,7 +255,7 @@ class AskFlowTest(unittest.TestCase):
         wait_until(lambda: len(h.client.clears) == 1, what="clear 被调用")
         upd = h.client.updates[-1]
         self.assertEqual(upd["title"], "⌛ 已超时 · " + pub["title"])
-        self.assertEqual(upd["message"], h.client.published[-1]["message"].split("\n──────────\n")[0])  # 正文保留原提问（六段），无提示
+        self.assertEqual(upd["message"], h.client.published[-1]["message"].split("\n\n---\n\n")[0])  # 正文保留原提问（六段），无提示
         self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot1"]["state"], "已租用·空闲")
         # 超时之后再来的回复走无 pending 分支，不再有人等（先等它真的走到那条分支，再断言没有第二次更新）
         delivered = []
@@ -375,7 +375,7 @@ class AskFlowTest(unittest.TestCase):
         upd = h.client.updates[-1]
         self.assertEqual(upd["seq"], pub["id"])
         self.assertEqual(upd["title"], "⚠️ 已取消 · " + pub["title"])
-        self.assertEqual(upd["message"], pub["message"].split("\n──────────\n")[0])
+        self.assertEqual(upd["message"], pub["message"].split("\n\n---\n\n")[0])
         self.assertEqual(h.client.clears[-1]["seq"], pub["id"])
         # 之后来的回复走无 pending 分支
         delivered = []
@@ -1262,7 +1262,7 @@ class InjectTest(unittest.TestCase):
         self.assertEqual(len(pubs), 2, [p["title"] for p in pubs])
         by_title = {p["title"]: p for p in pubs}
         queued = by_title[f"[{slot}] 消息未送达"]
-        self.assertEqual(queued["message"], "daemon 正在停止，你刚才的消息未送达，请稍后再发。")
+        self.assertEqual(queued["message"], "**daemon 正在停止，你刚才的消息未送达，请稍后再发。**")
         inflight = by_title[f"[{slot}] 消息可能未送达"]
         self.assertIn("无法确认", inflight["message"])
         for p in pubs:
@@ -1290,7 +1290,7 @@ class InjectTest(unittest.TestCase):
         h.stop()
         pubs = h.client.published
         self.assertEqual(len(pubs), 1, [p["title"] for p in pubs])
-        self.assertEqual((pubs[0]["title"], pubs[0]["message"]), (f"[{slot}] 消息未送达", Z("receipt.stopping")))
+        self.assertEqual((pubs[0]["title"], pubs[0]["message"]), (f"[{slot}] 消息未送达", f"**{Z('receipt.stopping')}**"))
         self.assertEqual([a["label"] for a in pubs[0]["actions"]], [Z("receipt.button.ignore")])
         self.assertEqual(pubs[0]["timeout"], daemon.STOP_RECEIPT_TIMEOUT)
         log = (h.home / "daemon.log").read_text(encoding="utf-8")

@@ -21,9 +21,15 @@ TEXTS: dict[str, dict[str, str]] = {
         "section.options": "【选项】",
         "section.reasoning": "【我的建议】",
         "section.question": "【要你定】",
-        "option.line": "  {i}. {label} → {consequence}",
-        "option.line_recommended": "  {i}. {label}（推荐）→ {consequence}",
-        "hint": "⚠️ 按钮是快捷选项。有别的意见请在下方输入框直接回复。\n   回复发出即生效，不能撤回、也无法追加——请一次说完。",
+        "option.line": "{i}. **{label}** → {consequence}",
+        "option.line_recommended": "{i}. **{label}**（推荐）→ {consequence}",
+        "hint": "⚠️ 按钮是快捷选项。\n\n有别的意见请在下方输入框直接回复。\n\n回复发出即生效，不能撤回、也无法追加——请一次说完。",
+        # ---- 通知卡（render.render_notify）：没有按钮，末尾只有这一句
+        "notify.hint": "想回话，直接在这个 topic 里发消息。",
+        # ---- 通知卡输入校验（validate.check_notify）：抬头与正文那条不能沿用提问卡的（那两条写死了 ask 与提问卡的字段名）
+        "validate.notify.header": "agent-ntfy notify: 输入校验未通过（{n} 处），全部修正后重试，消息未发送。",
+        "validate.notify.hint.body": "通知正文，可用 Markdown（加粗 / 列表 / 分隔线）",
+        "validate.notify.body_too_long": "渲染后 {size} 字节，上限 {limit} 字节，超出 {over} 字节。精简 body（不会替你截断）",
         "button.accept": "采纳推荐",
         "reply.head": "【你的回复】",
         "reply.quote_head": "（以下为当时的提问）",
@@ -73,8 +79,8 @@ TEXTS: dict[str, dict[str, str]] = {
                          "\n"
                          "请在通知栏里点下面的「{button}」按钮——点了就算确认完成，之后 agent 才会往这个槽位发提问。\n"
                          "\n"
-                         "如果这条在 ntfy app 里看得见、但通知栏没有弹出来，说明手机的通知权限还没配好：\n"
-                         "先按 README 的排查清单逐项检查（通知权限、省电策略、自启动、锁屏通知、这个 topic 没被静音），\n"
+                         "如果这条在 ntfy app 里看得见、但通知栏没有弹出来，说明手机的通知权限还没配好："
+                         "先按 README 的排查清单逐项检查（通知权限、省电策略、自启动、锁屏通知、这个 topic 没被静音），"
                          "让它弹出来之后再点按钮。只在 app 里点按钮证明不了通知会弹。"),
         # ---- daemon 经 socket 交给 CLI 的文案
         "daemon.bad_request.too_long": "请求超过 {limit} 字节还没见到换行",
@@ -313,9 +319,13 @@ TEXTS: dict[str, dict[str, str]] = {
         "section.options": "[Options]",
         "section.reasoning": "[My recommendation] ",
         "section.question": "[Your call] ",
-        "option.line": "  {i}. {label} → {consequence}",
-        "option.line_recommended": "  {i}. {label} (recommended) → {consequence}",
-        "hint": "⚠️ The button is a shortcut. Disagree? Type your reply in the box below.\n   A reply takes effect the moment you send it — it can't be withdrawn or amended, so say it all at once.",
+        "option.line": "{i}. **{label}** → {consequence}",
+        "option.line_recommended": "{i}. **{label}** (recommended) → {consequence}",
+        "hint": "⚠️ The button is a shortcut.\n\nDisagree? Type your reply in the box below.\n\nA reply takes effect the moment you send it — it can't be withdrawn or amended, so say it all at once.",
+        "notify.hint": "To reply, just send a message in this topic.",
+        "validate.notify.header": "agent-ntfy notify: input validation failed ({n} issue(s)); fix them all and retry. Message NOT sent.",
+        "validate.notify.hint.body": "the notification body; Markdown allowed (bold / lists / rules)",
+        "validate.notify.body_too_long": "renders to {size} bytes, limit {limit}, {over} bytes over. Trim body (nothing is truncated for you)",
         "button.accept": "Accept recommended",
         "reply.head": "[Your reply] ",
         "reply.quote_head": "(the question as asked)",
@@ -361,8 +371,8 @@ TEXTS: dict[str, dict[str, str]] = {
                          "\n"
                          "Tap the “{button}” button below in the notification shade — that completes the check, and only then will the agent send questions to this slot.\n"
                          "\n"
-                         "If you can see this in the ntfy app but it never popped up in the notification shade, notification permissions are not set up yet:\n"
-                         "go through the README troubleshooting list first (notification permission, battery saver, autostart, lock-screen notifications, this topic not muted),\n"
+                         "If you can see this in the ntfy app but it never popped up in the notification shade, notification permissions are not set up yet: "
+                         "go through the README troubleshooting list first (notification permission, battery saver, autostart, lock-screen notifications, this topic not muted), "
                          "get it to pop up, then tap the button. Tapping inside the app does not prove notifications will pop up."),
         "daemon.bad_request.too_long": "request exceeded {limit} bytes without a newline",
         "daemon.bad_request.not_json": "request is not a single-line JSON object: {error}",

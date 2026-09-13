@@ -33,7 +33,7 @@ from dataclasses import dataclass
 
 import texts
 from ntfyclient import http_action
-from render import SEPARATOR, Rendered
+from render import SEPARATOR, Rendered, bold_first_line
 
 HERDR = "herdr"
 # 三条命令都是本机 unix socket IPC，实测毫秒级返回；prompt 不带 --wait，提交即返回、不追踪回合。
@@ -190,7 +190,7 @@ def render_confirm_request(slot: str, *, reply_url: str, lang: str) -> Rendered:
     正文写给一个没看过任何文档的人：这条是什么、点按钮意味着什么、没弹通知怎么办。排查清单在 README 里，这里只指过去。
     """
     button = texts.t("confirm.button", lang)
-    body = texts.t("confirm.body", lang, slot=slot, button=button)
+    body = bold_first_line(texts.t("confirm.body", lang, slot=slot, button=button))
     return Rendered(title=f"[{slot}] {texts.t('confirm.title', lang)}", message=body,
                     actions=[http_action(button, reply_url, control_mark("confirmed", slot))], body=body, lang=lang)
 
@@ -212,7 +212,8 @@ def render_receipt(slot: str, outcome: Outcome, *, reply_url: str) -> Rendered:
         tail = ""
     else:
         tail = texts.t("receipt.not_delivered", lang)
-    body = outcome.detail if not tail else f"{outcome.detail}\n{tail}"
+    head = bold_first_line(outcome.detail)
+    body = f"{head}\n\n{tail}" if tail else head  # 尾句另起一段（Markdown 把单个换行折成空格）
     actions = []
     if outcome.reason not in ("no_lease", "wake_failed"):
         actions.append(http_action(texts.t("receipt.button.release", lang), reply_url, control_mark("release", slot)))
@@ -229,12 +230,13 @@ def render_stopping_receipt(slot: str, *, reply_url: str, lang: str, uncertain: 
 
     uncertain：那条正卡在 herdr 子进程上、关停等不到结果——可能已送达，不能说死。
     """
-    body = texts.t("receipt.stopping_uncertain" if uncertain else "receipt.stopping", lang)
+    body = bold_first_line(texts.t("receipt.stopping_uncertain" if uncertain else "receipt.stopping", lang))
     return Rendered(title=receipt_title(slot, lang, uncertain=uncertain), message=body,
                     actions=[http_action(texts.t("receipt.button.ignore", lang), reply_url, control_mark("ignore", slot))], body=body, lang=lang)
 
 
 def render_receipt_closed(receipt: Rendered, *, prefix: str, result: str) -> Rendered:
-    """按钮被点过之后的回执：Title 加前缀、正文 = 结果 + 分隔线 + 原回执正文、不带按钮。同 seq 更新后它就不再是活的。
+    """按钮被点过之后的回执：Title 加前缀、正文 = 加粗的结果句 + 分隔线 + 原回执正文、不带按钮。同 seq 更新后它就不再是活的。
     prefix / result 由调用方按 receipt.lang 取好传入。"""
-    return Rendered(title=prefix + receipt.title, message=f"{result}\n{SEPARATOR}\n{receipt.body}", actions=[], body=receipt.body, lang=receipt.lang)
+    return Rendered(title=prefix + receipt.title, message=f"{bold_first_line(result)}\n\n{SEPARATOR}\n\n{receipt.body}",
+                    actions=[], body=receipt.body, lang=receipt.lang)

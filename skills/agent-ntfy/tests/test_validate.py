@@ -5,7 +5,7 @@ import unittest
 
 import render
 import validate
-from tests.test_render import SAMPLE
+from tests.test_render import NOTIFY, SAMPLE
 
 REQUIRED = ["title", "doing", "description", "blocker", "options", "recommend", "reasoning", "question"]
 
@@ -155,6 +155,98 @@ class LengthRuleTest(unittest.TestCase):
         while render.message_bytes(big, "zh") <= render.QUESTION_MAX_BYTES:
             big["reasoning"] += "再补一句理由。"
         self.assertEqual(sorted(fields(validate.check(big, "zh"))), ["body", "recommend"])
+
+
+class NotifyCheckTest(unittest.TestCase):
+    """通知卡的输入契约：只有 title / body（/ lang），六种错误一次报全，报错形态与 ask 同款但抬头写 notify。"""
+
+    def test_sample_passes(self):
+        self.assertEqual(validate.check_notify(NOTIFY, "zh"), [])
+        self.assertEqual(validate.check_notify({**NOTIFY, "lang": "en"}, "en"), [])
+
+    # title / body 缺失、非字符串、空串（含只有空白）都算缺
+    def test_title_and_body_required(self):
+        for name in ("title", "body"):
+            with self.subTest(field=name, how="缺失"):
+                self.assertEqual(fields(validate.check_notify({k: v for k, v in NOTIFY.items() if k != name}, "zh")), [name])
+            with self.subTest(field=name, how="空"):
+                self.assertEqual(fields(validate.check_notify({**NOTIFY, name: "  "}, "zh")), [name])
+            with self.subTest(field=name, how="类型"):
+                problems = validate.check_notify({**NOTIFY, name: 3}, "zh")
+                self.assertEqual(fields(problems), [name])
+                self.assertIn("int", problems[0].message)
+        # 缺失那条带「写什么」的提示
+        msg = validate.check_notify({"title": "x"}, "zh")[0].message
+        self.assertTrue(msg.startswith("缺失。必填，"), msg)
+        self.assertIn("Markdown", msg)
+
+    def test_title_too_long_or_multiline(self):
+        problems = validate.check_notify({**NOTIFY, "title": "标" * 321}, "zh")
+        self.assertEqual(fields(problems), ["title"])
+        self.assertIn("963 字节", problems[0].message)
+        self.assertEqual(validate.check_notify({**NOTIFY, "title": "标" * 320}, "zh"), [])
+        problems = validate.check_notify({**NOTIFY, "title": "两\n行"}, "zh")
+        self.assertEqual(fields(problems), ["title"])
+        self.assertIn("换行", problems[0].message)
+
+    # 正文预算是渲染后的字节数（含分隔线与末尾那句），上限 4096、不留余量
+    def test_body_over_budget(self):
+        big = dict(NOTIFY)
+        while render.notify_bytes(big, "zh") <= 4096:
+            big["body"] += "补充进展。"
+        problems = validate.check_notify(big, "zh")
+        self.assertEqual(fields(problems), ["body"])
+        actual = render.notify_bytes(big, "zh")
+        self.assertIn(f"{actual} 字节", problems[0].message)
+        self.assertIn(f"超出 {actual - 4096} 字节", problems[0].message)
+        self.assertIn("body", problems[0].message)
+        self.assertNotIn("description", problems[0].message)  # 那是提问卡的字段，通知卡没有
+        while render.notify_bytes(big, "zh") > render.NOTIFY_MAX_BYTES:
+            big["body"] = big["body"][:-1]
+        self.assertEqual(validate.check_notify(big, "zh"), [])
+
+    def test_lang_invalid(self):
+        problems = validate.check_notify({**NOTIFY, "lang": "fr"}, "zh")
+        self.assertEqual(fields(problems), ["lang"])
+        self.assertIn("fr", problems[0].message)
+        self.assertEqual(validate.check_notify({**NOTIFY, "lang": None}, "zh"), [])  # null 当没给
+
+    def test_top_level_not_object(self):
+        problems = validate.check_notify([1], "zh")
+        self.assertEqual(fields(problems), ["JSON"])
+
+    # 一次报全，顺序 title → body → lang
+    def test_reports_all_at_once_in_field_order(self):
+        problems = validate.check_notify({"title": "", "lang": "xx"}, "zh")
+        self.assertEqual(fields(problems), ["title", "body", "lang"])
+
+    def test_check_notify_json(self):
+        payload, problems, lang = validate.check_notify_json('{"title": "x",', "zh")
+        self.assertIsNone(payload)
+        self.assertEqual([p.field for p in problems], ["JSON"])
+        self.assertEqual(lang, "zh")
+        payload, problems, lang = validate.check_notify_json(json.dumps({**NOTIFY, "lang": "en"}), "zh")
+        self.assertEqual(payload, {**NOTIFY, "lang": "en"})
+        self.assertEqual(problems, [])
+        self.assertEqual(lang, "en")  # JSON 里的 lang 合法就用它
+        payload, problems, lang = validate.check_notify_json(json.dumps({"title": "x"}), "en")
+        self.assertIsNone(payload)
+        self.assertEqual(fields(problems), ["body"])
+        self.assertEqual(lang, "en")
+
+    # 报错文案：抬头写 notify、含「消息未发送」；字段名就是 JSON 里的 body，不译成「正文」（那是提问卡里「渲染后整体」的叫法）
+    def test_format_uses_notify_header(self):
+        problems = validate.check_notify({"title": "x"}, "zh")
+        text = validate.format_problems(problems, "zh", command="notify")
+        self.assertTrue(text.startswith("agent-ntfy notify: 输入校验未通过（1 处），全部修正后重试，消息未发送。\n\n"), text)
+        self.assertIn("\n  body       : 缺失。必填，", text)
+        en = validate.format_problems(validate.check_notify({"title": "x"}, "en"), "en", command="notify")
+        self.assertTrue(en.startswith("agent-ntfy notify: input validation failed (1 issue(s))"), en)
+        self.assertIn("Message NOT sent", en)
+        # 缺省仍是 ask 的抬头，且提问卡的「正文」那条照旧译
+        ask = validate.format_problems(validate.check({**SAMPLE, "description": "字" * 1300}, "zh"), "zh")
+        self.assertTrue(ask.startswith("agent-ntfy ask: "))
+        self.assertIn("\n  正文       : ", ask)
 
 
 if __name__ == "__main__":

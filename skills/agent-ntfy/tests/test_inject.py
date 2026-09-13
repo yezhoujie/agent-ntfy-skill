@@ -5,6 +5,7 @@ herdr 用可替换的调用器替身：记录 argv、按预置返回 rc / stdout
 """
 
 import json
+import re
 import unittest
 
 import inject
@@ -197,8 +198,8 @@ class ReceiptTest(unittest.TestCase):
         self.assertEqual([a["label"] for a in r.actions], [Z("receipt.button.release"), Z("receipt.button.ignore")])
         self.assertEqual([a["body"] for a in r.actions], ["__agent-ntfy:release:slot3__", "__agent-ntfy:ignore:slot3__"])
         self.assertTrue(all(a["url"] == self.URL and a["action"] == "http" for a in r.actions))
-        self.assertIn(out.detail, r.message)
-        self.assertIn(Z("receipt.not_delivered"), r.message)
+        # 正文首行（原因）加粗，尾句另起一段（Markdown 下单个换行会折成空格）
+        self.assertEqual(r.message, f"**{out.detail}**\n\n" + Z("receipt.not_delivered"))
         self.assertEqual(r.body, r.message)
 
     def test_no_lease_receipt_has_only_ignore(self):
@@ -224,7 +225,7 @@ class ReceiptTest(unittest.TestCase):
     def test_stopping_receipt_has_only_ignore(self):
         r = inject.render_stopping_receipt("slot3", reply_url=self.URL, lang="zh")
         self.assertEqual(r.title, "[slot3] 消息未送达")
-        self.assertEqual(r.message, "daemon 正在停止，你刚才的消息未送达，请稍后再发。")
+        self.assertEqual(r.message, "**daemon 正在停止，你刚才的消息未送达，请稍后再发。**")
         self.assertEqual([a["label"] for a in r.actions], [Z("receipt.button.ignore")])
         self.assertEqual(r.actions[0]["body"], "__agent-ntfy:ignore:slot3__")
         r2 = inject.render_stopping_receipt("slot3", reply_url=self.URL, lang="zh", uncertain=True)
@@ -236,7 +237,7 @@ class ReceiptTest(unittest.TestCase):
         out = Outcome(delivered=False, reason="prompt_timeout", target="wD:p1", cli="claude", detail="herdr 15 秒无响应", lang="zh")
         r = inject.render_receipt("slot1", out, reply_url=self.URL)
         self.assertEqual([a["label"] for a in r.actions], [Z("receipt.button.release"), Z("receipt.button.ignore")])
-        self.assertIn(Z("receipt.uncertain"), r.message)
+        self.assertEqual(r.message, "**herdr 15 秒无响应**\n\n" + Z("receipt.uncertain"))
         self.assertNotIn(Z("receipt.not_delivered"), r.message)
 
     def test_delivered_outcome_has_no_receipt(self):
@@ -250,8 +251,9 @@ class ReceiptTest(unittest.TestCase):
         closed = inject.render_receipt_closed(r, prefix=Z("prefix.released"), result="槽位 slot3 已释放。")
         self.assertEqual(closed.title, Z("prefix.released") + "[slot3] 消息未送达")
         self.assertEqual(closed.actions, [])
-        self.assertTrue(closed.message.startswith("槽位 slot3 已释放。\n"))
-        self.assertIn(r.body, closed.message)  # 原回执正文保留，事后能翻
+        # 结果句加粗打头，分隔线前后空行，原回执正文保留，事后能翻
+        self.assertEqual(closed.message, "**槽位 slot3 已释放。**\n\n---\n\n" + r.body)
+        self.assertEqual(closed.body, r.body)
 
 
 class ConfirmRequestTest(unittest.TestCase):
@@ -275,6 +277,18 @@ class ConfirmRequestTest(unittest.TestCase):
         self.assertIn("通知栏", r.message)
         self.assertIn("README", r.message)
         self.assertEqual(r.body, r.message)
+        # 首行（这条是什么）加粗，其余照 texts 原样
+        first, _, rest = Z("confirm.body", slot="slot3", button=Z("confirm.button")).partition("\n")
+        self.assertEqual(r.message, f"**{first}**\n{rest}")
+        self.assertEqual(r.message.count("**"), 2)
+
+    # 三段之间空一行、段内没有单个换行：Markdown 把单个换行折成空格，中文标点后会多出一个空格
+    def test_confirm_request_paragraphs_have_no_soft_line_breaks(self):
+        for lang in ("zh", "en"):
+            with self.subTest(lang=lang):
+                r = inject.render_confirm_request("slot3", reply_url=self.URL, lang=lang)
+                self.assertEqual(r.message.count("\n\n"), 2)
+                self.assertIsNone(re.search(r"[^\n]\n[^\n]", r.message), r.message)
 
     def test_confirm_request_fits_the_question_budget(self):
         from render import QUESTION_MAX_BYTES
