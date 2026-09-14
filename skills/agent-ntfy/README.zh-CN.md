@@ -71,7 +71,7 @@ agent ──ask（stdin 里的 JSON）──▶ agent-ntfy ──本机 socket�
 | daemon 与其余全部子命令：`confirm-sub`、`slots`、`release`、`add-slot`、`away` | `away on` 在窗格里起 daemon、`confirm-sub` 替你开窗格（没有 herdr 时它们退回 `daemon --detach` 与「请你自己跑 `confirm-sub`」） |
 | 租约两种情况下都按项目算；不装 herdr 时租约上没有窗格，也就没有可注入的地方 | |
 
-这种消息不会静默丢掉。daemon 会在手机上回一张回执，标题「[slotN] 消息未送达」，正文是「槽位 slotN 的租约没有登记目标窗格（发起命令的会话不在 herdr 里）。在 herdr 窗格里对这个项目跑任一 agent-ntfy 命令即可登记，或释放这个槽位。」加一行「你刚才发的内容没有送达任何 agent。」，带「释放这个槽位」/「忽略」两个按钮。
+这种消息不会静默丢掉。daemon 会在手机上回一张回执，标题「[slotN] 消息未送达」，正文是「槽位 slotN 的租约没有登记目标窗格（发起命令的会话不在 herdr 里）。在 herdr 窗格里对这个项目跑 ask / notify / slots / release（不带参数）/ away on 或 away status 任一条即可登记，或释放这个槽位。」加一行「你刚才发的内容没有送达任何 agent。」，带「释放这个槽位」/「忽略」两个按钮。
 
 为什么非 herdr 不可：注入就是往目标 agent 的终端（PTY）里写一行文本，`herdr agent prompt` 是对任何 agent CLI 都通用的唯一办法；本 skill 没有别的兜底机制。
 

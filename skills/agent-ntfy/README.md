@@ -74,7 +74,7 @@ agent ──ask (JSON on stdin)──▶ agent-ntfy ──local socket──▶ 
 | The daemon and every other subcommand: `confirm-sub`, `slots`, `release`, `add-slot`, `away` | `away on` starting the daemon in a pane and `confirm-sub` opening a pane for you (without herdr they fall back to `daemon --detach` and to asking you to run `confirm-sub` yourself) |
 | Leases are per project either way; without herdr no pane is recorded on the lease, so there is nothing to inject into | |
 
-Such a message is never dropped silently. The daemon answers on the phone with a receipt titled `[slotN] Message not delivered` whose body is `The lease on slot slotN has no target pane registered (the session that ran the command was not inside herdr). Run any agent-ntfy command for this project from a herdr pane to register one, or release the slot.` followed by `What you just sent did not reach any agent.`, with `Release slot` / `Ignore` buttons.
+Such a message is never dropped silently. The daemon answers on the phone with a receipt titled `[slotN] Message not delivered` whose body is `The lease on slot slotN has no target pane registered (the session that ran the command was not inside herdr). Run ask, notify, slots, release (no argument), away on or away status for this project from a herdr pane to register one, or release the slot.` followed by `What you just sent did not reach any agent.`, with `Release slot` / `Ignore` buttons.
 
 Why herdr and nothing else: injecting means writing a line of text into the target agent's terminal (its PTY), and `herdr agent prompt` is the one generic way to do that for any agent CLI; this skill has no fallback mechanism.
 
