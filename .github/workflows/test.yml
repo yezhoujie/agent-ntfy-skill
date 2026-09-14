@@ -47,3 +47,31 @@ jobs:
         run: pyright scripts/*.py tests/*.py
       - name: pyright (Windows platform)  # macOS / Linux 上 win32 分支被当不可达，得再按 Windows 分析一遍
         run: pyright --pythonplatform Windows scripts/*.py
+
+  node:
+    name: node (${{ matrix.os }}, node${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ["22", "24"]
+    defaults:
+      run:
+        shell: bash
+        working-directory: skills/agent-lark
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: skills/agent-lark/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+      - name: dist/cli.mjs must match src  # 入仓的 bundle 必须是当前 src 的产物；esbuild 输出跨平台不保证字节一致，只在 ubuntu 比对
+        if: runner.os == 'Linux'
+        run: git diff --exit-code -- dist/cli.mjs
+      - run: npm test
