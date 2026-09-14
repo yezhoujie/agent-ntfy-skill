@@ -543,6 +543,58 @@ class ConfirmSubTest(unittest.TestCase):
         self.assertNotIn(Z("cli.confirm.pane_kept"), out + out2)
         self.assertNotIn(["pane", "close"], [c[1:3] for c in fake.calls])
 
+    # --report-to <窗格>：结束时把结果（带 [agent-ntfy] 前缀）注入回那个窗格的 agent；先报再问关；注入失败不改退出码
+    def test_report_to_injects_confirmed_result_before_close_prompt(self):
+        h = Harness(self, subscribed=())
+        self.click_when_sent(h, "slot4")
+        code, out, err, fake = self._confirm_on_tty(h, ["--home", str(h.home), "confirm-sub", "slot4", "--timeout", "5", "--close-pane", "--report-to", "wD:p1"], "\n\n")
+        self.assertEqual(code, 0, err)
+        subs = [c[1:3] for c in fake.calls]
+        self.assertEqual(subs, [["pane", "list"], ["agent", "prompt"], ["pane", "close"]])  # 先回报、后关窗格
+        prompt = fake.calls[1]
+        self.assertEqual(prompt[3], "wD:p1")
+        self.assertEqual(prompt[4], "[agent-ntfy] " + Z("cli.confirm.report.confirmed", slot="slot4"))
+        self.assertNotIn(Z("cli.confirm.done_prompt", slot="slot4"), out)  # 有窗格替他回报，不再要用户转达
+
+    def test_report_to_injects_timeout_and_cancel(self):
+        h = Harness(self, subscribed=())
+        code, out, err, fake = self._confirm_on_tty(h, ["--home", str(h.home), "confirm-sub", "slot4", "--timeout", "0.5", "--report-to", "wD:p1"], "\n")
+        self.assertEqual(code, 2, err)
+        self.assertEqual(fake.calls[-1][4], "[agent-ntfy] " + Z("cli.confirm.report.timeout", slot="slot4"))
+        h2 = Harness(self, subscribed=())
+        fake2 = FakeHerdr()
+        with mock.patch("agent_ntfy.herdr_run", fake2), mock.patch("agent_ntfy.send_request", side_effect=KeyboardInterrupt):
+            code2, out2, err2 = self.run_on_tty(["--home", str(h2.home), "confirm-sub", "slot4", "--timeout", "5", "--report-to", "wD:p1"], stdin_text="\n", env=HERDR)
+        self.assertEqual(code2, 130)
+        self.assertEqual(fake2.calls[-1][4], "[agent-ntfy] " + Z("cli.confirm.report.cancelled", slot="slot4"))
+
+    def test_report_to_failure_is_a_warning_only(self):
+        h = Harness(self, subscribed=())
+        self.click_when_sent(h, "slot4")
+        fake = FakeHerdr()
+        fake.prompt_result = ti.HerdrResult(rc=1, stdout="", stderr=herdr_error("agent:prompt", "agent_blocked"))
+        with mock.patch("agent_ntfy.herdr_run", fake):
+            code, out, err = self.run_on_tty(["--home", str(h.home), "confirm-sub", "slot4", "--timeout", "5", "--report-to", "wD:p1"], stdin_text="\n", env=HERDR)
+        self.assertEqual(code, 0)  # 确认本身成功，退出码不变
+        self.assertIn("wD:p1", err)  # 只报一句没送回
+
+    def test_without_report_to_manual_path_prints_hint_for_the_user(self):
+        h = Harness(self, subscribed=())
+        self.click_when_sent(h, "slot4")
+        code, out, err, fake = self._confirm_on_tty(h, ["--home", str(h.home), "confirm-sub", "slot4", "--timeout", "5"], "\n")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(fake.calls, [])  # 没人可回报：不注入
+        self.assertIn(Z("cli.confirm.done_prompt", slot="slot4"), out)  # 给用户一句可以直接发给 agent 的话
+        self.assertIn("可以关了", out)
+
+    def test_report_to_on_non_tty_never_injects(self):
+        fake = FakeHerdr()
+        with mock.patch("agent_ntfy.herdr_run", fake):
+            h = Harness(self)  # slot1 已过闸 ⇒「已确认过」非 TTY 路径退 0
+            code, out, err = run(["--home", str(h.home), "confirm-sub", "slot1", "--report-to", "wD:p1"], "\n", env=HERDR)
+        self.assertEqual(code, 0, err)
+        self.assertNotIn(["agent", "prompt"], [c[1:3] for c in fake.calls])
+
     def test_close_pane_flag_outside_herdr_does_nothing(self):
         h = Harness(self, subscribed=())
         self.click_when_sent(h, "slot4")
@@ -1032,7 +1084,7 @@ class ConfirmSubPaneTest(unittest.TestCase):
         self.assertEqual(ran[3], "wD:p7")
         argv = ti.split_pane_command(ran[4])
         self.assertEqual(argv[:4], [sys.executable, os.path.abspath(agent_ntfy.__file__), "--lang", "zh"])  # 新窗格是新 shell，不继承调用方的语言：--lang 显式带上
-        self.assertEqual(argv[4:], ["--home", str(h.home), "confirm-sub", "slot4", "--close-pane", "--again"])  # --home 在子命令前；自动开的窗格带 --close-pane；--again 原样转进去
+        self.assertEqual(argv[4:], ["--home", str(h.home), "confirm-sub", "slot4", "--close-pane", "--report-to", "wD:p1", "--again"])  # --home 在子命令前；自动开的窗格带 --close-pane 与 --report-to（开它的窗格）；--again 原样转进去
         # 本进程不碰 daemon：没发测试通知、没进确认中；topic 名不进本进程的输出
         self.assertEqual(h.client.published, [])
         self.assertEqual(h.request(cmd="status")[0]["confirming"], 0)
@@ -1061,7 +1113,7 @@ class ConfirmSubPaneTest(unittest.TestCase):
             code, out, err = run(["--home", str(h.home), "confirm-sub", "slot2", "--again", "--timeout", "45"], env=HERDR)
             self.assertEqual(code, 0, err)
             self.assertIn("wD:p7", out)
-        self.assertEqual(ti.split_pane_command(fake.calls[-1][4])[-6:], ["confirm-sub", "slot2", "--close-pane", "--again", "--timeout", "45"])  # 两个旗标都原样转进去
+        self.assertEqual(ti.split_pane_command(fake.calls[-1][4])[-8:], ["confirm-sub", "slot2", "--close-pane", "--report-to", "wD:p1", "--again", "--timeout", "45"])  # 两个旗标都原样转进去
 
     # daemon 没跑 ⇒ 退 3（同现状），不开窗格
     def test_non_tty_without_daemon_exits_3(self):
@@ -1174,7 +1226,7 @@ class AwayOnTest(unittest.TestCase):
         self.assertIn("wD:p7", out)
         self.assertEqual([c[1:3] for c in self.fake.calls], [["pane", "list"], ["pane", "split"], ["pane", "run"]])
         self.assertEqual(self.pane_commands()[0][2:4], ["--lang", "zh"])  # 确认窗格里的文案与调用方同语言
-        self.assertEqual(self.pane_commands()[0][4:], ["--home", str(h.home), "confirm-sub", "slot1", "--close-pane"])
+        self.assertEqual(self.pane_commands()[0][4:], ["--home", str(h.home), "confirm-sub", "slot1", "--close-pane", "--report-to", "wD:p1"])  # 结果注回开它的窗格
         self.assertTrue(self.state()["away"])
 
     # 同样情形但不在 herdr 里：退 4 指路 confirm-sub，什么都不写、不建目录
@@ -1195,7 +1247,7 @@ class AwayOnTest(unittest.TestCase):
         self.assertEqual((code, err), (0, ""))
         self.assertIn("slot2", out.splitlines()[0])
         self.assertIn("wD:p7", out)
-        self.assertEqual(self.pane_commands()[0][-3:], ["confirm-sub", "slot2", "--close-pane"])
+        self.assertEqual(self.pane_commands()[0][-5:], ["confirm-sub", "slot2", "--close-pane", "--report-to", "wD:p1"])
         self.assertTrue(self.state()["away"])
         self.assertIsNone(h.state.slots()["slot2"]["leased_by"])  # 不替用户租：确认过之后首次提问才租
 

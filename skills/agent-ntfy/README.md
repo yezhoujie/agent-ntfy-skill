@@ -145,9 +145,11 @@ Subscribe to the topic above in the ntfy app on your phone. Once subscribed, pre
 Press Enter once subscribed…
 agent-ntfy: test notification sent — tap “Got it” in the phone's notification shade (within 600 s)…
 ✅ slot1 confirmed: the phone gets notifications; the agent can use it for questions from now on
+You can close this terminal window now. Back in your agent's session, send it this line:
+  agent-ntfy: slot1 is confirmed; you can use it for questions now
 ```
 
-Only the tap counts, and it must be the notification that popped up — tapping inside the app proves nothing about notifications (see §6). If nothing pops up within 10 minutes the command exits 2; fix the phone and run it again. When the agent itself runs `confirm-sub` inside herdr, it opens a new pane for you with exactly this dialogue and tells you which pane to look at; the topic name never enters the agent's output. Do not close that pane until you have pressed Enter and tapped the button — closing it cancels the check. After `✅ … confirmed` the pane asks `Close this pane? [Y/n]`: Enter closes it, `n` keeps it.
+Only the tap counts, and it must be the notification that popped up — tapping inside the app proves nothing about notifications (see §6). If nothing pops up within 10 minutes the command exits 2; fix the phone and run it again. After `✅ … confirmed` the command prints `You can close this terminal window now. Back in your agent's session, send it this line: agent-ntfy: slot1 is confirmed; you can use it for questions now` — paste that line to the agent; it has no other way to learn the result when you ran the check yourself. When the agent itself runs `confirm-sub` inside herdr, it opens a new pane for you with exactly this dialogue and tells you which pane to look at; the topic name never enters the agent's output. Do not close that pane until you have pressed Enter and tapped the button — closing it cancels the check. When the check ends the pane sends the result back to the agent by itself (a line starting with `[agent-ntfy] ` appears in the agent's session), so you have nothing to relay; after `✅ … confirmed` it asks `Close this pane? [Y/n]`: Enter closes it, `n` keeps it.
 
 **Step 3 — ask yourself a question**, to see the round trip:
 
@@ -261,7 +263,7 @@ agent-ntfy away off       # you are back
 agent-ntfy away status    # in words; add --json for the raw file
 ```
 
-`away on` is a one-stop command. It starts the daemon if none answers (inside herdr in a new pane, otherwise with `--detach`), makes sure the project has a confirmed slot or that a confirmed idle slot is available (if not, inside herdr it opens a confirmation pane and tells the agent which pane you should look at; outside herdr it exits 4 and names the `confirm-sub` command to run), and only then creates `<project root>/.agent-ntfy/` (project root = the git toplevel, else the current directory) with a self-ignoring `.gitignore` and a `state.json`:
+`away on` is a one-stop command. It starts the daemon if none answers (inside herdr in a new pane, otherwise with `--detach`), makes sure the project has a confirmed slot or that a confirmed idle slot is available (if not, inside herdr it opens a confirmation pane, tells the agent which pane you should look at, and the pane sends the result back into the agent's session when the check ends; outside herdr it exits 4 and names the `confirm-sub` command to run), and only then creates `<project root>/.agent-ntfy/` (project root = the git toplevel, else the current directory) with a self-ignoring `.gitignore` and a `state.json`:
 
 ```json
 {"away": true, "slot": "slot2", "confirmed": true, "target": "proj:/path/to/project", "updated": "2026-09-13T21:04:11+08:00"}
@@ -357,7 +359,8 @@ options:
   -h, --help  show this help message and exit
 
 usage: agent-ntfy confirm-sub [-h] [--again] [--subscribed] [--show-topic]
-                              [--close-pane] [--timeout TIMEOUT]
+                              [--close-pane] [--report-to PANE]
+                              [--timeout TIMEOUT]
                               slot
 
 positional arguments:
@@ -374,6 +377,9 @@ options:
                      land in the caller's output)
   --close-pane       after a successful check, offer to close the current
                      herdr pane (set on auto-opened panes)
+  --report-to PANE   when finished, inject the result into the agent in this
+                     herdr pane (set on auto-opened panes; the value is the
+                     pane that opened it)
   --timeout TIMEOUT  seconds to wait for the button tap (default 600)
 
 usage: agent-ntfy away [-h] [--json] {on,off,status}

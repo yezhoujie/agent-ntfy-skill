@@ -209,14 +209,19 @@ to the user**; the outcomes are:
 - `… slot slotN still needs its reachability check: started it in herdr pane <id>. Tell the user: 1. … 2. … 3. …` —
   the topic is shown only in that pane; the user subscribes there, presses Enter, taps the button on the
   phone. Tell them **not to close that pane before pressing Enter and tapping the button** (closing cancels
-  the check); on success the pane asks `Close this pane? [Y/n]` and closes itself on Enter. Check `slots`
-  or `away status` later to see it confirmed.
+  the check); on success the pane asks `Close this pane? [Y/n]` and closes itself on Enter. **When the check
+  ends, one line arrives in your session with the prefix `[agent-ntfy] `** — `slotN is confirmed …`,
+  `… check timed out …` or `… was interrupted …`: a system event, not a user message. You do not need to poll
+  `slots`; act on that line (an `ask` may follow, or tell the user to run `confirm-sub` again). If nothing
+  arrives (the user closed the pane by hand, or the injection failed), `slots` shows the truth.
 - `… slot slotN is being confirmed right now (a confirmation pane is already open): …` — a pane from an
   earlier run is still open; the user finishes there.
 - rc 3 (daemon did not come up, or no herdr pane could be opened) or rc 4 (outside herdr and the slot is
-  unconfirmed, so the user must run `confirm-sub <slot>` in their own terminal; or every slot is leased:
-  stderr `All slots are leased. Release an idle one …` with `candidate:` lines) with the reason on stderr:
-  remote mode is **not** enabled and nothing is written.
+  unconfirmed, so the user must run `confirm-sub <slot>` in their own terminal — relay that; when their run
+  finishes it prints one line for them to send back to you, `agent-ntfy: slotN is confirmed; …`, because
+  without herdr nothing reaches you by itself; or every slot is leased: stderr `All slots are leased. Release
+  an idle one …` with `candidate:` lines) with the reason on stderr: remote mode is **not** enabled and
+  nothing is written.
 
 The switch and the current slot live in `<project root>/.agent-ntfy/state.json` (project root = the git
 toplevel, else the cwd), written by `away on|off` and refreshed by `ask` / `notify` / `confirm-sub` /

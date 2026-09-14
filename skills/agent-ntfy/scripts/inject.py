@@ -41,7 +41,8 @@ from ntfyclient import http_action
 from render import SEPARATOR, Rendered, bold_first_line
 
 HERDR = "herdr"
-REMOTE_PREFIX = "[agent-ntfy remote] "  # 注入正文前的来源标记（协议）
+REMOTE_PREFIX = "[agent-ntfy remote] "  # 注入正文前的来源标记（协议）：这条来自用户的手机
+SYSTEM_PREFIX = "[agent-ntfy] "  # 系统事件的来源标记（协议）：不是用户说的，是 CLI / daemon 在报告结果（如确认窗格的结果）
 # 三条命令都是本机 unix socket IPC，实测毫秒级返回；prompt 不带 --wait，提交即返回、不追踪回合。
 # 15 秒够熬过机器卡顿，又不至于让工作线程被一条投递挂死。
 HERDR_TIMEOUT = 15.0
@@ -179,33 +180,44 @@ class Outcome:
     lang: str  # 回执用的语言；必填，漏传在构造点就炸
 
 
-def deliver(slot: str, pane: str | None, text: str, *, run: Runner, lang: str) -> Outcome:
-    """把 text 注进 slot 的租约记的窗格 pane。同步、会阻塞在子进程上——调用方放工作线程里跑。lang 只管回执文案。"""
-    if not pane:
-        return Outcome(False, "no_lease", None, None, texts.t("receipt.no_lease", lang, slot=slot), lang)
+def push_line(pane: str, line: str, *, run: Runner, lang: str) -> tuple[str, str | None, str]:
+    """往窗格 pane 里的 agent 注入一行 line（原样，前缀由调用方拼），kimi 目标再唤醒。同步、会阻塞在子进程上。
+    返回 (kind, cli, why)：kind 是 delivered / no_herdr / pane_missing / prompt_timeout / prompt_failed / wake_failed，
+    cli 是目标窗格检测到的 agent 种类（没有就 None），why 是失败时给人看的原因（成功为空串）。"""
     listing = run([HERDR, "pane", "list"])
     panes = parse_panes(listing.stdout) if listing.ok else None
     if panes is None:
-        why = listing.summary(lang) if not listing.ok else texts.t("receipt.no_herdr.bad_output", lang)
-        return Outcome(False, "no_herdr", pane, None, texts.t("receipt.no_herdr", lang, target=pane, why=why), lang)
+        return "no_herdr", None, (listing.summary(lang) if not listing.ok else texts.t("receipt.no_herdr.bad_output", lang))
     found = next((p for p in panes if p.get("pane_id") == pane), None)
-    if found is None:  # 租约指向的窗格已经关掉了
-        return Outcome(False, "pane_missing", pane, None, texts.t("receipt.pane_missing", lang, target=pane), lang)
+    if found is None:  # 窗格已经关掉了
+        return "pane_missing", None, ""
     agent = found.get("agent")
     cli = agent if isinstance(agent, str) and agent else None
     if cli is None:
         LOG.info("目标 %s 没有检测到 agent 种类，按只 prompt 处理", pane)
-    # TARGET 用 pane_id；正文只加来源前缀，原文本身一个字不改、不加 from:（这条真的就是用户发的）
-    prompted = run([HERDR, "agent", "prompt", pane, REMOTE_PREFIX + text])
+    prompted = run([HERDR, "agent", "prompt", pane, line])
     if prompted.timed_out:
-        return Outcome(False, "prompt_timeout", pane, cli, texts.t("receipt.prompt_timeout", lang, target=pane, why=prompted.summary(lang)), lang)
+        return "prompt_timeout", cli, prompted.summary(lang)
     if not prompted.ok:
-        return Outcome(False, "prompt_failed", pane, cli, texts.t("receipt.prompt_failed", lang, target=pane, why=prompted.summary(lang)), lang)
+        return "prompt_failed", cli, prompted.summary(lang)
     if cli == "kimi":
         woken = run([HERDR, "agent", "send-keys", pane, KIMI_WAKE_KEY])
         if not woken.ok:
-            return Outcome(False, "wake_failed", pane, cli, texts.t("receipt.wake_failed", lang, target=pane, why=woken.summary(lang)), lang)
-    return Outcome(True, "delivered", pane, cli, "", lang)
+            return "wake_failed", cli, woken.summary(lang)
+    return "delivered", cli, ""
+
+
+def deliver(slot: str, pane: str | None, text: str, *, run: Runner, lang: str) -> Outcome:
+    """把 text 注进 slot 的租约记的窗格 pane。同步、会阻塞在子进程上——调用方放工作线程里跑。lang 只管回执文案。
+    正文只加来源前缀，原文本身一个字不改、不加 from:（这条真的就是用户发的）。"""
+    if not pane:
+        return Outcome(False, "no_lease", None, None, texts.t("receipt.no_lease", lang, slot=slot), lang)
+    kind, cli, why = push_line(pane, REMOTE_PREFIX + text, run=run, lang=lang)
+    if kind == "delivered":
+        return Outcome(True, "delivered", pane, cli, "", lang)
+    key = {"no_herdr": "receipt.no_herdr", "pane_missing": "receipt.pane_missing", "prompt_timeout": "receipt.prompt_timeout",
+           "prompt_failed": "receipt.prompt_failed", "wake_failed": "receipt.wake_failed"}[kind]
+    return Outcome(False, kind, pane, cli, texts.t(key, lang, target=pane, why=why), lang)
 
 
 # ---------------------------------------------------------------- 控制标记

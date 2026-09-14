@@ -139,9 +139,11 @@ slot1 的 topic：agent-ntfy-xxxxxxxxxxxxxxxxxxxx
 订阅好了就按回车…
 agent-ntfy: 测试通知已发出，请在手机通知栏点「我收到了」（600 秒内）…
 ✅ slot1 已确认：手机收得到通知，之后 agent 可以用它提问了
+这个终端窗口可以关了。回到你的 agent 会话，把下面这句发给它：
+  agent-ntfy：slot1 已过闸，可以用它提问了
 ```
 
-只有点按钮算数，而且要点**弹出来的那条通知**——在 app 里点证明不了通知会弹（见 §6）。10 分钟内没弹出来命令退出 2；把手机设置修好再跑一次。agent 自己在 herdr 里跑 `confirm-sub` 时，它会给你新开一个窗格、里面就是上面这段对话，并告诉你看哪个窗格；topic 名不会进 agent 的输出。按回车、点按钮之前别关那个窗格——关了确认就取消。看到「✅ … 已确认」后窗格会问「关闭这个窗格？[Y/n]」：回车关掉，`n` 保留。
+只有点按钮算数，而且要点**弹出来的那条通知**——在 app 里点证明不了通知会弹（见 §6）。10 分钟内没弹出来命令退出 2；把手机设置修好再跑一次。「✅ … 已确认」之后命令会打「这个终端窗口可以关了。回到你的 agent 会话，把下面这句发给它：agent-ntfy：slot1 已过闸，可以用它提问了」——把那句发给 agent；你自己跑的确认，agent 没有别的办法知道结果。agent 自己在 herdr 里跑 `confirm-sub` 时，它会给你新开一个窗格、里面就是上面这段对话，并告诉你看哪个窗格；topic 名不会进 agent 的输出。按回车、点按钮之前别关那个窗格——关了确认就取消。确认结束时窗格会自己把结果送回 agent（agent 会话里出现一行 `[agent-ntfy] ` 开头的话），你不用转达；看到「✅ … 已确认」后它会问「关闭这个窗格？[Y/n]」：回车关掉，`n` 保留。
 
 **第 3 步——先问自己一个问题**，看一遍来回：
 
@@ -249,7 +251,7 @@ agent-ntfy away off       # 我回来了
 agent-ntfy away status    # 人读；加 --json 打印原文
 ```
 
-`away on` 是一站式的：没有 daemon 应答就起一个（在 herdr 里开新窗格起，否则用 `--detach`）；保证本项目有一个已过闸的槽位、或者池里有空闲的已过闸槽位（都没有时，在 herdr 里就开一个确认窗格并告诉 agent 该让你看哪个窗格；不在 herdr 里就退 4 并写明要跑的 `confirm-sub` 命令）；这些都成了才在 `<项目根>/.agent-ntfy/` 建目录（项目根 = git 仓根，不在仓里就是当前目录），目录自带 `.gitignore`（内容 `*`，git 看不到它，你仓里的 `.gitignore` 不动），内有 `state.json`：
+`away on` 是一站式的：没有 daemon 应答就起一个（在 herdr 里开新窗格起，否则用 `--detach`）；保证本项目有一个已过闸的槽位、或者池里有空闲的已过闸槽位（都没有时，在 herdr 里就开一个确认窗格、告诉 agent 该让你看哪个窗格，确认结束时窗格会把结果送回 agent 的会话；不在 herdr 里就退 4 并写明要跑的 `confirm-sub` 命令）；这些都成了才在 `<项目根>/.agent-ntfy/` 建目录（项目根 = git 仓根，不在仓里就是当前目录），目录自带 `.gitignore`（内容 `*`，git 看不到它，你仓里的 `.gitignore` 不动），内有 `state.json`：
 
 ```json
 {"away": true, "slot": "slot2", "confirmed": true, "target": "proj:/path/to/project", "updated": "2026-09-13T21:04:11+08:00"}
@@ -329,7 +331,8 @@ options:
   -h, --help  show this help message and exit
 
 usage: agent-ntfy confirm-sub [-h] [--again] [--subscribed] [--show-topic]
-                              [--close-pane] [--timeout TIMEOUT]
+                              [--close-pane] [--report-to PANE]
+                              [--timeout TIMEOUT]
                               slot
 
 positional arguments:
@@ -341,6 +344,7 @@ options:
   --subscribed       用户已订阅：不显示 topic，直接发测试通知（非终端也能跑）
   --show-topic       只打印 topic 名就退出，不发测试通知（会进调用方的输出）
   --close-pane       确认成功后问一句要不要关掉当前 herdr 窗格（自动开的窗格带这个）
+  --report-to PANE   结束时把结果注入回这个 herdr 窗格里的 agent（自动开的窗格带这个，值是开它的窗格 id）
   --timeout TIMEOUT  等按钮点击的秒数（默认 600）
 
 usage: agent-ntfy away [-h] [--json] {on,off,status}

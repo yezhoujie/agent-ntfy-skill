@@ -174,7 +174,8 @@ def open_confirm_pane(home: Path, slot: str, lang: str, *, again: bool = False, 
     """在新窗格里跑默认形态的 confirm-sub（显示 topic → 等回车 → 发测试通知 → 等按钮），返回窗格 id，不等结果。
     topic 只出现在那个窗格里，不进本进程的输出。--again / --timeout 原样转进去（缺省的 timeout 不必带）。"""
     flags = (["--again"] if again else []) + (["--timeout", f"{timeout:g}"] if timeout != CONFIRM_TIMEOUT else [])
-    return run_self_in_new_pane(home, lang, "confirm-sub", slot, "--close-pane", *flags)  # 自动开的窗格：确认成功后问一句要不要关掉
+    # 自动开的窗格：结果注入回开它的这个窗格（--report-to），确认成功后再问一句要不要关掉（--close-pane）
+    return run_self_in_new_pane(home, lang, "confirm-sub", slot, "--close-pane", "--report-to", os.environ["HERDR_PANE_ID"], *flags)
 
 
 # ---------------------------------------------------------------- socket 协议（客户端侧）
@@ -422,9 +423,26 @@ def offer_close_pane(lang: str) -> None:
         print(texts.t("cli.confirm.pane_kept", lang))
 
 
+def report_confirm_result(pane: str, slot: str, rc: int, lang: str) -> None:
+    """把 confirm-sub 的结果注入回开窗格的那个 agent 会话（带系统事件前缀，与手机消息同一条通道）。注入失败只打一行 stderr，
+    不改退出码：窗格里的人还能看到结果，agent 也还能用 slots 查。"""
+    key = {0: "cli.confirm.report.confirmed", EXIT_TIMEOUT: "cli.confirm.report.timeout", EXIT_INTERRUPTED: "cli.confirm.report.cancelled"}.get(rc, "cli.confirm.report.failed")
+    line = inject.SYSTEM_PREFIX + texts.t(key, lang, slot=slot, rc=rc)
+    kind, _cli, why = inject.push_line(pane, line, run=herdr_run, lang=lang)
+    if kind != "delivered":
+        err(texts.t("cli.confirm.report_failed", lang, pane=pane, why=why or texts.t("receipt.pane_missing", lang, target=pane)))
+
+
 def cmd_confirm_sub(args) -> int:
     rc = _confirm_sub(args)
-    if rc == 0 and args.close_pane and not args.show_topic and sys.stdout.isatty():
+    if args.show_topic:
+        return rc
+    interactive = sys.stdout.isatty()
+    if args.report_to and interactive:
+        # 自动开的窗格里：先把结果送回开它的 agent，再谈关窗格（关了本进程就没了）。agent 自己非 TTY 跑到这里（开窗格那次调用
+        # 已经返回、结果由窗格里那次回报）不重复报
+        report_confirm_result(args.report_to, args.slot, rc, args.lang)
+    if rc == 0 and args.close_pane and interactive:
         # 只在交互式（自动开的窗格里 stdout 就是终端）才问：agent 自己非 TTY 跑到这里时 HERDR_PANE_ID 是它自己的窗格，问了就是关它自己
         offer_close_pane(args.lang)
     return rc
@@ -519,6 +537,9 @@ def _confirm_sub(args) -> int:
             elif kind == "confirmed":
                 print(texts.t("cli.confirm.done", lang, slot=slot))
                 projstate.note_confirmed(slot)
+                if not args.report_to and sys.stdout.isatty():
+                    # 用户自己在终端跑的：没有窗格会替他把结果送回 agent，给他一句可以直接发给 agent 的话
+                    print(texts.t("cli.confirm.done_hint", lang, prompt=texts.t("cli.confirm.done_prompt", lang, slot=slot)))
                 return 0
             elif kind == "timeout":
                 err(texts.t("cli.confirm.timeout" if sent else "cli.confirm.timeout_no_enter", lang, seconds=f"{args.timeout:g}"))
@@ -845,6 +866,7 @@ def build_parser(lang: str) -> argparse.ArgumentParser:
     c.add_argument("--subscribed", action="store_true", help=h("confirm.subscribed"))
     c.add_argument("--show-topic", action="store_true", help=h("confirm.show_topic"))
     c.add_argument("--close-pane", action="store_true", help=h("confirm.close_pane"))
+    c.add_argument("--report-to", metavar="PANE", help=h("confirm.report_to"))
     c.add_argument("--timeout", type=positive_seconds_in(lang), default=CONFIRM_TIMEOUT, help=h("confirm.timeout"))
     c.set_defaults(fn=cmd_confirm_sub)
     sub.add_parser("add-slot", help=h("add_slot")).set_defaults(fn=cmd_add_slot)

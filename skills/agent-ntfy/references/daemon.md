@@ -169,10 +169,18 @@ agent-ntfy: test notification sent — tap “Got it” in the phone's notificat
   where `<lang>` is the language resolved in *your* process (`--lang`, else `AGENT_NTFY_LANG`, else the system
   locale, else `en`); `daemon --detach` passes it the same way. The pane's own shell environment does not decide
   the wording there. Only a daemon you start by hand in a pane inherits that pane's shell environment.
-- A pane opened by `away on` / a non-TTY `confirm-sub` runs `confirm-sub … --close-pane`: after a successful
-  check it asks `Close this pane? [Y/n]` and closes itself (`herdr pane close`) on Enter or `y`; after a
-  failure or timeout it stays open so the reason can be read. Closing the pane by hand *before* pressing Enter
-  and tapping the button cancels the check (the daemon sees the connection drop).
+- A pane opened by `away on` / a non-TTY `confirm-sub` runs `confirm-sub … --close-pane --report-to <opener pane>`:
+  when the check ends (confirmed / timed out / interrupted / failed) it injects one line into the agent in the
+  pane that opened it — `herdr agent prompt <pane> "[agent-ntfy] slotN is confirmed …"` (the `[agent-ntfy] `
+  prefix marks a system event, as opposed to `[agent-ntfy remote] ` for the user's phone messages; a kimi
+  target is woken the same way as for phone messages) — then, after a success, asks `Close this pane? [Y/n]`
+  and closes itself (`herdr pane close`) on Enter or `y`; after a failure or timeout it stays open so the
+  reason can be read. If the injection fails it prints one stderr line and keeps the exit code. Closing the
+  pane by hand *before* pressing Enter and tapping the button cancels the check (the daemon sees the
+  connection drop).
+- Run by hand in a terminal (no `--report-to`), a successful `confirm-sub` ends with `You can close this
+  terminal window now. Back in your agent's session, send it this line: agent-ntfy: slotN is confirmed; …` —
+  the only way the result reaches an agent without herdr.
 
 ## 6. Messages from the phone when no question is pending
 
@@ -239,5 +247,5 @@ updates) → `--lang` on the command line → `AGENT_NTFY_LANG` → the system l
 `LANG` starting with `zh`, or a Chinese Windows locale, gives `zh`) → `en`. Everything below the JSON field
 (receipts, confirmation messages, CLI output, validation reports, `--help`) is resolved once when the process
 starts; panes and daemons the CLI starts for you receive that value via `--lang`. A card keeps the language it was sent in even if the environment changes later. Control markers,
-the `[tag]` prefix and the `[agent-ntfy remote] ` injection prefix are protocol, not wording, and never
+the `[tag]` prefix and the `[agent-ntfy remote] ` / `[agent-ntfy] ` injection prefixes are protocol, not wording, and never
 change.
