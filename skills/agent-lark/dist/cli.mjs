@@ -10977,12 +10977,12 @@ var require_promisify = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     function promisify2(fn) {
       return function(req, opts) {
-        return new Promise((resolve2, reject) => {
+        return new Promise((resolve3, reject) => {
           fn.call(this, req, opts, (err, rtn) => {
             if (err) {
               reject(err);
             } else {
-              resolve2(rtn);
+              resolve3(rtn);
             }
           });
         });
@@ -11186,7 +11186,7 @@ var require_parse_proxy_response = __commonJS({
     var debug_1 = __importDefault(require_src());
     var debug3 = debug_1.default("https-proxy-agent:parse-proxy-response");
     function parseProxyResponse2(socket) {
-      return new Promise((resolve2, reject) => {
+      return new Promise((resolve3, reject) => {
         let buffersLength = 0;
         const buffers = [];
         function read() {
@@ -11226,7 +11226,7 @@ var require_parse_proxy_response = __commonJS({
           const firstLine = buffered.toString("ascii", 0, buffered.indexOf("\r\n"));
           const statusCode = +firstLine.split(" ")[1];
           debug3("got proxy server response: %o", firstLine);
-          resolve2({
+          resolve3({
             statusCode,
             buffered
           });
@@ -11247,11 +11247,11 @@ var require_agent = __commonJS({
     "use strict";
     var __awaiter = exports && exports.__awaiter || function(thisArg, _arguments, P, generator) {
       function adopt(value) {
-        return value instanceof P ? value : new P(function(resolve2) {
-          resolve2(value);
+        return value instanceof P ? value : new P(function(resolve3) {
+          resolve3(value);
         });
       }
-      return new (P || (P = Promise))(function(resolve2, reject) {
+      return new (P || (P = Promise))(function(resolve3, reject) {
         function fulfilled(value) {
           try {
             step(generator.next(value));
@@ -11267,7 +11267,7 @@ var require_agent = __commonJS({
           }
         }
         function step(result) {
-          result.done ? resolve2(result.value) : adopt(result.value).then(fulfilled, rejected);
+          result.done ? resolve3(result.value) : adopt(result.value).then(fulfilled, rejected);
         }
         step((generator = generator.apply(thisArg, _arguments || [])).next());
       });
@@ -13685,10 +13685,10 @@ var require_axios = __commonJS({
         this.__CANCEL__ = true;
       }
     };
-    function settle(resolve2, reject, response) {
+    function settle(resolve3, reject, response) {
       const validateStatus = response.config.validateStatus;
       if (!response.status || !validateStatus || validateStatus(response.status)) {
-        resolve2(response);
+        resolve3(response);
       } else {
         reject(new AxiosError("Request failed with status code " + response.status, response.status >= 400 && response.status < 500 ? AxiosError.ERR_BAD_REQUEST : AxiosError.ERR_BAD_RESPONSE, response.config, response.request, response));
       }
@@ -14955,7 +14955,7 @@ var require_axios = __commonJS({
     }
     var isHttpAdapterSupported = typeof process !== "undefined" && utils$1.kindOf(process) === "process";
     var wrapAsync = (asyncExecutor) => {
-      return new Promise((resolve2, reject) => {
+      return new Promise((resolve3, reject) => {
         let onDone;
         let isDone;
         const done = (value, isRejected) => {
@@ -14965,7 +14965,7 @@ var require_axios = __commonJS({
         };
         const _resolve = (value) => {
           done(value);
-          resolve2(value);
+          resolve3(value);
         };
         const _reject = (reason) => {
           done(reason, true);
@@ -15050,7 +15050,7 @@ var require_axios = __commonJS({
       }
     };
     var httpAdapter = isHttpAdapterSupported && function httpAdapter2(config) {
-      return wrapAsync(async function dispatchHttpRequest(resolve2, reject, onDone) {
+      return wrapAsync(async function dispatchHttpRequest(resolve3, reject, onDone) {
         const own2 = (key) => utils$1.getSafeProp(config, key);
         const transitional = own2("transitional") || transitionalDefaults;
         let data = own2("data");
@@ -15163,7 +15163,7 @@ var require_axios = __commonJS({
           }
           let convertedData;
           if (method !== "GET") {
-            return settle(resolve2, reject, {
+            return settle(resolve3, reject, {
               status: 405,
               statusText: "method not allowed",
               headers: {},
@@ -15185,7 +15185,7 @@ var require_axios = __commonJS({
           } else if (responseType === "stream") {
             convertedData = stream.Readable.from(convertedData);
           }
-          return settle(resolve2, reject, {
+          return settle(resolve3, reject, {
             data: convertedData,
             status: 200,
             statusText: "OK",
@@ -15478,7 +15478,7 @@ var require_axios = __commonJS({
               });
             }
             response.data = responseStream;
-            settle(resolve2, reject, response);
+            settle(resolve3, reject, response);
           } else {
             const responseBuffer = [];
             let totalResponseBytes = 0;
@@ -15516,7 +15516,7 @@ var require_axios = __commonJS({
               } catch (err) {
                 return reject(AxiosError.from(err, null, config, response.request, response));
               }
-              settle(resolve2, reject, response);
+              settle(resolve3, reject, response);
             });
           }
           abortEmitter.once("abort", (err) => {
@@ -15849,7 +15849,7 @@ var require_axios = __commonJS({
     }
     var isXHRAdapterSupported = typeof XMLHttpRequest !== "undefined";
     var xhrAdapter = isXHRAdapterSupported && function(config) {
-      return new Promise(function dispatchXhrRequest(resolve2, reject) {
+      return new Promise(function dispatchXhrRequest(resolve3, reject) {
         const _config = resolveConfig(config);
         let requestData = _config.data;
         const requestHeaders = AxiosHeaders.from(_config.headers).normalize();
@@ -15905,7 +15905,7 @@ var require_axios = __commonJS({
             request: request2
           };
           settle(function _resolve(value) {
-            resolve2(value);
+            resolve3(value);
             done();
           }, function _reject(err) {
             reject(err);
@@ -15935,8 +15935,8 @@ var require_axios = __commonJS({
           request2 = null;
         };
         request2.onerror = function handleError(event) {
-          const msg = event && event.message ? event.message : "Network Error";
-          const err = new AxiosError(msg, AxiosError.ERR_NETWORK, config, request2);
+          const msg2 = event && event.message ? event.message : "Network Error";
+          const err = new AxiosError(msg2, AxiosError.ERR_NETWORK, config, request2);
           err.event = event || null;
           reject(err);
           done();
@@ -16454,8 +16454,8 @@ var require_axios = __commonJS({
             }
           }
           !isStreamResponse && unsubscribe && unsubscribe();
-          return await new Promise((resolve2, reject) => {
-            settle(resolve2, reject, {
+          return await new Promise((resolve3, reject) => {
+            settle(resolve3, reject, {
               data: responseData,
               headers: AxiosHeaders.from(response.headers),
               status: response.status,
@@ -16893,8 +16893,8 @@ var require_axios = __commonJS({
           throw new TypeError("executor must be a function.");
         }
         let resolvePromise;
-        this.promise = new Promise(function promiseExecutor(resolve2) {
-          resolvePromise = resolve2;
+        this.promise = new Promise(function promiseExecutor(resolve3) {
+          resolvePromise = resolve3;
         });
         const token = this;
         this.promise.then((cancel) => {
@@ -16907,9 +16907,9 @@ var require_axios = __commonJS({
         });
         this.promise.then = (onfulfilled) => {
           let _resolve;
-          const promise = new Promise((resolve2) => {
-            token.subscribe(resolve2);
-            _resolve = resolve2;
+          const promise = new Promise((resolve3) => {
+            token.subscribe(resolve3);
+            _resolve = resolve3;
           }).then(onfulfilled);
           promise.cancel = function reject() {
             token.unsubscribe(_resolve);
@@ -23000,8 +23000,8 @@ var require_websocket = __commonJS({
       close(code, data) {
         if (this.readyState === _WebSocket.CLOSED) return;
         if (this.readyState === _WebSocket.CONNECTING) {
-          const msg = "WebSocket was closed before the connection was established";
-          abortHandshake(this, this._req, msg);
+          const msg2 = "WebSocket was closed before the connection was established";
+          abortHandshake(this, this._req, msg2);
           return;
         }
         if (this.readyState === _WebSocket.CLOSING) {
@@ -23146,8 +23146,8 @@ var require_websocket = __commonJS({
       terminate() {
         if (this.readyState === _WebSocket.CLOSED) return;
         if (this.readyState === _WebSocket.CONNECTING) {
-          const msg = "WebSocket was closed before the connection was established";
-          abortHandshake(this, this._req, msg);
+          const msg2 = "WebSocket was closed before the connection was established";
+          abortHandshake(this, this._req, msg2);
           return;
         }
         if (this._socket) {
@@ -23670,8 +23670,8 @@ var require_stream = __commonJS({
         objectMode: false,
         writableObjectMode: false
       });
-      ws.on("message", function message(msg, isBinary) {
-        const data = !isBinary && duplex._readableState.objectMode ? msg.toString() : msg;
+      ws.on("message", function message(msg2, isBinary) {
+        const data = !isBinary && duplex._readableState.objectMode ? msg2.toString() : msg2;
         if (!duplex.push(data)) ws.pause();
       });
       ws.once("error", function error(err) {
@@ -24218,7 +24218,7 @@ var require_aspromise = __commonJS({
       var params = new Array(arguments.length - 1), offset = 0, index = 2, pending = true;
       while (index < arguments.length)
         params[offset++] = arguments[index++];
-      return new Promise(function executor(resolve2, reject) {
+      return new Promise(function executor(resolve3, reject) {
         params[offset] = function callback(err) {
           if (pending) {
             pending = false;
@@ -24228,7 +24228,7 @@ var require_aspromise = __commonJS({
               var params2 = new Array(arguments.length - 1), offset2 = 0;
               while (offset2 < params2.length)
                 params2[offset2++] = arguments[offset2];
-              resolve2.apply(null, params2);
+              resolve3.apply(null, params2);
             }
           }
         };
@@ -26660,11 +26660,11 @@ var require_lib2 = __commonJS({
     }
     function __awaiter(thisArg, _arguments, P, generator) {
       function adopt(value) {
-        return value instanceof P ? value : new P(function(resolve2) {
-          resolve2(value);
+        return value instanceof P ? value : new P(function(resolve3) {
+          resolve3(value);
         });
       }
-      return new (P || (P = Promise))(function(resolve2, reject) {
+      return new (P || (P = Promise))(function(resolve3, reject) {
         function fulfilled(value) {
           try {
             step(generator.next(value));
@@ -26680,7 +26680,7 @@ var require_lib2 = __commonJS({
           }
         }
         function step(result) {
-          result.done ? resolve2(result.value) : adopt(result.value).then(fulfilled, rejected);
+          result.done ? resolve3(result.value) : adopt(result.value).then(fulfilled, rejected);
         }
         step((generator = generator.apply(thisArg, _arguments || [])).next());
       });
@@ -26740,14 +26740,14 @@ var require_lib2 = __commonJS({
       }, i);
       function verb(n) {
         i[n] = o[n] && function(v) {
-          return new Promise(function(resolve2, reject) {
-            v = o[n](v), settle(resolve2, reject, v.done, v.value);
+          return new Promise(function(resolve3, reject) {
+            v = o[n](v), settle(resolve3, reject, v.done, v.value);
           });
         };
       }
-      function settle(resolve2, reject, d, v) {
+      function settle(resolve3, reject, d, v) {
         Promise.resolve(v).then(function(v2) {
-          resolve2({ value: v2, done: d });
+          resolve3({ value: v2, done: d });
         }, reject);
       }
     }
@@ -27101,10 +27101,10 @@ var require_lib2 = __commonJS({
               return {
                 writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                   checkIsReadable();
-                  return new Promise((resolve2, reject) => {
+                  return new Promise((resolve3, reject) => {
                     const writableStream = fs__default["default"].createWriteStream(filePath);
                     writableStream.on("finish", () => {
-                      resolve2(filePath);
+                      resolve3(filePath);
                     });
                     writableStream.on("error", (e) => {
                       reject(e);
@@ -27284,10 +27284,10 @@ var require_lib2 = __commonJS({
               return {
                 writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                   checkIsReadable();
-                  return new Promise((resolve2, reject) => {
+                  return new Promise((resolve3, reject) => {
                     const writableStream = fs__default["default"].createWriteStream(filePath);
                     writableStream.on("finish", () => {
-                      resolve2(filePath);
+                      resolve3(filePath);
                     });
                     writableStream.on("error", (e) => {
                       reject(e);
@@ -27620,10 +27620,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -27805,10 +27805,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -36648,10 +36648,10 @@ var require_lib2 = __commonJS({
               return {
                 writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                   checkIsReadable();
-                  return new Promise((resolve2, reject) => {
+                  return new Promise((resolve3, reject) => {
                     const writableStream = fs__default["default"].createWriteStream(filePath);
                     writableStream.on("finish", () => {
-                      resolve2(filePath);
+                      resolve3(filePath);
                     });
                     writableStream.on("error", (e) => {
                       reject(e);
@@ -37830,10 +37830,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -40036,10 +40036,10 @@ var require_lib2 = __commonJS({
               return {
                 writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                   checkIsReadable();
-                  return new Promise((resolve2, reject) => {
+                  return new Promise((resolve3, reject) => {
                     const writableStream = fs__default["default"].createWriteStream(filePath);
                     writableStream.on("finish", () => {
-                      resolve2(filePath);
+                      resolve3(filePath);
                     });
                     writableStream.on("error", (e) => {
                       reject(e);
@@ -40562,10 +40562,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -44583,10 +44583,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -55556,10 +55556,10 @@ var require_lib2 = __commonJS({
               return {
                 writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                   checkIsReadable();
-                  return new Promise((resolve2, reject) => {
+                  return new Promise((resolve3, reject) => {
                     const writableStream = fs__default["default"].createWriteStream(filePath);
                     writableStream.on("finish", () => {
-                      resolve2(filePath);
+                      resolve3(filePath);
                     });
                     writableStream.on("error", (e) => {
                       reject(e);
@@ -58313,10 +58313,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -61752,10 +61752,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -68377,10 +68377,10 @@ var require_lib2 = __commonJS({
               return {
                 writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                   checkIsReadable();
-                  return new Promise((resolve2, reject) => {
+                  return new Promise((resolve3, reject) => {
                     const writableStream = fs__default["default"].createWriteStream(filePath);
                     writableStream.on("finish", () => {
-                      resolve2(filePath);
+                      resolve3(filePath);
                     });
                     writableStream.on("error", (e) => {
                       reject(e);
@@ -68629,10 +68629,10 @@ var require_lib2 = __commonJS({
               return {
                 writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                   checkIsReadable();
-                  return new Promise((resolve2, reject) => {
+                  return new Promise((resolve3, reject) => {
                     const writableStream = fs__default["default"].createWriteStream(filePath);
                     writableStream.on("finish", () => {
-                      resolve2(filePath);
+                      resolve3(filePath);
                     });
                     writableStream.on("error", (e) => {
                       reject(e);
@@ -69250,10 +69250,10 @@ var require_lib2 = __commonJS({
               return {
                 writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                   checkIsReadable();
-                  return new Promise((resolve2, reject) => {
+                  return new Promise((resolve3, reject) => {
                     const writableStream = fs__default["default"].createWriteStream(filePath);
                     writableStream.on("finish", () => {
-                      resolve2(filePath);
+                      resolve3(filePath);
                     });
                     writableStream.on("error", (e) => {
                       reject(e);
@@ -70196,10 +70196,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -70448,10 +70448,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -71075,10 +71075,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -71914,10 +71914,10 @@ var require_lib2 = __commonJS({
               return {
                 writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                   checkIsReadable();
-                  return new Promise((resolve2, reject) => {
+                  return new Promise((resolve3, reject) => {
                     const writableStream = fs__default["default"].createWriteStream(filePath);
                     writableStream.on("finish", () => {
-                      resolve2(filePath);
+                      resolve3(filePath);
                     });
                     writableStream.on("error", (e) => {
                       reject(e);
@@ -72050,10 +72050,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -72885,10 +72885,10 @@ var require_lib2 = __commonJS({
               return {
                 writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                   checkIsReadable();
-                  return new Promise((resolve2, reject) => {
+                  return new Promise((resolve3, reject) => {
                     const writableStream = fs__default["default"].createWriteStream(filePath);
                     writableStream.on("finish", () => {
-                      resolve2(filePath);
+                      resolve3(filePath);
                     });
                     writableStream.on("error", (e) => {
                       reject(e);
@@ -73283,10 +73283,10 @@ var require_lib2 = __commonJS({
               return {
                 writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                   checkIsReadable();
-                  return new Promise((resolve2, reject) => {
+                  return new Promise((resolve3, reject) => {
                     const writableStream = fs__default["default"].createWriteStream(filePath);
                     writableStream.on("finish", () => {
-                      resolve2(filePath);
+                      resolve3(filePath);
                     });
                     writableStream.on("error", (e) => {
                       reject(e);
@@ -74323,10 +74323,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -74725,10 +74725,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -89424,10 +89424,10 @@ var require_lib2 = __commonJS({
               return {
                 writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                   checkIsReadable();
-                  return new Promise((resolve2, reject) => {
+                  return new Promise((resolve3, reject) => {
                     const writableStream = fs__default["default"].createWriteStream(filePath);
                     writableStream.on("finish", () => {
-                      resolve2(filePath);
+                      resolve3(filePath);
                     });
                     writableStream.on("error", (e) => {
                       reject(e);
@@ -89662,10 +89662,10 @@ var require_lib2 = __commonJS({
               return {
                 writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                   checkIsReadable();
-                  return new Promise((resolve2, reject) => {
+                  return new Promise((resolve3, reject) => {
                     const writableStream = fs__default["default"].createWriteStream(filePath);
                     writableStream.on("finish", () => {
-                      resolve2(filePath);
+                      resolve3(filePath);
                     });
                     writableStream.on("error", (e) => {
                       reject(e);
@@ -89747,10 +89747,10 @@ var require_lib2 = __commonJS({
               return {
                 writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                   checkIsReadable();
-                  return new Promise((resolve2, reject) => {
+                  return new Promise((resolve3, reject) => {
                     const writableStream = fs__default["default"].createWriteStream(filePath);
                     writableStream.on("finish", () => {
-                      resolve2(filePath);
+                      resolve3(filePath);
                     });
                     writableStream.on("error", (e) => {
                       reject(e);
@@ -91569,10 +91569,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -91809,10 +91809,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -91894,10 +91894,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -92399,10 +92399,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -99573,10 +99573,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -114236,10 +114236,10 @@ var require_lib2 = __commonJS({
               return {
                 writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                   checkIsReadable();
-                  return new Promise((resolve2, reject) => {
+                  return new Promise((resolve3, reject) => {
                     const writableStream = fs__default["default"].createWriteStream(filePath);
                     writableStream.on("finish", () => {
-                      resolve2(filePath);
+                      resolve3(filePath);
                     });
                     writableStream.on("error", (e) => {
                       reject(e);
@@ -117567,10 +117567,10 @@ var require_lib2 = __commonJS({
                 return {
                   writeFile: (filePath) => __awaiter(this, void 0, void 0, function* () {
                     checkIsReadable();
-                    return new Promise((resolve2, reject) => {
+                    return new Promise((resolve3, reject) => {
                       const writableStream = fs__default["default"].createWriteStream(filePath);
                       writableStream.on("finish", () => {
-                        resolve2(filePath);
+                        resolve3(filePath);
                       });
                       writableStream.on("error", (e) => {
                         reject(e);
@@ -119572,20 +119572,20 @@ var require_lib2 = __commonJS({
       }
     };
     var defaultLogger2 = {
-      error: (...msg) => {
-        console.log("[error]:", ...msg);
+      error: (...msg2) => {
+        console.log("[error]:", ...msg2);
       },
-      warn: (...msg) => {
-        console.warn("[warn]:", ...msg);
+      warn: (...msg2) => {
+        console.warn("[warn]:", ...msg2);
       },
-      info: (...msg) => {
-        console.info("[info]:", ...msg);
+      info: (...msg2) => {
+        console.info("[info]:", ...msg2);
       },
-      debug: (...msg) => {
-        console.debug("[debug]:", ...msg);
+      debug: (...msg2) => {
+        console.debug("[debug]:", ...msg2);
       },
-      trace: (...msg) => {
-        console.trace("[trace]:", ...msg);
+      trace: (...msg2) => {
+        console.trace("[trace]:", ...msg2);
       }
     };
     var LoggerProxy2 = class {
@@ -119593,29 +119593,29 @@ var require_lib2 = __commonJS({
         this.level = level;
         this.logger = logger;
       }
-      error(...msg) {
+      error(...msg2) {
         if (this.level >= exports.LoggerLevel.error) {
-          this.logger.error(msg);
+          this.logger.error(msg2);
         }
       }
-      warn(...msg) {
+      warn(...msg2) {
         if (this.level >= exports.LoggerLevel.warn) {
-          this.logger.warn(msg);
+          this.logger.warn(msg2);
         }
       }
-      info(...msg) {
+      info(...msg2) {
         if (this.level >= exports.LoggerLevel.info) {
-          this.logger.info(msg);
+          this.logger.info(msg2);
         }
       }
-      debug(...msg) {
+      debug(...msg2) {
         if (this.level >= exports.LoggerLevel.debug) {
-          this.logger.debug(msg);
+          this.logger.debug(msg2);
         }
       }
-      trace(...msg) {
+      trace(...msg2) {
         if (this.level >= exports.LoggerLevel.trace) {
-          this.logger.trace(msg);
+          this.logger.trace(msg2);
         }
       }
     };
@@ -119685,11 +119685,11 @@ var require_lib2 = __commonJS({
       "open.larksuite.com": "https://accounts.larksuite.com"
     });
     var ClientAssertionError = class extends Error {
-      constructor(code, msg) {
-        super(msg);
+      constructor(code, msg2) {
+        super(msg2);
         this.name = "ClientAssertionError";
         this.code = code;
-        this.msg = msg;
+        this.msg = msg2;
       }
     };
     var AccessTokenError = class extends Error {
@@ -119742,8 +119742,8 @@ var require_lib2 = __commonJS({
     function buildTokenError(field2, response) {
       var _a, _b;
       const code = (_a = response === null || response === void 0 ? void 0 : response.code) !== null && _a !== void 0 ? _a : "unknown";
-      const msg = (_b = response === null || response === void 0 ? void 0 : response.msg) !== null && _b !== void 0 ? _b : "no message";
-      return `failed to get ${field2}, code: ${code}, msg: ${msg}`;
+      const msg2 = (_b = response === null || response === void 0 ? void 0 : response.msg) !== null && _b !== void 0 ? _b : "no message";
+      return `failed to get ${field2}, code: ${code}, msg: ${msg2}`;
     }
     var TokenManager = class {
       constructor(params) {
@@ -120504,7 +120504,7 @@ var require_lib2 = __commonJS({
         });
       }
     };
-    var pickRequestData = (req) => new Promise((resolve2) => {
+    var pickRequestData = (req) => new Promise((resolve3) => {
       let chunks = "";
       req.on("data", (chunk) => {
         chunks += chunk;
@@ -120512,9 +120512,9 @@ var require_lib2 = __commonJS({
       req.on("end", () => {
         try {
           const data = JSON.parse(chunks);
-          resolve2(data);
+          resolve3(data);
         } catch (e) {
-          resolve2("");
+          resolve3("");
         }
       });
     });
@@ -121409,7 +121409,7 @@ var require_lib2 = __commonJS({
             } else {
               body.AppSecret = appSecret;
             }
-            const { code, data: { URL: URL3, ClientConfig }, msg } = yield this.httpInstance.request({
+            const { code, data: { URL: URL3, ClientConfig }, msg: msg2 } = yield this.httpInstance.request({
               method: "post",
               url,
               data: body,
@@ -121417,7 +121417,7 @@ var require_lib2 = __commonJS({
               timeout: 15e3
             });
             if (code !== ErrorCode.ok) {
-              const reason = code === ErrorCode.system_busy ? "system busy" : msg;
+              const reason = code === ErrorCode.system_busy ? "system busy" : msg2;
               this.logger.error("[ws]", `code: ${code}, ${reason}`);
               if (code === ErrorCode.internal_error) {
                 return { ok: false, retryable: true };
@@ -121461,7 +121461,7 @@ var require_lib2 = __commonJS({
         if (!wsInstance) {
           return Promise.resolve(false);
         }
-        return new Promise((resolve2) => {
+        return new Promise((resolve3) => {
           let settled = false;
           let timer;
           const settleOnce = (ok) => {
@@ -121470,7 +121470,7 @@ var require_lib2 = __commonJS({
             settled = true;
             if (timer)
               clearTimeout(timer);
-            resolve2(ok);
+            resolve3(ok);
           };
           if (this.handshakeTimeoutMs && this.handshakeTimeoutMs > 0) {
             timer = setTimeout(() => {
@@ -121942,7 +121942,7 @@ var require_lib2 = __commonJS({
             throw EExecStatus.ERROR;
           }
           const polling = () => __awaiter(this, void 0, void 0, function* () {
-            return new Promise((resolve2) => {
+            return new Promise((resolve3) => {
               setTimeout(() => __awaiter(this, void 0, void 0, function* () {
                 var _a2, _b2;
                 const runStatusInfo = yield this.client.aily.v1.ailySessionRun.get({
@@ -121952,7 +121952,7 @@ var require_lib2 = __commonJS({
                   }
                 }, options);
                 if (!(runStatusInfo.code === 0 && runStatusInfo.data)) {
-                  resolve2(3);
+                  resolve3(3);
                   return;
                 }
                 const status = (_b2 = (_a2 = runStatusInfo.data) === null || _a2 === void 0 ? void 0 : _a2.run) === null || _b2 === void 0 ? void 0 : _b2.status;
@@ -121961,18 +121961,18 @@ var require_lib2 = __commonJS({
                   case "IN_PROGRESS":
                     yield (() => __awaiter(this, void 0, void 0, function* () {
                       const ret = yield polling();
-                      resolve2(ret);
+                      resolve3(ret);
                     }))();
                   case "COMPLETED":
-                    resolve2(EExecStatus.SUCCESS);
+                    resolve3(EExecStatus.SUCCESS);
                   case "EXPIRED":
-                    resolve2(EExecStatus.EXPIRED);
+                    resolve3(EExecStatus.EXPIRED);
                   case "CANCELLED":
-                    resolve2(EExecStatus.CANCELLED);
+                    resolve3(EExecStatus.CANCELLED);
                   case "FAILED":
-                    resolve2(EExecStatus.FAILED);
+                    resolve3(EExecStatus.FAILED);
                   default:
-                    resolve2(EExecStatus.OTHER);
+                    resolve3(EExecStatus.OTHER);
                 }
               }), 500);
             });
@@ -122243,7 +122243,7 @@ var require_lib2 = __commonJS({
       });
     }
     function startPolling(ctx2) {
-      return new Promise((resolve2, reject) => {
+      return new Promise((resolve3, reject) => {
         var _a, _b;
         let { baseUrl, interval } = ctx2;
         let domainSwitched = false;
@@ -122268,7 +122268,7 @@ var require_lib2 = __commonJS({
           }
           settled = true;
           cleanup();
-          resolve2(result);
+          resolve3(result);
         };
         const fail = (err) => {
           if (settled) {
@@ -123057,10 +123057,10 @@ var require_lib2 = __commonJS({
       if (halves.length === 2) {
         const left = halves[0] ? halves[0].split(":") : [];
         const right = halves[1] ? halves[1].split(":") : [];
-        const fill = 8 - left.length - right.length;
-        if (fill < 0)
+        const fill2 = 8 - left.length - right.length;
+        if (fill2 < 0)
           throw new Error("too many groups");
-        groups = [...left, ...Array(fill).fill("0"), ...right];
+        groups = [...left, ...Array(fill2).fill("0"), ...right];
       } else {
         groups = addr.split(":");
       }
@@ -123378,7 +123378,7 @@ ${block}
       const raw = err;
       const status = (_b = (_a = raw === null || raw === void 0 ? void 0 : raw.response) === null || _a === void 0 ? void 0 : _a.status) !== null && _b !== void 0 ? _b : raw === null || raw === void 0 ? void 0 : raw.status;
       const feishuCode = (_g = (_e = (_d = (_c = raw === null || raw === void 0 ? void 0 : raw.response) === null || _c === void 0 ? void 0 : _c.data) === null || _d === void 0 ? void 0 : _d.code) !== null && _e !== void 0 ? _e : (_f = raw === null || raw === void 0 ? void 0 : raw.data) === null || _f === void 0 ? void 0 : _f.code) !== null && _g !== void 0 ? _g : raw === null || raw === void 0 ? void 0 : raw.code;
-      const msg = String((_h = raw === null || raw === void 0 ? void 0 : raw.message) !== null && _h !== void 0 ? _h : "").toLowerCase();
+      const msg2 = String((_h = raw === null || raw === void 0 ? void 0 : raw.message) !== null && _h !== void 0 ? _h : "").toLowerCase();
       if (typeof feishuCode === "number") {
         if (feishuCode === 230020 || feishuCode === 230017)
           return "target_revoked";
@@ -123395,9 +123395,9 @@ ${block}
         return "format_error";
       if (status === 404)
         return "target_revoked";
-      if (msg.startsWith("ssrf_blocked"))
+      if (msg2.startsWith("ssrf_blocked"))
         return "ssrf_blocked";
-      if (msg.includes("timeout") || (raw === null || raw === void 0 ? void 0 : raw.code) === "ETIMEDOUT" || (raw === null || raw === void 0 ? void 0 : raw.code) === "ECONNABORTED") {
+      if (msg2.includes("timeout") || (raw === null || raw === void 0 ? void 0 : raw.code) === "ETIMEDOUT" || (raw === null || raw === void 0 ? void 0 : raw.code) === "ECONNABORTED") {
         return "send_timeout";
       }
       return "unknown";
@@ -123856,10 +123856,10 @@ ${block}
         this.bufferChars = 0;
         this.tail = Promise.resolve();
       }
-      push(msg, handler) {
+      push(msg2, handler) {
         var _a;
-        this.buffer.push(msg);
-        this.bufferChars += msg.content.length;
+        this.buffer.push(msg2);
+        this.bufferChars += msg2.content.length;
         (_a = this.pendingHandler) !== null && _a !== void 0 ? _a : this.pendingHandler = handler;
         if (this.buffer.length >= this.config.maxMessages || this.bufferChars >= this.config.maxChars) {
           this.clearTimer();
@@ -123934,8 +123934,8 @@ ${block}
         this.config = config;
         this.pipelines = /* @__PURE__ */ new Map();
       }
-      push(scope, msg, handler) {
-        this.getOrCreate(scope, false).push(msg, handler);
+      push(scope, msg2, handler) {
+        this.getOrCreate(scope, false).push(msg2, handler);
       }
       run(scope, task) {
         return this.getOrCreate(scope, true).run(task);
@@ -124088,27 +124088,27 @@ ${block}
         this.cfg = Object.assign({}, cfg !== null && cfg !== void 0 ? cfg : {});
         this.bot = bot;
       }
-      evaluate(msg) {
-        if (msg.chatType === "group")
-          return this.evaluateGroup(msg);
-        return this.evaluateDm(msg);
+      evaluate(msg2) {
+        if (msg2.chatType === "group")
+          return this.evaluateGroup(msg2);
+        return this.evaluateDm(msg2);
       }
-      evaluateGroup(msg) {
+      evaluateGroup(msg2) {
         var _a, _b;
         const allow = this.cfg.groupAllowlist;
-        if (allow && allow.length > 0 && !allow.includes(msg.chatId)) {
+        if (allow && allow.length > 0 && !allow.includes(msg2.chatId)) {
           return { allowed: false, reason: "group_not_allowed" };
         }
         const requireMention = (_a = this.cfg.requireMention) !== null && _a !== void 0 ? _a : true;
-        if (requireMention && !msg.mentionedBot) {
+        if (requireMention && !msg2.mentionedBot) {
           return { allowed: false, reason: "no_mention" };
         }
-        if (msg.mentionAll && !((_b = this.cfg.respondToMentionAll) !== null && _b !== void 0 ? _b : false)) {
+        if (msg2.mentionAll && !((_b = this.cfg.respondToMentionAll) !== null && _b !== void 0 ? _b : false)) {
           return { allowed: false, reason: "mention_all_blocked" };
         }
         return { allowed: true };
       }
-      evaluateDm(msg) {
+      evaluateDm(msg2) {
         var _a, _b;
         const mode = (_a = this.cfg.dmMode) !== null && _a !== void 0 ? _a : "open";
         if (mode === "disabled") {
@@ -124116,7 +124116,7 @@ ${block}
         }
         if (mode === "allowlist") {
           const allow = (_b = this.cfg.dmAllowlist) !== null && _b !== void 0 ? _b : [];
-          if (!allow.includes(msg.senderId)) {
+          if (!allow.includes(msg2.senderId)) {
             return { allowed: false, reason: "sender_not_allowed" };
           }
         }
@@ -124190,29 +124190,29 @@ ${block}
         this.manager = new ChatPipelineManager2(resolveBatchConfig2(opts.config));
       }
       // ─── tier 1: full pipeline for IM messages ─────────────
-      pushMessage(msg) {
+      pushMessage(msg2) {
         var _a, _b, _c, _d, _e, _f, _g;
         return __awaiter(this, void 0, void 0, function* () {
-          if (isStale2(msg.createTime, this.staleWindow)) {
-            (_b = (_a = this.logger).debug) === null || _b === void 0 ? void 0 : _b.call(_a, `safety: drop stale message ${msg.messageId}`);
+          if (isStale2(msg2.createTime, this.staleWindow)) {
+            (_b = (_a = this.logger).debug) === null || _b === void 0 ? void 0 : _b.call(_a, `safety: drop stale message ${msg2.messageId}`);
             return;
           }
-          if (yield this.seenCache.has(msg.messageId)) {
-            (_d = (_c = this.logger).debug) === null || _d === void 0 ? void 0 : _d.call(_c, `safety: drop duplicate message ${msg.messageId}`);
+          if (yield this.seenCache.has(msg2.messageId)) {
+            (_d = (_c = this.logger).debug) === null || _d === void 0 ? void 0 : _d.call(_c, `safety: drop duplicate message ${msg2.messageId}`);
             return;
           }
-          const decision = this.policy.evaluate(msg);
+          const decision = this.policy.evaluate(msg2);
           if (!decision.allowed) {
             this.onReject({
-              messageId: msg.messageId,
-              chatId: msg.chatId,
-              senderId: msg.senderId,
+              messageId: msg2.messageId,
+              chatId: msg2.chatId,
+              senderId: msg2.senderId,
               reason: (_e = decision.reason) !== null && _e !== void 0 ? _e : "group_not_allowed"
             });
             return;
           }
-          if (!this.lock.acquire(msg.messageId)) {
-            (_g = (_f = this.logger).debug) === null || _g === void 0 ? void 0 : _g.call(_f, `safety: drop in-flight message ${msg.messageId}`);
+          if (!this.lock.acquire(msg2.messageId)) {
+            (_g = (_f = this.logger).debug) === null || _g === void 0 ? void 0 : _g.call(_f, `safety: drop in-flight message ${msg2.messageId}`);
             return;
           }
           const dispatchHandler = (batch) => __awaiter(this, void 0, void 0, function* () {
@@ -124232,9 +124232,9 @@ ${block}
             }
           });
           if (this.queueEnabled) {
-            this.manager.push(msg.chatId, msg, dispatchHandler);
+            this.manager.push(msg2.chatId, msg2, dispatchHandler);
           } else {
-            void dispatchHandler({ message: msg, sourceIds: [msg.messageId] });
+            void dispatchHandler({ message: msg2, sourceIds: [msg2.messageId] });
           }
         });
       }
@@ -125066,12 +125066,12 @@ ${lines.join("\n")}
     function normalize2(event, opts) {
       var _a, _b, _c, _d, _e;
       return __awaiter(this, void 0, void 0, function* () {
-        const msg = event.message;
+        const msg2 = event.message;
         const botOpenId = (_a = opts.botIdentity) === null || _a === void 0 ? void 0 : _a.openId;
-        const { mentions, mentionsByOpenId, mentionList, mentionAll: mentionAllFromRaw, mentionedBot } = extractMentions2(msg.mentions, botOpenId);
-        const mentionAll = mentionAllFromRaw || detectMentionAllInContent2(msg.content);
+        const { mentions, mentionsByOpenId, mentionList, mentionAll: mentionAllFromRaw, mentionedBot } = extractMentions2(msg2.mentions, botOpenId);
+        const mentionAll = mentionAllFromRaw || detectMentionAllInContent2(msg2.content);
         const ctx2 = {
-          messageId: msg.message_id,
+          messageId: msg2.message_id,
           botOpenId,
           mentions,
           mentionsByOpenId,
@@ -125081,28 +125081,28 @@ ${lines.join("\n")}
           batchResolveNames: opts.batchResolveNames,
           dispatch: dispatchConvert2
         };
-        const { content: rawContent, resources } = yield dispatchConvert2(msg.content, msg.message_type, ctx2);
+        const { content: rawContent, resources } = yield dispatchConvert2(msg2.content, msg2.message_type, ctx2);
         const content = resolveMentions2(rawContent, ctx2);
         const senderOpenId = event.sender.sender_id.open_id;
         const senderFallbackId = (_d = (_c = event.sender.sender_id.user_id) !== null && _c !== void 0 ? _c : event.sender.sender_id.union_id) !== null && _d !== void 0 ? _d : "";
         const senderId = senderOpenId !== null && senderOpenId !== void 0 ? senderOpenId : senderFallbackId;
         const senderName = senderOpenId ? (_e = opts.resolveSenderName) === null || _e === void 0 ? void 0 : _e.call(opts, senderOpenId) : void 0;
-        const createMs = msg.create_time ? parseInt(msg.create_time, 10) : 0;
+        const createMs = msg2.create_time ? parseInt(msg2.create_time, 10) : 0;
         return {
-          messageId: msg.message_id,
-          chatId: msg.chat_id,
-          chatType: msg.chat_type,
+          messageId: msg2.message_id,
+          chatId: msg2.chat_id,
+          chatType: msg2.chat_type,
           senderId,
           senderName,
           content,
-          rawContentType: msg.message_type,
+          rawContentType: msg2.message_type,
           resources,
           mentions: mentionList,
           mentionAll,
           mentionedBot,
-          rootId: msg.root_id,
-          threadId: msg.thread_id,
-          replyToMessageId: msg.parent_id,
+          rootId: msg2.root_id,
+          threadId: msg2.thread_id,
+          replyToMessageId: msg2.parent_id,
           createTime: Number.isFinite(createMs) ? createMs : 0,
           raw: opts.includeRaw ? event : void 0
         };
@@ -125190,7 +125190,7 @@ ${lines.join("\n")}
        * corresponding public events.
        */
       connectWebSocket(timeoutMs) {
-        return new Promise((resolve2, reject) => {
+        return new Promise((resolve3, reject) => {
           var _a;
           let settled = false;
           const timer = setTimeout(() => {
@@ -125217,7 +125217,7 @@ ${lines.join("\n")}
                 return;
               settled = true;
               clearTimeout(timer);
-              resolve2();
+              resolve3();
             },
             onError: (err) => {
               if (settled)
@@ -125505,8 +125505,8 @@ ${lines.join("\n")}
           // IM message — full safety pipeline
           "im.message.receive_v1": (raw) => __awaiter(this, void 0, void 0, function* () {
             try {
-              const msg = yield normalize2(raw, normalizeOpts);
-              yield this.safety.pushMessage(msg);
+              const msg2 = yield normalize2(raw, normalizeOpts);
+              yield this.safety.pushMessage(msg2);
             } catch (e) {
               this.emitError(e);
             }
@@ -125610,12 +125610,12 @@ ${lines.join("\n")}
       });
     }
     function readableToBuffer2(stream) {
-      return new Promise((resolve2, reject) => {
+      return new Promise((resolve3, reject) => {
         const chunks = [];
         stream.on("data", (chunk) => {
           chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
         });
-        stream.on("end", () => resolve2(Buffer.concat(chunks)));
+        stream.on("end", () => resolve3(Buffer.concat(chunks)));
         stream.on("error", reject);
       });
     }
@@ -125798,7 +125798,7 @@ var init_dist = __esm({
 
 // node_modules/https-proxy-agent/dist/parse-proxy-response.js
 function parseProxyResponse(socket) {
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve3, reject) => {
     let buffersLength = 0;
     const buffers = [];
     function read() {
@@ -125864,7 +125864,7 @@ function parseProxyResponse(socket) {
       }
       debug("got proxy server response: %o %o", firstLine, headers);
       cleanup();
-      resolve2({
+      resolve3({
         connect: {
           statusCode,
           statusText,
@@ -126976,12 +126976,12 @@ function normalizeReaction(event, action, opts) {
   };
 }
 async function normalize(event, opts) {
-  const msg = event.message;
+  const msg2 = event.message;
   const botOpenId = opts.botIdentity?.openId;
-  const { mentions, mentionsByOpenId, mentionList, mentionAll: mentionAllFromRaw, mentionedBot } = extractMentions(msg.mentions, botOpenId);
-  const mentionAll = mentionAllFromRaw || detectMentionAllInContent(msg.content);
+  const { mentions, mentionsByOpenId, mentionList, mentionAll: mentionAllFromRaw, mentionedBot } = extractMentions(msg2.mentions, botOpenId);
+  const mentionAll = mentionAllFromRaw || detectMentionAllInContent(msg2.content);
   const ctx2 = {
-    messageId: msg.message_id,
+    messageId: msg2.message_id,
     botOpenId,
     mentions,
     mentionsByOpenId,
@@ -126991,7 +126991,7 @@ async function normalize(event, opts) {
     batchResolveNames: opts.batchResolveNames,
     dispatch: dispatchConvert
   };
-  const { content: rawContent, resources } = await dispatchConvert(msg.content, msg.message_type, ctx2);
+  const { content: rawContent, resources } = await dispatchConvert(msg2.content, msg2.message_type, ctx2);
   const content = resolveMentions(rawContent, ctx2);
   const senderOpenId = event.sender.sender_id.open_id;
   const senderFallbackId = event.sender.sender_id.user_id ?? event.sender.sender_id.union_id ?? "";
@@ -126999,24 +126999,24 @@ async function normalize(event, opts) {
   const senderName = senderOpenId ? opts.resolveSenderName?.(senderOpenId) : void 0;
   const senderType = event.sender.sender_type;
   const senderIsBot = senderType === void 0 ? void 0 : senderType === "bot";
-  const createMs = msg.create_time ? parseInt(msg.create_time, 10) : 0;
+  const createMs = msg2.create_time ? parseInt(msg2.create_time, 10) : 0;
   return {
-    messageId: msg.message_id,
-    chatId: msg.chat_id,
-    chatType: msg.chat_type,
+    messageId: msg2.message_id,
+    chatId: msg2.chat_id,
+    chatType: msg2.chat_type,
     senderId,
     senderName,
     senderType,
     senderIsBot,
     content,
-    rawContentType: msg.message_type,
+    rawContentType: msg2.message_type,
     resources,
     mentions: mentionList,
     mentionAll,
     mentionedBot,
-    rootId: msg.root_id,
-    threadId: msg.thread_id,
-    replyToMessageId: msg.parent_id,
+    rootId: msg2.root_id,
+    threadId: msg2.thread_id,
+    replyToMessageId: msg2.parent_id,
     createTime: Number.isFinite(createMs) ? createMs : 0,
     raw: opts.includeRaw ? event : void 0
   };
@@ -127037,7 +127037,7 @@ function inferCode(err, message) {
   const raw = err;
   const status = raw?.response?.status ?? raw?.status;
   const feishuCode = raw?.response?.data?.code ?? raw?.data?.code ?? raw?.code;
-  const msg = message.toLowerCase();
+  const msg2 = message.toLowerCase();
   if (typeof feishuCode === "number") {
     if (feishuCode === 230011 || feishuCode === 230017 || feishuCode === 230020) return "target_revoked";
     if (feishuCode === 99991400 || feishuCode === 99991401) return "permission_denied";
@@ -127045,14 +127045,14 @@ function inferCode(err, message) {
   }
   if (status === 429) return "rate_limited";
   if (status === 401 || status === 403) return "permission_denied";
-  if (status === 400) return isWithdrawnReplyTarget(msg) ? "target_revoked" : "format_error";
+  if (status === 400) return isWithdrawnReplyTarget(msg2) ? "target_revoked" : "format_error";
   if (status === 404) return "target_revoked";
-  if (msg.startsWith("ssrf_blocked")) return "ssrf_blocked";
-  if (msg.includes("timeout") || raw?.code === "ETIMEDOUT" || raw?.code === "ECONNABORTED") return "send_timeout";
+  if (msg2.startsWith("ssrf_blocked")) return "ssrf_blocked";
+  if (msg2.includes("timeout") || raw?.code === "ETIMEDOUT" || raw?.code === "ECONNABORTED") return "send_timeout";
   return "unknown";
 }
-function isWithdrawnReplyTarget(msg) {
-  return msg.includes("withdrawn");
+function isWithdrawnReplyTarget(msg2) {
+  return msg2.includes("withdrawn");
 }
 function extractMessage(err) {
   const raw = err;
@@ -127318,11 +127318,11 @@ function parseIPv6(ip) {
   if (halves.length === 2) {
     const left = halves[0] ? halves[0].split(":") : [];
     const right = halves[1] ? halves[1].split(":") : [];
-    const fill = 8 - left.length - right.length;
-    if (fill < 0) throw new Error("too many groups");
+    const fill2 = 8 - left.length - right.length;
+    if (fill2 < 0) throw new Error("too many groups");
     groups = [
       ...left,
-      ...Array(fill).fill("0"),
+      ...Array(fill2).fill("0"),
       ...right
     ];
   } else groups = addr.split(":");
@@ -127582,12 +127582,12 @@ async function bufferFromStream(raw) {
   throw new LarkChannelError("unknown", "unexpected download response type");
 }
 function readableToBuffer(stream) {
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve3, reject) => {
     const chunks = [];
     stream.on("data", (chunk) => {
       chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     });
-    stream.on("end", () => resolve2(Buffer.concat(chunks)));
+    stream.on("end", () => resolve3(Buffer.concat(chunks)));
     stream.on("error", reject);
   });
 }
@@ -130266,9 +130266,9 @@ ${lines.join("\n")}
         this.config = config;
         this.serialOnly = serialOnly;
       }
-      push(msg, handler) {
-        this.buffer.push(msg);
-        this.bufferChars += msg.content.length;
+      push(msg2, handler) {
+        this.buffer.push(msg2);
+        this.bufferChars += msg2.content.length;
         this.pendingHandler ??= handler;
         if (this.config.mergeWhileBusy && this.busy) return;
         if (this.buffer.length >= this.config.maxMessages || this.bufferChars >= this.config.maxChars) {
@@ -130354,8 +130354,8 @@ ${lines.join("\n")}
       constructor(config) {
         this.config = config;
       }
-      push(scope, msg, handler) {
-        this.getOrCreate(scope, false).push(msg, handler);
+      push(scope, msg2, handler) {
+        this.getOrCreate(scope, false).push(msg2, handler);
       }
       run(scope, task) {
         return this.getOrCreate(scope, true).run(task);
@@ -130406,23 +130406,23 @@ ${lines.join("\n")}
       * don't count. A re-delivered `messageId` already inside the window is
       * counted once. The first trip of a key emits exactly one warn.
       */
-      record(msg) {
+      record(msg2) {
         if (!this.enabled) return false;
-        const key = this.keyFor(msg);
-        if (msg.senderType === "user") {
+        const key = this.keyFor(msg2);
+        if (msg2.senderType === "user") {
           this.states.delete(key);
           return false;
         }
-        if (!(msg.senderType === "bot" && msg.mentionedBot)) return false;
+        if (!(msg2.senderType === "bot" && msg2.mentionedBot)) return false;
         const state = this.states.get(key) ?? {
           entries: [],
           warned: false
         };
-        const cutoff = msg.createTime - this.windowMs;
+        const cutoff = msg2.createTime - this.windowMs;
         state.entries = state.entries.filter((e) => e.time >= cutoff);
-        if (!state.entries.some((e) => e.messageId === msg.messageId)) state.entries.push({
-          messageId: msg.messageId,
-          time: msg.createTime
+        if (!state.entries.some((e) => e.messageId === msg2.messageId)) state.entries.push({
+          messageId: msg2.messageId,
+          time: msg2.createTime
         });
         const tripped = state.entries.length >= this.threshold;
         if (tripped && !state.warned) {
@@ -130442,8 +130442,8 @@ ${lines.join("\n")}
           this.states.delete(oldest);
         }
       }
-      keyFor(msg) {
-        return this.scope === "chat+sender" ? `${msg.chatId}::${msg.senderId}` : msg.chatId;
+      keyFor(msg2) {
+        return this.scope === "chat+sender" ? `${msg2.chatId}::${msg2.senderId}` : msg2.chatId;
       }
     };
     PolicyGate = class {
@@ -130456,34 +130456,34 @@ ${lines.join("\n")}
         this.logger = logger;
         this.warnOnMisconfiguredAllowlists();
       }
-      evaluate(msg) {
-        if (msg.chatType === "group") return this.evaluateGroup(msg);
-        return this.evaluateDm(msg);
+      evaluate(msg2) {
+        if (msg2.chatType === "group") return this.evaluateGroup(msg2);
+        return this.evaluateDm(msg2);
       }
-      evaluateGroup(msg) {
+      evaluateGroup(msg2) {
         const allow = this.cfg.groupAllowlist;
-        if (allow && allow.length > 0 && !allow.includes(msg.chatId)) return {
+        if (allow && allow.length > 0 && !allow.includes(msg2.chatId)) return {
           allowed: false,
           reason: "group_not_allowed"
         };
-        if ((this.cfg.requireMention ?? true) && !msg.mentionedBot) return {
+        if ((this.cfg.requireMention ?? true) && !msg2.mentionedBot) return {
           allowed: false,
           reason: "no_mention"
         };
-        if (msg.mentionAll && !(this.cfg.respondToMentionAll ?? false)) return {
+        if (msg2.mentionAll && !(this.cfg.respondToMentionAll ?? false)) return {
           allowed: false,
           reason: "mention_all_blocked"
         };
         return { allowed: true };
       }
-      evaluateDm(msg) {
+      evaluateDm(msg2) {
         const mode = this.cfg.dmMode ?? "open";
         if (mode === "disabled") return {
           allowed: false,
           reason: "dm_disabled"
         };
         if (mode === "allowlist") {
-          if (!(this.cfg.dmAllowlist ?? []).includes(msg.senderId)) return {
+          if (!(this.cfg.dmAllowlist ?? []).includes(msg2.senderId)) return {
             allowed: false,
             reason: "sender_not_allowed"
           };
@@ -130587,37 +130587,37 @@ ${lines.join("\n")}
         this.cardActionMode = mode;
         if (unrecognized) this.logger.warn?.(`safety: unrecognized chatQueue.cardActions "${String(rawMode)}" (expected 'same' | 'separate'), falling back to 'same'`);
       }
-      async pushMessage(msg) {
-        if (isStale(msg.createTime, this.staleWindow)) {
-          this.logger.debug?.(`safety: drop stale message ${msg.messageId}`);
+      async pushMessage(msg2) {
+        if (isStale(msg2.createTime, this.staleWindow)) {
+          this.logger.debug?.(`safety: drop stale message ${msg2.messageId}`);
           return;
         }
-        if (await this.seenCache.has(msg.messageId)) {
-          this.logger.debug?.(`safety: drop duplicate message ${msg.messageId}`);
+        if (await this.seenCache.has(msg2.messageId)) {
+          this.logger.debug?.(`safety: drop duplicate message ${msg2.messageId}`);
           return;
         }
-        const decision = this.policy.evaluate(msg);
+        const decision = this.policy.evaluate(msg2);
         if (!decision.allowed) {
           this.onReject({
-            messageId: msg.messageId,
-            chatId: msg.chatId,
-            senderId: msg.senderId,
+            messageId: msg2.messageId,
+            chatId: msg2.chatId,
+            senderId: msg2.senderId,
             reason: decision.reason ?? "group_not_allowed"
           });
           return;
         }
-        if (this.loopGuard.enabled && this.loopGuard.record(msg)) {
+        if (this.loopGuard.enabled && this.loopGuard.record(msg2)) {
           if (this.loopGuard.onTrip === "reject") this.onReject({
-            messageId: msg.messageId,
-            chatId: msg.chatId,
-            senderId: msg.senderId,
+            messageId: msg2.messageId,
+            chatId: msg2.chatId,
+            senderId: msg2.senderId,
             reason: "bot_loop"
           });
-          else this.logger.debug?.(`safety: drop bot-loop message ${msg.messageId}`);
+          else this.logger.debug?.(`safety: drop bot-loop message ${msg2.messageId}`);
           return;
         }
-        if (!this.lock.acquire(msg.messageId)) {
-          this.logger.debug?.(`safety: drop in-flight message ${msg.messageId}`);
+        if (!this.lock.acquire(msg2.messageId)) {
+          this.logger.debug?.(`safety: drop in-flight message ${msg2.messageId}`);
           return;
         }
         const dispatchHandler = async (batch) => {
@@ -130635,10 +130635,10 @@ ${lines.join("\n")}
             }
           }
         };
-        if (this.queueEnabled) this.manager.push(msg.chatId, msg, dispatchHandler);
+        if (this.queueEnabled) this.manager.push(msg2.chatId, msg2, dispatchHandler);
         else dispatchHandler({
-          message: msg,
-          sourceIds: [msg.messageId]
+          message: msg2,
+          sourceIds: [msg2.messageId]
         });
       }
       /**
@@ -130909,7 +130909,7 @@ ${lines.join("\n")}
       * corresponding public events.
       */
       connectWebSocket(timeoutMs) {
-        return new Promise((resolve2, reject) => {
+        return new Promise((resolve3, reject) => {
           let settled = false;
           let attemptClient;
           const timer = setTimeout(() => {
@@ -130938,7 +130938,7 @@ ${lines.join("\n")}
               if (settled) return;
               settled = true;
               clearTimeout(timer);
-              resolve2();
+              resolve3();
             },
             onError: (err) => {
               if (settled) return;
@@ -131025,11 +131025,11 @@ ${lines.join("\n")}
       * `opts` overrides either default. Semantically a {@link send}; streaming
       * replies still use `stream(to, input, { replyTo })`.
       */
-      async reply(msg, input, opts) {
-        return this.send(msg.chatId, input, {
+      async reply(msg2, input, opts) {
+        return this.send(msg2.chatId, input, {
           ...opts,
-          replyTo: opts?.replyTo ?? msg.messageId,
-          replyInThread: opts?.replyInThread ?? Boolean(msg.threadId)
+          replyTo: opts?.replyTo ?? msg2.messageId,
+          replyInThread: opts?.replyInThread ?? Boolean(msg2.threadId)
         });
       }
       /**
@@ -131567,13 +131567,13 @@ ${lines.join("\n")}
                 await this.warmChatRoster(chatId);
                 resolveSenderName = (openId) => this.chatMemberCache.resolveName(chatId, openId);
               }
-              const msg = await normalize(event, {
+              const msg2 = await normalize(event, {
                 ...normalizeOpts,
                 resolveSenderName
               });
-              this.collectMentionsIntoRoster(chatId, msg.mentions);
-              if (this.opts.resolveChatMode) msg.chatMode = await this.chatModeCache.resolve(msg.chatId, (id) => this.getChatMode(id));
-              await this.safety.pushMessage(msg);
+              this.collectMentionsIntoRoster(chatId, msg2.mentions);
+              if (this.opts.resolveChatMode) msg2.chatMode = await this.chatModeCache.resolve(msg2.chatId, (id) => this.getChatMode(id));
+              await this.safety.pushMessage(msg2);
             } catch (e) {
               this.emitError(e);
             }
@@ -133030,8 +133030,8 @@ var require_dijkstra = __commonJS({
           }
         }
         if (typeof d !== "undefined" && typeof costs[d] === "undefined") {
-          var msg = ["Could not find a path from ", s, " to ", d, "."].join("");
-          throw new Error(msg);
+          var msg2 = ["Could not find a path from ", s, " to ", d, "."].join("");
+          throw new Error(msg2);
         }
         return predecessors;
       },
@@ -136110,10 +136110,10 @@ var require_browser2 = __commonJS({
           text = canvas;
           canvas = void 0;
         }
-        return new Promise(function(resolve2, reject) {
+        return new Promise(function(resolve3, reject) {
           try {
             const data = QRCode2.create(text, opts);
-            resolve2(renderFunc(data, canvas, opts));
+            resolve3(renderFunc(data, canvas, opts));
           } catch (e) {
             reject(e);
           }
@@ -136194,11 +136194,11 @@ var require_server = __commonJS({
     }
     function render(renderFunc, text, params) {
       if (!params.cb) {
-        return new Promise(function(resolve2, reject) {
+        return new Promise(function(resolve3, reject) {
           try {
             const data = QRCode2.create(text, params.opts);
             return renderFunc(data, params.opts, function(err, data2) {
-              return err ? reject(err) : resolve2(data2);
+              return err ? reject(err) : resolve3(data2);
             });
           } catch (e) {
             reject(e);
@@ -136262,6 +136262,270 @@ var require_lib3 = __commonJS({
   }
 });
 
+// src/texts.ts
+function fill(template, vars = {}) {
+  return template.replace(/\{([a-zA-Z_]+)\}/g, (whole, name) => name in vars ? String(vars[name]) : whole);
+}
+function both(key, vars = {}, varsEn = vars) {
+  return `${fill(zh[key], vars)}\u3000/\u3000${fill(en[key], varsEn)}`;
+}
+var zh, en, msg, t;
+var init_texts = __esm({
+  "src/texts.ts"() {
+    "use strict";
+    zh = {
+      // ask card
+      doing: "\u5728\u505A",
+      background: "\u80CC\u666F",
+      blocker: "\u5361\u70B9",
+      options: "\u9009\u9879",
+      recommend: "\u6211\u7684\u5224\u65AD",
+      question: "\u4F60\u7684\u5224\u65AD",
+      recommended: "\u2190 \u6211\u63A8\u8350",
+      yourReply: "\u4F60\u7684\u56DE\u590D",
+      theQuestion: "\uFF08\u539F\u95EE\u9898\uFF09",
+      hint: "\u60F3\u8BF4\u522B\u7684\uFF1F\u76F4\u63A5\u5728\u672C\u7FA4\u53D1\u6D88\u606F\u5C31\u884C\uFF0C\u7B2C\u4E00\u6761\u6D88\u606F\u5C31\u662F\u7B54\u590D\u3002",
+      hintDanger: "\u7EA2\u8272\u6309\u94AE\u4F1A\u4E8C\u6B21\u786E\u8BA4\uFF1B\u4E5F\u53EF\u4EE5\u76F4\u63A5\u5728\u7FA4\u91CC\u6253\u5B57\u3002",
+      answered: "\u5DF2\u56DE\u7B54",
+      timedout: "\u5DF2\u8D85\u65F6",
+      cancelled: "\u5DF2\u53D6\u6D88",
+      confirmTitle: "\u786E\u8BA4\u6267\u884C",
+      confirmText: "\u201C{label}\u201D\u662F\u4E0D\u53EF\u9006\u6216\u9AD8\u4EE3\u4EF7\u7684\u64CD\u4F5C\u3002\u786E\u5B9A\u9009\u5B83\uFF1F",
+      // receipt card
+      notDelivered: "\u6CA1\u80FD\u9001\u8FBE",
+      notDeliveredBody: "\u521A\u624D\u90A3\u6761\u6D88\u606F\u6CA1\u80FD\u9001\u8FDB\u7EC8\u7AEF\uFF1A{why}",
+      receiptNoPane: "\u8FD9\u4E2A\u9879\u76EE\u8FD8\u6CA1\u6709\u8BB0\u5F55\u5230 herdr \u7A97\u683C\uFF0C\u6D88\u606F\u6CA1\u5904\u53EF\u9001\u3002",
+      promptAgentBlocked: "\u7EC8\u7AEF\u91CC\u7684 agent \u6B63\u5361\u5728\u4E00\u4E2A\u9700\u8981\u4F60\u672C\u4EBA\u786E\u8BA4\u7684\u63D0\u793A\u4E0A\uFF0C\u6536\u4E0D\u4E86\u65B0\u8F93\u5165\u3002\u56DE\u7535\u8111\u524D\u5904\u7406\u4E00\u4E0B\u3002",
+      promptPaneGone: "\u8BB0\u5F55\u7684 herdr \u7A97\u683C\u5DF2\u7ECF\u4E0D\u5728\u4E86\u3002\u5230\u9879\u76EE\u91CC\u8DD1\u4E00\u6B21 agent-lark away on \u6216\u4EFB\u610F agent-lark \u547D\u4EE4\uFF0C\u91CD\u65B0\u8BB0\u5F55\u7A97\u683C\u3002",
+      promptNoHerdr: "\u8FD9\u53F0\u673A\u5668\u6CA1\u6709 herdr\uFF0C\u6216 herdr \u6CA1\u5728\u8DD1\uFF0C\u624B\u673A\u4E0A\u53D1\u7684\u6D88\u606F\u6CA1\u5904\u6CE8\u5165\u3002",
+      promptRefused: "herdr \u62D2\u7EDD\u4E86\u8FD9\u6B21\u6CE8\u5165\uFF1A{code} {message}",
+      // "stuck" status card
+      statusBlocked: "\u7B49\u4F60\u8F93\u5165",
+      statusPane: "\u7A97\u683C {pane}",
+      // button / form toasts
+      toastAnswered: "\u5DF2\u56DE\u590D",
+      toastClosed: "\u8FD9\u4E2A\u95EE\u9898\u5DF2\u7ECF\u7ED3\u675F\u4E86\uFF0C\u521A\u624D\u90A3\u4E0B\u5F53\u6210\u65B0\u6307\u4EE4\u53D1\u8FC7\u53BB\u4E86",
+      toastBadOption: "\u8FD9\u4E2A\u9009\u9879\u5BF9\u4E0D\u4E0A\uFF0C\u518D\u8BD5\u4E00\u6B21",
+      // setup walkthrough (each line is printed as "zh　/　en")
+      setupHaveCreds: "\u5DF2\u7ECF\u6709\u51ED\u636E\u4E86\uFF08\u6765\u81EA {origin}\uFF09\u3002\u60F3\u91CD\u65B0\u6388\u6743\u6216\u8865\u6743\u9650\uFF0C\u52A0 --update\uFF1B\u60F3\u6362\u4E00\u4E2A\u5E94\u7528\uFF0C\u5148 agent-lark setup --reset\u3002",
+      setupStoreOption: "--store \u53EA\u80FD\u662F keychain / file / none",
+      setupProbing: "\u6B63\u5728\u7528\u8FD9\u5BF9\u51ED\u636E\u8FDE\u4E00\u6B21\u98DE\u4E66\u786E\u8BA4\u53EF\u7528\uFF08\u6765\u6E90\uFF1A{origin}\uFF09\u2026\u2026",
+      setupProbeOk: "\u2705 \u51ED\u636E\u53EF\u7528\uFF0C\u5E94\u7528\u540D\u300C{app}\u300D",
+      setupUnnamedApp: "(\u672A\u547D\u540D)",
+      setupProbeFailed: "\u8FD9\u5BF9\u51ED\u636E\u8FDE\u4E0D\u4E0A\u98DE\u4E66\uFF1A{error}",
+      setupSaved: "\u51ED\u636E\u5DF2\u4FDD\u5B58\u5230\uFF1A{where}",
+      setupSavedQr: "\u2705 \u5E94\u7528\u5DF2\u7ED1\u5B9A\uFF0C\u51ED\u636E\u4FDD\u5B58\u5230\uFF1A{where}\uFF08\u660E\u6587\u4E0D\u4F1A\u51FA\u73B0\u5728\u4EFB\u4F55\u8F93\u51FA\u91CC\uFF09\u3002",
+      setupNext: "\u4E0B\u4E00\u6B65\uFF1A",
+      setupNoSecret: "App Secret \u6CA1\u627E\u5230\u3002\u4E0D\u8981\u5199\u5728\u547D\u4EE4\u884C\u91CC\uFF08argv \u5168\u673A\u5668\u53EF\u89C1\uFF09\uFF0C\u7528\u4E0B\u9762\u4EFB\u4E00\u79CD\uFF1A",
+      setupNoSecretEnvFile: "\u6216\u5199\u8FDB {file}\uFF1AAGENT_LARK_APP_ID=... / AGENT_LARK_APP_SECRET=...",
+      setupRequesting: "\u6B63\u5728\u5411\u98DE\u4E66\u7533\u8BF7\u626B\u7801\u6CE8\u518C\u2026\u2026",
+      setupScan: "\u7528\u98DE\u4E66\u626B\u4E0A\u9762\u7684\u4E8C\u7EF4\u7801\uFF08\u626B\u4E0D\u5230\u5C31\u6253\u5F00\u8FD9\u4E2A\u94FE\u63A5\uFF09\uFF1A",
+      setupScopes: "\u786E\u8BA4\u9875\u4F1A\u5217\u51FA\u8981\u6388\u6743\u7684\u6743\u9650\uFF1A",
+      setupEvents: "\u4E8B\u4EF6 im.message.receive_v1 \xB7 \u56DE\u8C03 card.action.trigger",
+      setupExpiry: "\u23F3 \u4E8C\u7EF4\u7801 {minutes} \u5206\u949F\u5185\u6709\u6548\uFF08{time} \u8FC7\u671F\uFF09\uFF0C\u8FC7\u671F\u5C31\u91CD\u8DD1 setup\u3002",
+      setupWaiting: "  \u8FD8\u5728\u7B49\u4F60\u626B\u2026\u2026\u5269 {seconds} \u79D2",
+      setupStatus: "  \u72B6\u6001\uFF1A{status}",
+      setupExpired: "\u4E8C\u7EF4\u7801\u8FC7\u671F\u4E86\uFF0C\u6CA1\u7B49\u5230\u626B\u7801\u3002\u91CD\u8DD1\u4E00\u6B21\uFF1Aagent-lark setup\uFF08\u539F\u59CB\u9519\u8BEF\uFF1A{error}\uFF09",
+      setupRegisterFailed: "\u626B\u7801\u6CE8\u518C\u5931\u8D25\uFF1A{error}",
+      setupSourceFlag: "--app-id + \u73AF\u5883\u53D8\u91CF",
+      appDesc: "\u628A\u7EC8\u7AEF\u91CC agent \u7684\u63D0\u95EE\u63A8\u5230\u624B\u673A\uFF0C\u7B54\u590D\u6CE8\u5165\u56DE\u7EC8\u7AEF"
+    };
+    en = {
+      doing: "Doing",
+      background: "Background",
+      blocker: "Blocker",
+      options: "Options",
+      recommend: "My recommendation",
+      question: "Your call",
+      recommended: "\u2190 recommended",
+      yourReply: "Your reply",
+      theQuestion: "(the question as asked)",
+      hint: "Want to say something else? Just send a message in this group \u2014 the first one is the answer.",
+      hintDanger: "Red buttons ask for confirmation; you can also just type here.",
+      answered: "Answered",
+      timedout: "Timed out",
+      cancelled: "Cancelled",
+      confirmTitle: "Confirm",
+      confirmText: '"{label}" is irreversible or high-cost. Go ahead?',
+      notDelivered: "Not delivered",
+      notDeliveredBody: "That message never reached the terminal: {why}",
+      receiptNoPane: "No herdr pane is recorded for this project, so there is nowhere to deliver the message.",
+      promptAgentBlocked: "The agent in the terminal is stuck on a prompt only you can answer and cannot take new input. Deal with it when you are back at the computer.",
+      promptPaneGone: "The recorded herdr pane is gone. Run agent-lark away on (or any agent-lark command) inside the project to record the pane again.",
+      promptNoHerdr: "This machine has no herdr, or herdr is not running; messages from the phone have nowhere to go.",
+      promptRefused: "herdr refused the injection: {code} {message}",
+      statusBlocked: "waiting for you",
+      statusPane: "pane {pane}",
+      toastAnswered: "Replied",
+      toastClosed: "This question is already closed; that tap was forwarded as a new instruction",
+      toastBadOption: "That option does not match, try again",
+      setupHaveCreds: "Credentials already exist (from {origin}). Add --update to re-authorize or add scopes; run agent-lark setup --reset first to switch apps.",
+      setupStoreOption: "--store must be keychain / file / none",
+      setupProbing: "Checking these credentials against Feishu once (source: {origin})\u2026",
+      setupProbeOk: '\u2705 Credentials work; app name "{app}"',
+      setupUnnamedApp: "(unnamed)",
+      setupProbeFailed: "These credentials cannot reach Feishu: {error}",
+      setupSaved: "Credentials saved to: {where}",
+      setupSavedQr: "\u2705 App linked; credentials saved to {where} (the secret never appears in any output).",
+      setupNext: "Next:",
+      setupNoSecret: "App Secret not found. Do not put it on the command line (argv is visible machine-wide); use either:",
+      setupNoSecretEnvFile: "or write it to {file}: AGENT_LARK_APP_ID=... / AGENT_LARK_APP_SECRET=...",
+      setupRequesting: "Asking Feishu for a QR-code registration\u2026",
+      setupScan: "Scan the QR code above with Feishu (or open this link):",
+      setupScopes: "The confirmation page lists the scopes being requested:",
+      setupEvents: "event im.message.receive_v1 \xB7 callback card.action.trigger",
+      setupExpiry: "\u23F3 The QR code is valid for {minutes} minutes (expires {time}); rerun setup if it expires.",
+      setupWaiting: "  still waiting for the scan\u2026 {seconds} s left",
+      setupStatus: "  status: {status}",
+      setupExpired: "The QR code expired before it was scanned. Run again: agent-lark setup (original error: {error})",
+      setupRegisterFailed: "QR-code registration failed: {error}",
+      setupSourceFlag: "--app-id + environment",
+      appDesc: "Agent questions pushed to your phone, answers back to the terminal"
+    };
+    msg = {
+      help: `agent-lark \u2014 reach the agent session running in your terminal from Feishu/Lark
+
+  setup [--update] [--scopes a,b]  Create or update the Feishu app by QR code; credentials go to the keychain
+  setup --app-id cli_xxx [--store]  Use an existing app; the secret is read from the environment / env file, never argv
+  daemon [--detach|--status|--stop]  Resident process holding the Feishu connection (--stop is refused while a question is pending, unless --force)
+  bind [--chat <id>] [--name <n>]    Bind the current project to a Feishu group (a new one by default)
+  unbind                             Unbind the current project
+  ask [--timeout <seconds>]          Read JSON from stdin, push a question card, block until answered
+  notify                             Read JSON from stdin, push a titled notification card (important things only)
+  send-file <path> [--caption <t>]   Send an image or file to the project group
+  away on | off | status [--json]    Remote mode; while on, a card is pushed when the agent is stuck on a prompt
+  status                             Daemon and binding overview
+
+Global: --home <dir>  state directory (same as AGENT_LARK_HOME; default ~/.agent-lark)
+
+Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 channel failure \xB7 4 a human must act
+`,
+      prefix: "agent-lark: ",
+      homeNeedsDir: "--home needs a directory",
+      unknownCommand: 'Unknown command "{cmd}". See agent-lark --help.',
+      needStdin: "This command reads one JSON object from stdin. Feed it with a heredoc.",
+      badJson: "stdin is not valid JSON: {error}",
+      askProblems: "This question card has {n} problem(s); nothing was sent:",
+      notifyProblems: "This notification has {n} problem(s); nothing was sent:",
+      timeoutArg: "--timeout must be a positive integer (seconds)",
+      sendFileUsage: "Usage: agent-lark send-file <path> [--caption <text>]",
+      awayUsage: "Usage: agent-lark away on|off|status",
+      // daemon command
+      daemonNotRunning: "daemon: not running",
+      daemonNoAnswer: "daemon: no answer ({message})",
+      daemonWeird: "daemon: unrecognized reply",
+      daemonStatusLine: "daemon: pid {pid}  connection {connection}  pending questions {pending}  bound projects {bindings}  started {startedAt}",
+      daemonWasNotRunning: "daemon: was not running",
+      daemonStopRefused: '{n} question(s) still pending on the phone. Stopping the daemon now turns those cards into "\u26A0\uFE0F Cancelled" \u2014 a dead card for the human.\nWait for the answer, or do it anyway: agent-lark daemon --stop --force',
+      daemonStopped: "daemon: stopped",
+      daemonAlready: "daemon is already running",
+      daemonStarted: "daemon: started in the background, pid {pid} (log {log})",
+      daemonNoReply: "daemon started but did not answer within 10 s; see the log: {log}",
+      daemonNoCreds: "no Feishu app credentials found. Run agent-lark setup first (or set AGENT_LARK_APP_ID / AGENT_LARK_APP_SECRET)",
+      daemonReady: "agent-lark daemon: pid {pid}, connected to Feishu, socket {sock}",
+      // bind / unbind
+      bindCreated: '\u2705 Created Feishu group "{name}" and bound it to {root}\n   Open Feishu to see the group; questions from this project will land there.',
+      bindExisting: "\u2705 Bound to existing group {chatId} ({root})",
+      unbound: "Unbound. The Feishu group is still there; archive it yourself if you want.",
+      // notify / send-file
+      notifySent: "Notification sent (a reply from the phone is injected into this pane as an instruction)",
+      fileSent: "Sent to the project group",
+      // away
+      awayNeverUsed: "This project has never used agent-lark (no .agent-lark/state.json)",
+      awayStatusLine: "remote mode: {away}  group: {chat}  pane: {pane}",
+      on: "on",
+      off: "off",
+      none: "none",
+      awayUnbound: "not bound",
+      awayNoCreds: "No Feishu app credentials yet. Run once: agent-lark setup",
+      awayCreated: 'Created Feishu group "{name}"',
+      awayReused: 'Connected to Feishu group "{name}"',
+      awayOff: "Remote mode is off.",
+      awayOn: "Remote mode is on: decisions, and moments when the agent is stuck on a prompt that needs you, are pushed to this project's Feishu group.",
+      // status
+      statusCredsYes: "credentials: configured, from {origin}",
+      statusCredsNo: "credentials: not configured; run agent-lark setup first",
+      statusHerdrIn: "herdr: inside herdr, current pane {pane}",
+      statusHerdrOut: "herdr: not inside herdr (phone messages have nowhere to be injected)",
+      statusDaemonDown: "daemon: not running (agent-lark daemon --detach)",
+      statusDaemonLine: "daemon: pid {pid}, connection {connection}, pending questions {pending}",
+      statusNoBindings: "bindings: none yet",
+      statusBindings: "bindings:",
+      statusBindingLine: "  {mark} {label}  group {chatId}  pane {pane}  remote {away}",
+      // ipc client / server
+      ipcDaemonDown: "daemon is not running. Start it first: agent-lark daemon --detach",
+      ipcConnect: "cannot connect to the daemon: {message}",
+      ipcClosed: "the daemon dropped the connection before answering (it may have crashed or been stopped)",
+      ipcTimeout: "the daemon did not respond in time",
+      ipcBadRequest: "unparseable request",
+      ipcUnknownRequest: "unknown request",
+      // daemon replies
+      notBound: "this project is not bound yet; run agent-lark bind first",
+      askPending: "this project already has a question pending on the phone; one at a time",
+      askNote: "sent to the Feishu group, waiting for the answer (up to {seconds} s)",
+      askTimedOut: "no answer after {seconds} s",
+      askCancelledStop: "the daemon is stopping; the question was sent but no answer will arrive this time",
+      askClientGone: "the asking client disconnected",
+      sendFailed: "send failed: {error}",
+      unbindNone: "this project was not bound",
+      unbindPending: "a question is still pending on the phone; answer it or wait for the timeout",
+      bindNoOwner: "nobody to invite into a new group (the app owner is not recorded). Use --chat <chat_id> to bind a group you created yourself.",
+      bindCreateFailed: "creating the group failed: {error}\nIf this is a permission problem the app lacks the im:chat (create group) scope: run agent-lark setup --update, or bind an existing group with --chat <chat_id>.",
+      fileMissing: "file not found: {path}",
+      fileRealpath: "cannot resolve path: {error}",
+      fileRefused: "refusing to send {real}\nOnly files under these directories can be sent:\n  this project {root}\n  {media}\n  {tmp}\n(this keeps send-file from reading arbitrary files off the machine)",
+      fileNotRegular: "not a regular file: {real}",
+      fileTooBig: "file too large: {size} MB, limit {cap} MB",
+      // text synthesized into the pane
+      injectVoice: "(voice transcript) {text}",
+      injectUnheard: "({n} voice message(s) received but transcription failed \u2014 most likely the app lacks the speech_to_text:speech scope. Tell the user: run agent-lark setup --update to rescan and add that scope, or type instead this time.)",
+      injectFilesWithText: "(attachments saved locally)",
+      injectFilesOnly: "(I sent attachments; they are saved locally)",
+      lateTapOption: "(follow-up) I pick {id}",
+      lateTapNoOption: "(follow-up) I tapped the card above again",
+      // validation
+      vTitleRequired: "title: required and non-empty",
+      vTitleTooLong: "title: over {max} characters, got {n}",
+      vTitleNewline: "title: must be a single line",
+      vFieldRequired: "{key}: required ({hint})",
+      vFieldTooLong: "{key}: over {max} characters, got {n}",
+      vHintDoing: "one sentence: which task this is",
+      vHintDescription: "background for someone who has seen none of the work",
+      vHintBlocker: "exactly what is blocked",
+      vHintReasoning: "your leaning plus the strongest objection",
+      vHintQuestion: "a question answerable in one sentence",
+      vOptionsArray: "options: must be an array",
+      vOptionsMin: "options: at least {min} items (one option is not a choice)",
+      vOptionsMax: "options: at most {max} items (more means the question has not converged)",
+      vOptionId: "options[{i}].id: required",
+      vOptionIdDup: 'options[{i}].id: "{id}" is duplicated',
+      vOptionLabel: "options[{i}].label: required (the button text, and what comes back when it is tapped)",
+      vOptionLabelLong: "options[{i}].label: over {max} characters",
+      vOptionConsequence: "options[{i}].consequence: required (what actually happens if chosen, including the cost)",
+      vOptionConsequenceLong: "options[{i}].consequence: over {max} characters",
+      vRecommendRequired: "recommend: required; the id of one option",
+      vRecommendUnknown: 'recommend: "{id}" is not the id of any option',
+      vRecommendDanger: 'recommend: "{id}" is marked danger; an irreversible or high-cost option cannot be the recommendation \u2014 list it and let the human choose',
+      vLang: 'lang: must be "zh" or "en", got {value}',
+      vBodyRequired: "body: required and non-empty",
+      vBodyTooLong: "body: over {max} characters",
+      // credentials
+      keychainDarwin: "macOS Keychain",
+      keychainWin32: "Windows DPAPI (current-user encryption)",
+      keychainLinux: "libsecret (secret-tool)",
+      credsPermWarning: "agent-lark: warning: {file} permissions are too open ({mode}); chmod 600 recommended",
+      credsNotPersisted: "not persisted (memory only for this run)",
+      originEnv: "environment AGENT_LARK_APP_ID/SECRET",
+      originGeneric: "environment LARK_APP_ID/SECRET (generic names, may clash with other Feishu tools)",
+      reportEnv: "environment AGENT_LARK_APP_ID / AGENT_LARK_APP_SECRET",
+      reportEnvFile: "env file {file}",
+      reportUnavailable: " (not available on this machine)",
+      reportGeneric: "environment LARK_APP_ID / LARK_APP_SECRET (generic names, last resort)"
+    };
+    t = (lang = "zh") => lang === "en" ? en : zh;
+  }
+});
+
 // src/creds.ts
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
@@ -136270,21 +136534,21 @@ import { dirname, join } from "node:path";
 function configDir() {
   const xdg = process.env.XDG_CONFIG_HOME?.trim();
   const base = xdg || join(homedir(), platform() === "win32" ? "AppData/Roaming" : ".config");
-  return join(base, "herdr-lark");
+  return join(base, "agent-lark");
 }
 function defaultStore() {
-  const forced = process.env.HERDR_LARK_STORE?.trim();
+  const forced = process.env.AGENT_LARK_STORE?.trim();
   if (forced === "keychain" || forced === "file" || forced === "none") return forced;
   return keychainAvailable() ? "keychain" : "file";
 }
 function keychainName() {
   switch (platform()) {
     case "darwin":
-      return "macOS \u94A5\u5319\u4E32";
+      return msg.keychainDarwin;
     case "win32":
-      return "Windows DPAPI\uFF08\u5F53\u524D\u7528\u6237\u52A0\u5BC6\uFF09";
+      return msg.keychainWin32;
     default:
-      return "libsecret (secret-tool)";
+      return msg.keychainLinux;
   }
 }
 function has(cmd) {
@@ -136364,7 +136628,7 @@ function keychainWrite(creds) {
     });
     return;
   }
-  execFileSync("secret-tool", ["store", "--label", "herdr-lark", "service", SERVICE, "account", ACCOUNT], {
+  execFileSync("secret-tool", ["store", "--label", "agent-lark", "service", SERVICE, "account", ACCOUNT], {
     input: blob,
     stdio: ["pipe", "ignore", "pipe"]
   });
@@ -136386,7 +136650,7 @@ function fileRead() {
   try {
     const st = statSync(f);
     if (platform() !== "win32" && (st.mode & 63) !== 0)
-      process.stderr.write(`herdr-lark: \u8B66\u544A ${f} \u6743\u9650\u8FC7\u5BBD\uFF08${(st.mode & 511).toString(8)}\uFF09\uFF0C\u5EFA\u8BAE chmod 600
+      process.stderr.write(`${fill(msg.credsPermWarning, { file: f, mode: (st.mode & 511).toString(8) })}
 `);
     return JSON.parse(readFileSync(f, "utf8"));
   } catch {
@@ -136429,15 +136693,15 @@ function pair(id, secret) {
   return a && s ? { appId: a, appSecret: s } : null;
 }
 function resolveCreds() {
-  const prefixed = pair(process.env.HERDR_LARK_APP_ID, process.env.HERDR_LARK_APP_SECRET);
+  const prefixed = pair(process.env.AGENT_LARK_APP_ID, process.env.AGENT_LARK_APP_SECRET);
   if (prefixed)
-    return { ...prefixed, ownerOpenId: process.env.HERDR_LARK_OWNER_OPEN_ID?.trim(), source: "env", origin: "\u73AF\u5883\u53D8\u91CF HERDR_LARK_APP_ID/SECRET" };
+    return { ...prefixed, ownerOpenId: process.env.AGENT_LARK_OWNER_OPEN_ID?.trim(), source: "env", origin: msg.originEnv };
   const ef = envFile();
   if (existsSync(ef)) {
     const vars = readEnvFile(ef);
-    const fromFile = pair(vars.HERDR_LARK_APP_ID, vars.HERDR_LARK_APP_SECRET) ?? pair(vars.LARK_APP_ID, vars.LARK_APP_SECRET);
+    const fromFile = pair(vars.AGENT_LARK_APP_ID, vars.AGENT_LARK_APP_SECRET) ?? pair(vars.LARK_APP_ID, vars.LARK_APP_SECRET);
     if (fromFile)
-      return { ...fromFile, ownerOpenId: vars.HERDR_LARK_OWNER_OPEN_ID, source: "env-file", origin: ef };
+      return { ...fromFile, ownerOpenId: vars.AGENT_LARK_OWNER_OPEN_ID, source: "env-file", origin: ef };
   }
   const kc = keychainRead();
   if (kc?.appId && kc.appSecret) return { ...kc, source: "keychain", origin: `${keychainName()} (service: ${SERVICE})` };
@@ -136445,11 +136709,11 @@ function resolveCreds() {
   if (f?.appId && f.appSecret) return { ...f, source: "file", origin: credentialsFile() };
   const generic = pair(process.env.LARK_APP_ID, process.env.LARK_APP_SECRET);
   if (generic)
-    return { ...generic, source: "env-generic", origin: "\u73AF\u5883\u53D8\u91CF LARK_APP_ID/SECRET\uFF08\u901A\u7528\u540D\uFF0C\u53EF\u80FD\u4E0E\u5176\u4ED6\u98DE\u4E66\u5DE5\u5177\u51B2\u7A81\uFF09" };
+    return { ...generic, source: "env-generic", origin: msg.originGeneric };
   return null;
 }
 function writeCreds(creds, store = defaultStore()) {
-  if (store === "none") return "\u6CA1\u6709\u843D\u76D8\uFF08\u8FD9\u6B21\u53EA\u5728\u5185\u5B58\u91CC\u7528\uFF09";
+  if (store === "none") return msg.credsNotPersisted;
   if (store === "keychain") {
     keychainWrite(creds);
     return `${keychainName()} (service: ${SERVICE})`;
@@ -136468,23 +136732,24 @@ function clearCreds() {
 function credsReport() {
   const lines = [];
   const mark = (ok) => ok ? "\u2713" : "\xB7";
-  lines.push(`${mark(!!pair(process.env.HERDR_LARK_APP_ID, process.env.HERDR_LARK_APP_SECRET))} \u73AF\u5883\u53D8\u91CF HERDR_LARK_APP_ID / HERDR_LARK_APP_SECRET`);
+  lines.push(`${mark(!!pair(process.env.AGENT_LARK_APP_ID, process.env.AGENT_LARK_APP_SECRET))} ${msg.reportEnv}`);
   const ef = envFile();
   const vars = existsSync(ef) ? readEnvFile(ef) : {};
-  lines.push(`${mark(!!(pair(vars.HERDR_LARK_APP_ID, vars.HERDR_LARK_APP_SECRET) ?? pair(vars.LARK_APP_ID, vars.LARK_APP_SECRET)))} env \u6587\u4EF6 ${ef}`);
-  lines.push(`${mark(!!keychainRead())} ${keychainName()} (service: ${SERVICE})${keychainAvailable() ? "" : "\uFF08\u672C\u673A\u4E0D\u53EF\u7528\uFF09"}`);
+  lines.push(`${mark(!!(pair(vars.AGENT_LARK_APP_ID, vars.AGENT_LARK_APP_SECRET) ?? pair(vars.LARK_APP_ID, vars.LARK_APP_SECRET)))} ${fill(msg.reportEnvFile, { file: ef })}`);
+  lines.push(`${mark(!!keychainRead())} ${keychainName()} (service: ${SERVICE})${keychainAvailable() ? "" : msg.reportUnavailable}`);
   lines.push(`${mark(!!fileRead())} ${credentialsFile()}`);
-  lines.push(`${mark(!!pair(process.env.LARK_APP_ID, process.env.LARK_APP_SECRET))} \u73AF\u5883\u53D8\u91CF LARK_APP_ID / LARK_APP_SECRET\uFF08\u901A\u7528\u540D\uFF0C\u6700\u540E\u515C\u5E95\uFF09`);
+  lines.push(`${mark(!!pair(process.env.LARK_APP_ID, process.env.LARK_APP_SECRET))} ${msg.reportGeneric}`);
   return lines;
 }
 var SERVICE, ACCOUNT, credentialsFile, envFile, dpapiFile;
 var init_creds = __esm({
   "src/creds.ts"() {
     "use strict";
-    SERVICE = process.env.HERDR_LARK_KEYCHAIN?.trim() || "herdr-lark";
+    init_texts();
+    SERVICE = process.env.AGENT_LARK_KEYCHAIN?.trim() || "agent-lark";
     ACCOUNT = "app";
     credentialsFile = () => join(configDir(), "credentials.json");
-    envFile = () => process.env.HERDR_LARK_ENV_FILE?.trim() || join(configDir(), ".env");
+    envFile = () => process.env.AGENT_LARK_ENV_FILE?.trim() || join(configDir(), ".env");
     dpapiFile = () => join(configDir(), "credentials.dpapi");
   }
 });
@@ -136548,8 +136813,8 @@ import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as rea
 import { homedir as homedir2 } from "node:os";
 import { basename, join as join2, resolve } from "node:path";
 function homeDir() {
-  const override = process.env.HERDR_LARK_HOME?.trim();
-  return override ? resolve(override) : join2(homedir2(), ".herdr-lark");
+  const override = process.env.AGENT_LARK_HOME?.trim();
+  return override ? resolve(override) : join2(homedir2(), ".agent-lark");
 }
 function ensureHomeDir() {
   const dir = homeDir();
@@ -136621,7 +136886,7 @@ var init_paths = __esm({
     pidPath = () => join2(homeDir(), "daemon.pid");
     logPath = () => join2(homeDir(), "daemon.log");
     bindingsPath = () => join2(homeDir(), "bindings.json");
-    projectStateDir = (root) => join2(root, ".herdr-lark");
+    projectStateDir = (root) => join2(root, ".agent-lark");
     projectStatePath = (root) => join2(projectStateDir(root), "state.json");
   }
 });
@@ -136639,7 +136904,7 @@ function isDaemonListening() {
   return existsSync3(sockPath());
 }
 function request(req, opts = {}) {
-  return new Promise((resolve2) => {
+  return new Promise((resolve3) => {
     let settled = false;
     const done = (r) => {
       if (settled) return;
@@ -136648,7 +136913,7 @@ function request(req, opts = {}) {
         sock.end();
       } catch {
       }
-      resolve2(r);
+      resolve3(r);
     };
     const sock = createConnection(sockPath());
     let buf = "";
@@ -136677,15 +136942,15 @@ function request(req, opts = {}) {
       }
     });
     sock.on("error", (err) => {
-      const hint = err.code === "ENOENT" || err.code === "ECONNREFUSED" ? "daemon \u6CA1\u5728\u8DD1\u3002\u5148\u6267\u884C\uFF1Aherdr-lark daemon --detach" : `\u65E0\u6CD5\u8FDE\u63A5 daemon: ${err.message}`;
+      const hint = err.code === "ENOENT" || err.code === "ECONNREFUSED" ? msg.ipcDaemonDown : fill(msg.ipcConnect, { message: err.message });
       done({ ok: false, code: 3, message: hint });
     });
     sock.on("close", () => {
-      done({ ok: false, code: 3, message: "daemon \u5728\u56DE\u7B54\u4E4B\u524D\u65AD\u5F00\u4E86\u8FDE\u63A5\uFF08\u5B83\u53EF\u80FD\u5D29\u6E83\u6216\u88AB\u505C\u6B62\u4E86\uFF09" });
+      done({ ok: false, code: 3, message: msg.ipcClosed });
     });
     if (opts.timeoutMs) {
       sock.setTimeout(opts.timeoutMs, () => {
-        done({ ok: false, code: 3, message: "daemon \u6CA1\u6709\u5728\u9884\u671F\u65F6\u95F4\u5185\u54CD\u5E94" });
+        done({ ok: false, code: 3, message: msg.ipcTimeout });
       });
     }
   });
@@ -136699,7 +136964,7 @@ function serve(handlers) {
     } catch {
     }
   }
-  return new Promise((resolve2, reject) => {
+  return new Promise((resolve3, reject) => {
     const server = createServer((sock) => {
       let buf = "";
       const closeFns = [];
@@ -136718,7 +136983,7 @@ function serve(handlers) {
         try {
           req = JSON.parse(line);
         } catch {
-          sock.write(`${JSON.stringify({ frame: "result", body: { ok: false, code: 1, message: "\u65E0\u6CD5\u89E3\u6790\u7684\u8BF7\u6C42" } })}
+          sock.write(`${JSON.stringify({ frame: "result", body: { ok: false, code: 1, message: msg.ipcBadRequest } })}
 `);
           sock.end();
           return;
@@ -136744,13 +137009,14 @@ function serve(handlers) {
       });
     });
     server.on("error", reject);
-    server.listen(path2, () => resolve2(server));
+    server.listen(path2, () => resolve3(server));
   });
 }
 var init_ipc = __esm({
   "src/ipc.ts"() {
     "use strict";
     init_paths();
+    init_texts();
   }
 });
 
@@ -136761,67 +137027,63 @@ function str(v) {
 function checkLang(v, problems) {
   if (v === void 0 || v === null) return void 0;
   if (v === "zh" || v === "en") return v;
-  problems.push(`lang: \u53EA\u80FD\u662F "zh" \u6216 "en"\uFF0C\u6536\u5230 ${JSON.stringify(v)}`);
+  problems.push(fill(msg.vLang, { value: JSON.stringify(v) }));
   return void 0;
 }
 function validateAsk(raw) {
   const problems = [];
   const o = raw ?? {};
   const title = str(o.title);
-  if (!title) problems.push("title: \u5FC5\u586B\uFF0C\u4E14\u4E0D\u80FD\u4E3A\u7A7A");
-  else if (title.length > LIMITS.title) problems.push(`title: \u8D85\u8FC7 ${LIMITS.title} \u5B57\uFF0C\u5F53\u524D ${title.length}`);
-  else if (title.includes("\n")) problems.push("title: \u4E0D\u80FD\u6709\u6362\u884C");
+  if (!title) problems.push(msg.vTitleRequired);
+  else if (title.length > LIMITS.title) problems.push(fill(msg.vTitleTooLong, { max: LIMITS.title, n: title.length }));
+  else if (title.includes("\n")) problems.push(msg.vTitleNewline);
   const simple = [
-    ["doing", "\u4E00\u53E5\u8BDD\u8BF4\u660E\u8FD9\u662F\u54EA\u4E2A\u4EFB\u52A1"],
-    ["description", "\u7ED9\u6CA1\u770B\u8FC7\u4EFB\u4F55\u8FC7\u7A0B\u7684\u4EBA\u7684\u80CC\u666F"],
-    ["blocker", "\u5230\u5E95\u4EC0\u4E48\u5361\u4F4F\u4E86"],
-    ["reasoning", "\u4F60\u7684\u503E\u5411 + \u6700\u5F3A\u7684\u53CD\u5BF9\u610F\u89C1"],
-    ["question", "\u4E00\u53E5\u8BDD\u80FD\u56DE\u7B54\u7684\u95EE\u9898"]
+    ["doing", msg.vHintDoing],
+    ["description", msg.vHintDescription],
+    ["blocker", msg.vHintBlocker],
+    ["reasoning", msg.vHintReasoning],
+    ["question", msg.vHintQuestion]
   ];
   const values = {};
   for (const [key, hint] of simple) {
     const v = str(o[key]);
-    if (!v) problems.push(`${key}: \u5FC5\u586B\uFF08${hint}\uFF09`);
-    else if (v.length > LIMITS.field) problems.push(`${key}: \u8D85\u8FC7 ${LIMITS.field} \u5B57\uFF0C\u5F53\u524D ${v.length}`);
+    if (!v) problems.push(fill(msg.vFieldRequired, { key, hint }));
+    else if (v.length > LIMITS.field) problems.push(fill(msg.vFieldTooLong, { key, max: LIMITS.field, n: v.length }));
     else values[key] = v;
   }
   const options = [];
   if (!Array.isArray(o.options)) {
-    problems.push("options: \u5FC5\u987B\u662F\u6570\u7EC4");
+    problems.push(msg.vOptionsArray);
   } else {
     if (o.options.length < LIMITS.minOptions)
-      problems.push(`options: \u81F3\u5C11 ${LIMITS.minOptions} \u9879\uFF08\u53EA\u6709\u4E00\u4E2A\u9009\u9879\u4E0D\u53EB\u9009\u62E9\uFF09`);
+      problems.push(fill(msg.vOptionsMin, { min: LIMITS.minOptions }));
     if (o.options.length > LIMITS.maxOptions)
-      problems.push(`options: \u6700\u591A ${LIMITS.maxOptions} \u9879\uFF08\u66F4\u591A\u8BF4\u660E\u95EE\u9898\u8FD8\u6CA1\u6536\u655B\uFF09`);
+      problems.push(fill(msg.vOptionsMax, { max: LIMITS.maxOptions }));
     const seen = /* @__PURE__ */ new Set();
     o.options.forEach((item, i) => {
       const opt2 = item ?? {};
       const id = str(opt2.id);
       const label = str(opt2.label);
       const consequence = str(opt2.consequence);
-      if (!id) problems.push(`options[${i}].id: \u5FC5\u586B`);
-      else if (seen.has(id)) problems.push(`options[${i}].id: "${id}" \u91CD\u590D`);
+      if (!id) problems.push(fill(msg.vOptionId, { i }));
+      else if (seen.has(id)) problems.push(fill(msg.vOptionIdDup, { i, id }));
       else seen.add(id);
-      if (!label) problems.push(`options[${i}].label: \u5FC5\u586B\uFF08\u6309\u94AE\u4E0A\u7684\u5B57\uFF0C\u4E5F\u662F\u70B9\u4E0B\u53BB\u56DE\u7ED9\u4F60\u7684\u5185\u5BB9\uFF09`);
-      else if (label.length > LIMITS.optionLabel)
-        problems.push(`options[${i}].label: \u8D85\u8FC7 ${LIMITS.optionLabel} \u5B57`);
-      if (!consequence) problems.push(`options[${i}].consequence: \u5FC5\u586B\uFF08\u9009\u5B83\u5B9E\u9645\u4F1A\u53D1\u751F\u4EC0\u4E48\uFF0C\u542B\u4EE3\u4EF7\uFF09`);
+      if (!label) problems.push(fill(msg.vOptionLabel, { i }));
+      else if (label.length > LIMITS.optionLabel) problems.push(fill(msg.vOptionLabelLong, { i, max: LIMITS.optionLabel }));
+      if (!consequence) problems.push(fill(msg.vOptionConsequence, { i }));
       else if (consequence.length > LIMITS.optionConsequence)
-        problems.push(`options[${i}].consequence: \u8D85\u8FC7 ${LIMITS.optionConsequence} \u5B57`);
+        problems.push(fill(msg.vOptionConsequenceLong, { i, max: LIMITS.optionConsequence }));
       if (id && label && consequence)
         options.push({ id, label, consequence, danger: opt2.danger === true });
     });
   }
   const recommend = str(o.recommend);
-  if (!recommend) problems.push("recommend: \u5FC5\u586B\uFF0C\u586B\u67D0\u4E2A option \u7684 id");
+  if (!recommend) problems.push(msg.vRecommendRequired);
   else if (options.length && !options.some((x) => x.id === recommend))
-    problems.push(`recommend: "${recommend}" \u4E0D\u662F\u4EFB\u4F55\u4E00\u4E2A option \u7684 id`);
+    problems.push(fill(msg.vRecommendUnknown, { id: recommend }));
   else {
     const rec = options.find((x) => x.id === recommend);
-    if (rec?.danger)
-      problems.push(
-        `recommend: "${recommend}" \u6807\u4E86 danger\uFF0C\u4E0D\u53EF\u9006/\u9AD8\u4EE3\u4EF7\u7684\u9009\u9879\u4E0D\u80FD\u4F5C\u4E3A\u63A8\u8350\u9879\u2014\u2014\u5217\u51FA\u6765\u8BA9\u4EBA\u81EA\u5DF1\u9009`
-      );
+    if (rec?.danger) problems.push(fill(msg.vRecommendDanger, { id: recommend }));
   }
   const lang = checkLang(o.lang, problems);
   if (problems.length) throw new ValidationError(problems);
@@ -136842,11 +137104,11 @@ function validateNotify(raw) {
   const o = raw ?? {};
   const title = str(o.title);
   const body = str(o.body);
-  if (!title) problems.push("title: \u5FC5\u586B\uFF0C\u4E14\u4E0D\u80FD\u4E3A\u7A7A");
-  else if (title.length > LIMITS.title) problems.push(`title: \u8D85\u8FC7 ${LIMITS.title} \u5B57`);
-  else if (title.includes("\n")) problems.push("title: \u4E0D\u80FD\u6709\u6362\u884C");
-  if (!body) problems.push("body: \u5FC5\u586B\uFF0C\u4E14\u4E0D\u80FD\u4E3A\u7A7A");
-  else if (body.length > LIMITS.body) problems.push(`body: \u8D85\u8FC7 ${LIMITS.body} \u5B57`);
+  if (!title) problems.push(msg.vTitleRequired);
+  else if (title.length > LIMITS.title) problems.push(fill(msg.vTitleTooLong, { max: LIMITS.title, n: title.length }));
+  else if (title.includes("\n")) problems.push(msg.vTitleNewline);
+  if (!body) problems.push(msg.vBodyRequired);
+  else if (body.length > LIMITS.body) problems.push(fill(msg.vBodyTooLong, { max: LIMITS.body }));
   const lang = checkLang(o.lang, problems);
   if (problems.length) throw new ValidationError(problems);
   return { title, body, lang };
@@ -136855,6 +137117,7 @@ var LIMITS, ValidationError;
 var init_validate = __esm({
   "src/validate.ts"() {
     "use strict";
+    init_texts();
     LIMITS = {
       title: 200,
       field: 4e3,
@@ -136891,8 +137154,6 @@ var init_bindings = __esm({
           const raw = JSON.parse(readFileSync3(bindingsPath(), "utf8"));
           for (const b of raw.bindings ?? []) {
             if (!b || typeof b.root !== "string" || typeof b.chatId !== "string") continue;
-            b.notifyIdle = b.notifyIdle === true;
-            b.idleMinMinutes = typeof b.idleMinMinutes === "number" ? b.idleMinMinutes : 10;
             this.map.set(b.root, b);
           }
         } catch {
@@ -136930,8 +137191,6 @@ var init_bindings = __esm({
         if (!b) return void 0;
         if (patch.paneId !== void 0 && patch.paneId !== null) b.paneId = patch.paneId;
         if (patch.away !== void 0) b.away = patch.away;
-        if (patch.notifyIdle !== void 0) b.notifyIdle = patch.notifyIdle;
-        if (patch.idleMinMinutes !== void 0) b.idleMinMinutes = patch.idleMinMinutes;
         if (patch.label) b.label = patch.label;
         this.persist();
         return b;
@@ -137004,7 +137263,7 @@ ${optionLines(p.options, p.recommend, lang)}`),
       if (o.danger) {
         button.confirm = {
           title: { tag: "plain_text", content: T.confirmTitle },
-          text: { tag: "plain_text", content: T.confirmText(o.label) }
+          text: { tag: "plain_text", content: fill(T.confirmText, { label: o.label }) }
         };
       }
       elements.push(button);
@@ -137016,80 +137275,24 @@ ${optionLines(p.options, p.recommend, lang)}`),
     elements
   );
 }
-function sayCard(body, projectLabel2, title) {
-  return card({ icon: "\u{1F4AC}", title: title?.trim() || `[${projectLabel2}]`, template: "turquoise" }, [md(body)]);
-}
 function notifyCard(p, projectLabel2) {
   return card({ icon: "\u{1F4E3}", title: `[${projectLabel2}] ${p.title}`, template: "wathet" }, [md(p.body)]);
 }
 function receiptCard(projectLabel2, why, lang = "zh") {
   const T = t(lang);
   return card({ icon: "\u26A0\uFE0F", title: `[${projectLabel2}] ${T.notDelivered}`, template: "orange" }, [
-    md(T.notDeliveredBody(why))
+    md(fill(T.notDeliveredBody, { why }))
   ]);
 }
-function statusCard(projectLabel2, status, detail, lang = "zh") {
+function statusCard(projectLabel2, detail, lang = "zh") {
   const T = t(lang);
-  return card(
-    {
-      icon: status === "blocked" ? "\u{1F514}" : "\u{1F3C1}",
-      title: `[${projectLabel2}] ${status === "blocked" ? T.statusBlocked : T.statusIdle}`,
-      template: status === "blocked" ? "orange" : "green"
-    },
-    [md(detail)]
-  );
+  return card({ icon: "\u{1F514}", title: `[${projectLabel2}] ${T.statusBlocked}`, template: "orange" }, [md(detail)]);
 }
-var TEXTS, t, md, hr, note, HEADER;
+var md, hr, note, HEADER;
 var init_cards = __esm({
   "src/cards.ts"() {
     "use strict";
-    TEXTS = {
-      zh: {
-        doing: "\u5728\u505A",
-        background: "\u80CC\u666F",
-        blocker: "\u5361\u70B9",
-        options: "\u9009\u9879",
-        recommend: "\u6211\u7684\u5224\u65AD",
-        question: "\u4F60\u7684\u5224\u65AD",
-        recommended: "\u2190 \u6211\u63A8\u8350",
-        yourReply: "\u4F60\u7684\u56DE\u590D",
-        theQuestion: "\uFF08\u539F\u95EE\u9898\uFF09",
-        hint: "\u60F3\u8BF4\u522B\u7684\uFF1F\u76F4\u63A5\u5728\u672C\u7FA4\u53D1\u6D88\u606F\u5C31\u884C\uFF0C\u7B2C\u4E00\u6761\u6D88\u606F\u5C31\u662F\u7B54\u590D\u3002",
-        hintDanger: "\u7EA2\u8272\u6309\u94AE\u4F1A\u4E8C\u6B21\u786E\u8BA4\uFF1B\u4E5F\u53EF\u4EE5\u76F4\u63A5\u5728\u7FA4\u91CC\u6253\u5B57\u3002",
-        answered: "\u5DF2\u56DE\u7B54",
-        timedout: "\u5DF2\u8D85\u65F6",
-        cancelled: "\u5DF2\u53D6\u6D88",
-        confirmTitle: "\u786E\u8BA4\u6267\u884C",
-        confirmText: (label) => `\u201C${label}\u201D\u662F\u4E0D\u53EF\u9006\u6216\u9AD8\u4EE3\u4EF7\u7684\u64CD\u4F5C\u3002\u786E\u5B9A\u9009\u5B83\uFF1F`,
-        notDelivered: "\u6CA1\u80FD\u9001\u8FBE",
-        notDeliveredBody: (why) => `\u521A\u624D\u90A3\u6761\u6D88\u606F\u6CA1\u80FD\u9001\u8FDB\u7EC8\u7AEF\uFF1A${why}`,
-        statusBlocked: "\u7B49\u4F60\u8F93\u5165",
-        statusIdle: "\u5E72\u5B8C\u4E86"
-      },
-      en: {
-        doing: "Doing",
-        background: "Background",
-        blocker: "Blocker",
-        options: "Options",
-        recommend: "My recommendation",
-        question: "Your call",
-        recommended: "\u2190 recommended",
-        yourReply: "Your reply",
-        theQuestion: "(the question as asked)",
-        hint: "Want to say something else? Just send a message in this group \u2014 the first one is the answer.",
-        hintDanger: "Red buttons ask for confirmation; you can also just type here.",
-        answered: "Answered",
-        timedout: "Timed out",
-        cancelled: "Cancelled",
-        confirmTitle: "Confirm",
-        confirmText: (label) => `"${label}" is irreversible or high-cost. Go ahead?`,
-        notDelivered: "Not delivered",
-        notDeliveredBody: (why) => `That message never reached the terminal: ${why}`,
-        statusBlocked: "waiting for you",
-        statusIdle: "finished"
-      }
-    };
-    t = (lang = "zh") => TEXTS[lang];
+    init_texts();
     md = (content) => ({ tag: "markdown", content });
     hr = () => ({ tag: "hr" });
     note = (content) => ({
@@ -137128,12 +137331,12 @@ function within(child, parent) {
   return child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
 }
 function resolveSendable(path2, root) {
-  if (!existsSync4(path2)) return { error: `\u6587\u4EF6\u4E0D\u5B58\u5728\uFF1A${path2}` };
+  if (!existsSync4(path2)) return { error: fill(msg.fileMissing, { path: path2 }) };
   let real;
   try {
     real = realpathSync(path2);
   } catch (err) {
-    return { error: `\u8DEF\u5F84\u89E3\u6790\u5931\u8D25\uFF1A${String(err)}` };
+    return { error: fill(msg.fileRealpath, { error: String(err) }) };
   }
   const allowed = [root, join3(homeDir(), "media"), tmpdir()].map((d) => {
     try {
@@ -137143,26 +137346,20 @@ function resolveSendable(path2, root) {
     }
   });
   if (!allowed.some((d) => within(real, d)))
-    return {
-      error: `\u62D2\u7EDD\u53D1\u9001 ${real}
-\u53EA\u80FD\u53D1\u8FD9\u4E9B\u76EE\u5F55\u4E0B\u7684\u6587\u4EF6\uFF1A
-  \u672C\u9879\u76EE ${root}
-  ${join3(homeDir(), "media")}
-  ${tmpdir()}
-\uFF08\u8FD9\u662F\u9632\u6B62 send-file \u88AB\u7528\u6765\u628A\u673A\u5668\u4E0A\u4EFB\u610F\u6587\u4EF6\u8BFB\u8D70\uFF09`
-    };
+    return { error: fill(msg.fileRefused, { real, root, media: join3(homeDir(), "media"), tmp: tmpdir() }) };
   const st = statSync2(real);
-  if (!st.isFile()) return { error: `\u4E0D\u662F\u666E\u901A\u6587\u4EF6\uFF1A${real}` };
+  if (!st.isFile()) return { error: fill(msg.fileNotRegular, { real }) };
   const isImage = /\.(png|jpe?g|gif|webp|bmp)$/i.test(real);
   const cap = isImage ? MAX_IMAGE_BYTES : MAX_FILE_BYTES;
   if (st.size > cap)
-    return { error: `\u6587\u4EF6\u592A\u5927\uFF1A${(st.size / 1024 / 1024).toFixed(1)} MB\uFF0C\u4E0A\u9650 ${cap / 1024 / 1024} MB` };
+    return { error: fill(msg.fileTooBig, { size: (st.size / 1024 / 1024).toFixed(1), cap: cap / 1024 / 1024 }) };
   return { real, bytes: readFileSync4(real) };
 }
 async function runDaemon() {
   const creds = resolveCreds();
   if (!creds) {
-    process.stderr.write("herdr-lark: \u627E\u4E0D\u5230\u98DE\u4E66\u5E94\u7528\u51ED\u636E\u3002\u5148\u8DD1\u4E00\u6B21\uFF1Aherdr-lark setup\uFF08\u6216\u8BBE\u597D HERDR_LARK_APP_ID / HERDR_LARK_APP_SECRET\uFF09\n");
+    process.stderr.write(`${msg.prefix}${msg.daemonNoCreds}
+`);
     process.exit(4);
   }
   ensureHomeDir();
@@ -137170,7 +137367,8 @@ async function runDaemon() {
     const { request: request2 } = await Promise.resolve().then(() => (init_ipc(), ipc_exports));
     const probe = await request2({ type: "ping" }, { timeoutMs: 2e3 });
     if (probe.ok) {
-      process.stderr.write("herdr-lark: daemon \u5DF2\u7ECF\u5728\u8DD1\u4E86\n");
+      process.stderr.write(`${msg.prefix}${msg.daemonAlready}
+`);
       process.exit(3);
     }
   }
@@ -137178,7 +137376,6 @@ async function runDaemon() {
   const pendings = /* @__PURE__ */ new Map();
   const lastStatus = /* @__PURE__ */ new Map();
   const lastStatusPush = /* @__PURE__ */ new Map();
-  const workingSince = /* @__PURE__ */ new Map();
   const startedAt = (/* @__PURE__ */ new Date()).toISOString();
   const channel = createLarkChannel({
     appId: creds.appId,
@@ -137238,24 +137435,25 @@ async function runDaemon() {
       log("receipt.failed", { root: b.root, err: String(err) });
     }
   };
-  const explainPromptFailure = (code, message) => {
+  const explainPromptFailure = (code, message, lang = "zh") => {
+    const T = t(lang);
     switch (code) {
       case "agent_blocked":
-        return "\u7EC8\u7AEF\u91CC\u7684 agent \u6B63\u5361\u5728\u4E00\u4E2A\u9700\u8981\u4F60\u672C\u4EBA\u786E\u8BA4\u7684\u63D0\u793A\u4E0A\uFF0C\u6536\u4E0D\u4E86\u65B0\u8F93\u5165\u3002\u56DE\u7535\u8111\u524D\u5904\u7406\u4E00\u4E0B\u3002";
+        return T.promptAgentBlocked;
       case "agent_not_found":
       case "pane_not_found":
-        return "\u8BB0\u5F55\u7684 herdr \u7A97\u683C\u5DF2\u7ECF\u4E0D\u5728\u4E86\u3002\u5230\u9879\u76EE\u91CC\u8DD1\u4E00\u6B21 herdr-lark bind \u6216\u4EFB\u610F herdr-lark \u547D\u4EE4\uFF0C\u91CD\u65B0\u8BB0\u5F55\u7A97\u683C\u3002";
+        return T.promptPaneGone;
       case "spawn_failed":
-        return `herdr \u547D\u4EE4\u6CA1\u8DD1\u8D77\u6765\uFF1A${message ?? "\u672A\u77E5\u539F\u56E0"}`;
+        return T.promptNoHerdr;
       default:
-        return `herdr \u62D2\u7EDD\u4E86\u8FD9\u6B21\u6CE8\u5165\uFF1A${code ?? "\u672A\u77E5"} ${message ?? ""}`.trim();
+        return fill(T.promptRefused, { code: code ?? "?", message: message ?? "" }).trim();
     }
   };
   const inject = async (b, text) => {
     let paneId = b.paneId;
     if (!paneId) paneId = findPaneForProject(await agentList(), b.root);
     if (!paneId) {
-      await receipt(b, "\u8FD9\u4E2A\u9879\u76EE\u8FD8\u6CA1\u6709\u8BB0\u5F55\u5230 herdr \u7A97\u683C\uFF0C\u6D88\u606F\u6CA1\u5904\u53EF\u9001\u3002");
+      await receipt(b, t("zh").receiptNoPane);
       return;
     }
     const outcome = await promptPane(paneId, `${INJECT_PREFIX}${text}`);
@@ -137278,20 +137476,20 @@ async function runDaemon() {
       return null;
     }
   };
-  const saveResources = async (msg) => {
+  const saveResources = async (incoming) => {
     const out = { files: [], spoken: [], unheard: 0 };
-    if (!msg.resources.length) return out;
-    const dir = join3(homeDir(), "media", createHash2("sha1").update(msg.chatId).digest("hex").slice(0, 12));
+    if (!incoming.resources.length) return out;
+    const dir = join3(homeDir(), "media", createHash2("sha1").update(incoming.chatId).digest("hex").slice(0, 12));
     mkdirSync3(dir, { recursive: true, mode: 448 });
-    for (const res of msg.resources) {
+    for (const res of incoming.resources) {
       const kind = res.type === "image" ? "image" : "file";
       const ext = res.type === "image" ? "png" : res.type === "audio" ? "opus" : "bin";
       const name = res.fileName ?? `${res.type}-${Date.now()}.${ext}`;
       const dest = join3(dir, `${Date.now()}-${name}`);
       try {
-        await channel.downloadResourceToFile(msg.messageId, res.fileKey, kind, dest);
+        await channel.downloadResourceToFile(incoming.messageId, res.fileKey, kind, dest);
       } catch (err) {
-        log("download.failed", { messageId: msg.messageId, type: res.type, err: String(err).slice(0, 200) });
+        log("download.failed", { messageId: incoming.messageId, type: res.type, err: String(err).slice(0, 200) });
         continue;
       }
       if (res.type === "audio") {
@@ -137304,27 +137502,27 @@ async function runDaemon() {
     }
     return out;
   };
-  channel.on("message", async (msg) => {
-    if (msg.senderIsBot) return;
-    const b = bindings.byChat(msg.chatId);
+  channel.on("message", async (incoming) => {
+    if (incoming.senderIsBot) return;
+    const b = bindings.byChat(incoming.chatId);
     if (!b) return;
-    const got = await saveResources(msg);
-    let text = msg.content.replace(/<audio\b[^>]*\/?>/gi, "").trim();
+    const got = await saveResources(incoming);
+    let text = incoming.content.replace(/<audio\b[^>]*\/?>/gi, "").trim();
     if (got.spoken.length) {
       const said = got.spoken.join("\n");
       text = text ? `${text}
-\uFF08\u8BED\u97F3\u8F6C\u6587\u5B57\uFF09${said}` : said;
+${fill(msg.injectVoice, { text: said })}` : said;
     }
     if (got.unheard) {
-      const why = "\uFF08\u6536\u5230 " + got.unheard + " \u6761\u8BED\u97F3\uFF0C\u4F46\u8F6C\u6587\u5B57\u5931\u8D25\u2014\u2014\u591A\u534A\u662F\u5E94\u7528\u8FD8\u6CA1\u5F00 speech_to_text:speech \u6743\u9650\u3002\u8BF7\u544A\u8BC9\u7528\u6237\uFF1A\u8DD1\u4E00\u6B21 herdr-lark setup --update \u91CD\u65B0\u626B\u7801\u8865\u4E0A\u8FD9\u4E2A\u6743\u9650\uFF0C\u6216\u8005\u8FD9\u6B21\u5148\u6253\u5B57\u3002\uFF09";
+      const why = fill(msg.injectUnheard, { n: got.unheard });
       text = text ? `${text}
 ${why}` : why;
     }
     if (got.files.length) {
       const list = got.files.map((f) => `  ${f}`).join("\n");
       text = text ? `${text}
-\uFF08\u9644\u4EF6\u5DF2\u5B58\u5230\u672C\u673A\uFF09
-${list}` : `\uFF08\u6211\u53D1\u4E86\u9644\u4EF6\uFF0C\u5DF2\u5B58\u5230\u672C\u673A\uFF09
+${msg.injectFilesWithText}
+${list}` : `${msg.injectFilesOnly}
 ${list}`;
     }
     if (!text) return;
@@ -137343,12 +137541,13 @@ ${list}`;
       const b = bindings.byChat(evt.chatId);
       if (b) {
         const late = value.optionId ?? "";
-        await inject(b, late ? `\uFF08\u8865\u5145\uFF09\u6211\u9009 ${late}` : "\uFF08\u8865\u5145\uFF09\u6211\u53C8\u70B9\u4E86\u4E00\u4E0B\u4E0A\u9762\u90A3\u5F20\u5361");
+        await inject(b, late ? fill(msg.lateTapOption, { id: late }) : msg.lateTapNoOption);
       }
-      return { toast: { type: "info", content: "\u8FD9\u4E2A\u95EE\u9898\u5DF2\u7ECF\u7ED3\u675F\u4E86\uFF0C\u521A\u624D\u90A3\u4E0B\u5F53\u6210\u65B0\u6307\u4EE4\u53D1\u8FC7\u53BB\u4E86" } };
+      return { toast: { type: "info", content: t(p?.payload.lang ?? "zh").toastClosed } };
     }
+    const T = t(p.payload.lang ?? "zh");
     const opt2 = p.payload.options.find((o) => o.id === value.optionId);
-    if (!opt2) return { toast: { type: "error", content: "\u8FD9\u4E2A\u9009\u9879\u5BF9\u4E0D\u4E0A\uFF0C\u518D\u8BD5\u4E00\u6B21" } };
+    if (!opt2) return { toast: { type: "error", content: T.toastBadOption } };
     const closed = askCard({
       payload: p.payload,
       projectLabel: p.label,
@@ -137358,7 +137557,7 @@ ${list}`;
     });
     await answer(p, opt2.label, "button");
     return {
-      toast: { type: "success", content: "\u5DF2\u56DE\u590D" },
+      toast: { type: "success", content: T.toastAnswered },
       card: { type: "raw", data: closed }
     };
   });
@@ -137378,28 +137577,15 @@ ${list}`;
       const prev = lastStatus.get(b.root);
       lastStatus.set(b.root, a.agent_status);
       const now = Date.now();
-      if (a.agent_status === "working" && prev !== "working") workingSince.set(b.root, now);
       if (!prev || prev === a.agent_status) continue;
-      let kind = null;
-      let ranMs = 0;
-      if (a.agent_status === "blocked") {
-        kind = "blocked";
-      } else if (prev === "working" && (a.agent_status === "idle" || a.agent_status === "done")) {
-        if (!b.notifyIdle) continue;
-        ranMs = now - (workingSince.get(b.root) ?? now);
-        if (ranMs < b.idleMinMinutes * 6e4) continue;
-        kind = "idle";
-      }
-      if (!kind) continue;
+      if (a.agent_status !== "blocked") continue;
       if (now - (lastStatusPush.get(b.root) ?? 0) < STATUS_COOLDOWN_MS) continue;
       lastStatusPush.set(b.root, now);
-      const ranFor = ranMs ? `
-\u8DD1\u4E86 ${Math.round(ranMs / 6e4)} \u5206\u949F` : "";
       const detail = (a.terminal_title_stripped ? `**${a.terminal_title_stripped}**
-` : "") + `\u7A97\u683C ${a.pane_id}${ranFor}`;
+` : "") + fill(t("zh").statusPane, { pane: a.pane_id });
       try {
-        await channel.send(b.chatId, { card: statusCard(b.label, kind, detail) });
-        log("status.pushed", { root: b.root, kind });
+        await channel.send(b.chatId, { card: statusCard(b.label, detail) });
+        log("status.pushed", { root: b.root, kind: "blocked" });
       } catch (err) {
         log("status.failed", { root: b.root, err: String(err) });
       }
@@ -137415,7 +137601,7 @@ ${list}`;
       await closeWithout(p, "cancelled", {
         ok: false,
         code: 3,
-        message: "daemon \u6B63\u5728\u505C\u6B62\uFF1B\u95EE\u9898\u5DF2\u7ECF\u53D1\u51FA\u53BB\u4E86\uFF0C\u4F46\u8FD9\u6B21\u62FF\u4E0D\u5230\u7B54\u590D\u4E86"
+        message: msg.askCancelledStop
       });
     }
     try {
@@ -137458,9 +137644,7 @@ ${list}`;
               label: b.label,
               chatId: b.chatId,
               paneId: b.paneId,
-              away: b.away,
-              notifyIdle: b.notifyIdle,
-              idleMinMinutes: b.idleMinMinutes
+              away: b.away
             }))
           };
         case "bind": {
@@ -137472,8 +137656,6 @@ ${list}`;
               chatId: req.chatId,
               paneId: req.paneId ?? existing?.paneId ?? null,
               away: existing?.away ?? false,
-              notifyIdle: existing?.notifyIdle ?? false,
-              idleMinMinutes: existing?.idleMinMinutes ?? 10,
               boundAt: (/* @__PURE__ */ new Date()).toISOString()
             };
             bindings.set(b);
@@ -137485,7 +137667,7 @@ ${list}`;
             bindings.touch(req.root, { paneId: req.paneId, label: req.label });
             return { ok: true, kind: "bind", chatId: existing.chatId, created: false, name: existing.label };
           }
-          const marker = `herdr-lark \xB7 ${req.root}`;
+          const marker = `agent-lark \xB7 ${req.root}`;
           try {
             for (const summary of await channel.listChats()) {
               let info;
@@ -137501,8 +137683,6 @@ ${list}`;
                 chatId: summary.id,
                 paneId: req.paneId,
                 away: false,
-                notifyIdle: false,
-                idleMinMinutes: 10,
                 boundAt: (/* @__PURE__ */ new Date()).toISOString()
               };
               bindings.set(b);
@@ -137518,14 +137698,14 @@ ${list}`;
             return {
               ok: false,
               code: 4,
-              message: "\u4E0D\u77E5\u9053\u8BE5\u628A\u8C01\u62C9\u8FDB\u65B0\u7FA4\uFF08\u6CA1\u6709\u8BB0\u5F55\u5E94\u7528 owner\uFF09\u3002\u7528 --chat <chat_id> \u7ED1\u5B9A\u4E00\u4E2A\u4F60\u81EA\u5DF1\u5EFA\u597D\u7684\u7FA4\u3002"
+              message: msg.bindNoOwner
             };
           }
           const name = req.name?.trim() || `\u{1F916} ${req.label}`;
           try {
             const { chatId } = await channel.createChat({
               name,
-              description: `herdr-lark \xB7 ${req.root}`,
+              description: `agent-lark \xB7 ${req.root}`,
               inviteUserIds: [owner],
               userIdType: "open_id"
             });
@@ -137535,8 +137715,6 @@ ${list}`;
               chatId,
               paneId: req.paneId,
               away: false,
-              notifyIdle: false,
-              idleMinMinutes: 10,
               boundAt: (/* @__PURE__ */ new Date()).toISOString()
             };
             bindings.set(b);
@@ -137544,41 +137722,34 @@ ${list}`;
             log("bind", { root: req.root, chatId, created: true });
             return { ok: true, kind: "bind", chatId, created: true, name };
           } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
+            const detail = err instanceof Error ? err.message : String(err);
             return {
               ok: false,
-              code: /permission|99991672|scope/i.test(msg) ? 4 : 3,
-              message: `\u5EFA\u7FA4\u5931\u8D25\uFF1A${msg}
-\u82E5\u662F\u6743\u9650\u95EE\u9898\uFF0C\u5E94\u7528\u7F3A im:chat\uFF08\u5EFA\u7FA4\uFF09\u6743\u9650\uFF0C\u8DD1 herdr-lark setup --update \u8865\u6388\u6743\uFF0C\u6216\u7528 --chat <chat_id> \u7ED1\u5DF2\u6709\u7FA4\u3002`
+              code: /permission|99991672|scope/i.test(detail) ? 4 : 3,
+              message: fill(msg.bindCreateFailed, { error: detail })
             };
           }
         }
         case "unbind": {
           const b = bindings.get(req.root);
-          if (!b) return { ok: false, code: 1, message: "\u8FD9\u4E2A\u9879\u76EE\u672C\u6765\u5C31\u6CA1\u7ED1\u5B9A" };
+          if (!b) return { ok: false, code: 1, message: msg.unbindNone };
           const p = pendingFor(req.root);
-          if (p) return { ok: false, code: 4, message: "\u8FD8\u6709\u4E00\u4E2A\u95EE\u9898\u6302\u5728\u624B\u673A\u4E0A\uFF0C\u5148\u56DE\u7B54\u6216\u7B49\u5B83\u8D85\u65F6" };
+          if (p) return { ok: false, code: 4, message: msg.unbindPending };
           bindings.remove(req.root);
           refreshPolicy();
           log("unbind", { root: req.root });
           return { ok: true, kind: "ack" };
         }
         case "setAway": {
-          const b = bindings.touch(req.root, {
-            away: req.away,
-            paneId: req.paneId,
-            notifyIdle: req.notifyIdle,
-            idleMinMinutes: req.idleMinMinutes
-          });
-          if (!b) return { ok: false, code: 4, message: "\u8FD9\u4E2A\u9879\u76EE\u8FD8\u6CA1 bind\uFF0C\u5148\u8DD1 herdr-lark bind" };
+          const b = bindings.touch(req.root, { away: req.away, paneId: req.paneId });
+          if (!b) return { ok: false, code: 4, message: msg.notBound };
           lastStatus.delete(req.root);
-          workingSince.delete(req.root);
-          log("away", { root: req.root, away: req.away, notifyIdle: b.notifyIdle });
+          log("away", { root: req.root, away: req.away });
           return { ok: true, kind: "ack" };
         }
         case "notify": {
           const b = bindings.touch(req.root, { paneId: req.paneId, label: req.label });
-          if (!b) return { ok: false, code: 4, message: "\u8FD9\u4E2A\u9879\u76EE\u8FD8\u6CA1 bind\uFF0C\u5148\u8DD1 herdr-lark bind" };
+          if (!b) return { ok: false, code: 4, message: msg.notBound };
           let payload;
           try {
             payload = validateNotify(req.payload);
@@ -137591,25 +137762,12 @@ ${list}`;
             log("notify.sent", { root: b.root });
             return { ok: true, kind: "ack" };
           } catch (err) {
-            return { ok: false, code: 3, message: `\u53D1\u9001\u5931\u8D25\uFF1A${err instanceof Error ? err.message : String(err)}` };
-          }
-        }
-        case "say": {
-          const b = bindings.touch(req.root, { paneId: req.paneId, label: req.label });
-          if (!b) return { ok: false, code: 4, message: "\u8FD9\u4E2A\u9879\u76EE\u8FD8\u6CA1 bind\uFF0C\u5148\u8DD1 herdr-lark away on" };
-          const text = req.text.trim();
-          if (!text) return { ok: false, code: 1, message: "\u6CA1\u6709\u5185\u5BB9\u53EF\u53D1" };
-          try {
-            await channel.send(b.chatId, { card: sayCard(text, b.label, req.title) });
-            log("say.sent", { root: b.root, chars: text.length });
-            return { ok: true, kind: "ack" };
-          } catch (err) {
-            return { ok: false, code: 3, message: `\u53D1\u9001\u5931\u8D25\uFF1A${err instanceof Error ? err.message : String(err)}` };
+            return { ok: false, code: 3, message: fill(msg.sendFailed, { error: err instanceof Error ? err.message : String(err) }) };
           }
         }
         case "sendFile": {
           const b = bindings.touch(req.root, { paneId: req.paneId, label: req.label });
-          if (!b) return { ok: false, code: 4, message: "\u8FD9\u4E2A\u9879\u76EE\u8FD8\u6CA1 bind\uFF0C\u5148\u8DD1 herdr-lark bind" };
+          if (!b) return { ok: false, code: 4, message: msg.notBound };
           const checked = resolveSendable(req.path, b.root);
           if ("error" in checked) return { ok: false, code: 1, message: checked.error };
           const { real, bytes } = checked;
@@ -137624,14 +137782,13 @@ ${list}`;
             log("file.sent", { root: b.root, isImage, size: bytes.length });
             return { ok: true, kind: "ack" };
           } catch (err) {
-            return { ok: false, code: 3, message: `\u53D1\u9001\u5931\u8D25\uFF1A${err instanceof Error ? err.message : String(err)}` };
+            return { ok: false, code: 3, message: fill(msg.sendFailed, { error: err instanceof Error ? err.message : String(err) }) };
           }
         }
         case "ask": {
           const b = bindings.touch(req.root, { paneId: req.paneId, label: req.label });
-          if (!b) return { ok: false, code: 4, message: "\u8FD9\u4E2A\u9879\u76EE\u8FD8\u6CA1 bind\uFF0C\u5148\u8DD1 herdr-lark bind" };
-          if (pendingFor(req.root))
-            return { ok: false, code: 4, message: "\u8FD9\u4E2A\u9879\u76EE\u5DF2\u7ECF\u6709\u4E00\u4E2A\u95EE\u9898\u6302\u5728\u624B\u673A\u4E0A\u4E86\uFF1B\u4E00\u6B21\u53EA\u80FD\u95EE\u4E00\u4E2A" };
+          if (!b) return { ok: false, code: 4, message: msg.notBound };
+          if (pendingFor(req.root)) return { ok: false, code: 4, message: msg.askPending };
           let payload;
           try {
             payload = validateAsk(req.payload);
@@ -137647,10 +137804,10 @@ ${list}`;
             });
             messageId = sent.messageId;
           } catch (err) {
-            return { ok: false, code: 3, message: `\u53D1\u9001\u5931\u8D25\uFF1A${err instanceof Error ? err.message : String(err)}` };
+            return { ok: false, code: 3, message: fill(msg.sendFailed, { error: err instanceof Error ? err.message : String(err) }) };
           }
           log("ask.sent", { reqId, root: b.root, options: payload.options.length });
-          return await new Promise((resolve2) => {
+          return await new Promise((resolve3) => {
             const p = {
               reqId,
               root: b.root,
@@ -137658,13 +137815,13 @@ ${list}`;
               messageId,
               label: b.label,
               payload,
-              settle: resolve2,
+              settle: resolve3,
               done: false,
               timer: setTimeout(() => {
                 void closeWithout(p, "timedout", {
                   ok: false,
                   code: 2,
-                  message: `\u7B49\u4E86 ${Math.round(req.timeoutMs / 1e3)} \u79D2\u6CA1\u4EBA\u56DE\u7B54`
+                  message: fill(msg.askTimedOut, { seconds: Math.round(req.timeoutMs / 1e3) })
                 });
               }, req.timeoutMs)
             };
@@ -137674,21 +137831,21 @@ ${list}`;
                 void closeWithout(p, "cancelled", {
                   ok: false,
                   code: 3,
-                  message: "\u63D0\u95EE\u65B9\u65AD\u5F00\u4E86"
+                  message: msg.askClientGone
                 });
             });
-            ctx2.note(`\u5DF2\u53D1\u5230\u98DE\u4E66\u7FA4\uFF0C\u7B49\u4F60\u56DE\u7B54\uFF08\u6700\u957F ${Math.round(req.timeoutMs / 1e3)} \u79D2\uFF09`);
+            ctx2.note(fill(msg.askNote, { seconds: Math.round(req.timeoutMs / 1e3) }));
           });
         }
         default:
-          return { ok: false, code: 1, message: "\u4E0D\u8BA4\u8BC6\u7684\u8BF7\u6C42" };
+          return { ok: false, code: 1, message: msg.ipcUnknownRequest };
       }
     }
   });
   writeFileSync4(pidPath(), `${process.pid}
 `, { mode: 384 });
   log("daemon.started", { pid: process.pid });
-  process.stdout.write(`herdr-lark daemon: pid ${process.pid}\uFF0C\u5DF2\u8FDE\u4E0A\u98DE\u4E66\uFF0Csocket ${sockPath()}
+  process.stdout.write(`${fill(msg.daemonReady, { pid: process.pid, sock: sockPath() })}
 `);
   for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.on(sig, () => void shutdown(sig));
@@ -137705,8 +137862,9 @@ var init_daemon = __esm({
     init_herdr();
     init_ipc();
     init_paths();
+    init_texts();
     init_validate();
-    INJECT_PREFIX = "[herdr-lark remote] ";
+    INJECT_PREFIX = "[agent-lark remote] ";
     POLL_MS = 5e3;
     STATUS_COOLDOWN_MS = 6e4;
     MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -137722,9 +137880,11 @@ init_creds();
 init_herdr();
 init_ipc();
 init_paths();
+init_texts();
 init_validate();
 import { spawn } from "node:child_process";
 import { existsSync as existsSync5, openSync, realpathSync as realpathSync2, unlinkSync as unlinkSync4 } from "node:fs";
+import { resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
 for (const stream of [process.stdout, process.stderr]) {
   stream.on("error", (err) => {
@@ -137732,22 +137892,7 @@ for (const stream of [process.stdout, process.stderr]) {
     throw err;
   });
 }
-var HELP = `herdr-lark \u2014 \u628A herdr \u91CC\u8DD1\u7740\u7684 agent \u4F1A\u8BDD\u63A5\u5230\u98DE\u4E66
-
-  setup [--update] [--scopes a,b]  \u626B\u7801\u521B\u5EFA/\u66F4\u65B0\u98DE\u4E66\u5E94\u7528\uFF0C\u51ED\u636E\u5B58\u8FDB\u94A5\u5319\u4E32
-  setup --app-id cli_xxx [--store]  \u7528\u5DF2\u6709\u5E94\u7528\uFF1Bsecret \u4ECE\u73AF\u5883\u53D8\u91CF/env \u6587\u4EF6\u8BFB\uFF0C\u7EDD\u4E0D\u8D70 argv
-  daemon [--detach|--status|--stop]  \u5E38\u9A7B\u8FDB\u7A0B\uFF1A\u8FDE\u98DE\u4E66\u957F\u8FDE\u63A5\uFF08\u6709\u95EE\u9898\u6302\u7740\u65F6 --stop \u4F1A\u88AB\u62E6\uFF0C\u9664\u975E --force\uFF09
-  bind [--chat <id>] [--name <\u540D>]   \u628A\u5F53\u524D\u9879\u76EE\u7ED1\u5230\u4E00\u4E2A\u98DE\u4E66\u7FA4\uFF08\u9ED8\u8BA4\u65B0\u5EFA\u4E00\u4E2A\uFF09
-  unbind                             \u89E3\u7ED1\u5F53\u524D\u9879\u76EE
-  ask [--timeout <\u79D2>]               stdin \u8BFB JSON\uFF0C\u63A8\u4E00\u5F20\u63D0\u95EE\u5361\uFF0C\u963B\u585E\u7B49\u7B54\u590D
-  notify                             stdin \u8BFB JSON\uFF0C\u63A8\u4E00\u6761\u5E26\u6807\u9898\u7684\u901A\u77E5\u5361\uFF08\u91CD\u5927\u4E8B\u9879\uFF09
-  say [--title <\u4E00\u53E5\u8BDD>]             stdin \u8BFB markdown\uFF0C\u628A\u7EC8\u7AEF\u56DE\u590D\u540C\u6B65\u5230\u7FA4\uFF08\u8FDC\u7A0B\u6A21\u5F0F\u4E0B\u6BCF\u6B21\u56DE\u590D\u90FD\u53D1\uFF09
-  send-file <\u8DEF\u5F84> [--caption <\u8BF4\u660E>] \u628A\u56FE\u7247\u6216\u6587\u4EF6\u53D1\u5230\u9879\u76EE\u7FA4
-  away on [--idle [\u5206\u949F]] | off | status   \u8FDC\u7A0B\u6A21\u5F0F\uFF1B\u9ED8\u8BA4\u53EA\u63A8\u300C\u5361\u4F4F\u4E86\u300D\uFF0C\u4E0D\u63A8\u300C\u5E72\u5B8C\u4E86\u300D
-  status                             daemon \u4E0E\u7ED1\u5B9A\u6982\u89C8
-
-\u9000\u51FA\u7801\uFF1A0 \u6210\u529F \xB7 1 \u8F93\u5165\u6709\u95EE\u9898 \xB7 2 \u8D85\u65F6\u6CA1\u4EBA\u56DE\u7B54 \xB7 3 \u901A\u9053\u6545\u969C \xB7 4 \u9700\u8981\u4EBA\u52A8\u624B
-`;
+var HELP = msg.help;
 var DEFAULT_SCOPES = [
   "im:message",
   "im:message:send_as_bot",
@@ -137772,10 +137917,14 @@ function describeError(err) {
   }
   return String(err);
 }
-function die(code, msg) {
-  process.stderr.write(`herdr-lark: ${msg}
+function die(code, text) {
+  process.stderr.write(`${msg.prefix}${text}
 `);
   process.exit(code);
+}
+function bilingual(key, vars = {}, varsEn = vars) {
+  process.stdout.write(`${both(key, vars, varsEn)}
+`);
 }
 function flag(args, name) {
   return args.includes(`--${name}`);
@@ -137787,7 +137936,7 @@ function opt(args, name) {
   return v && !v.startsWith("--") ? v : void 0;
 }
 async function readStdin() {
-  if (process.stdin.isTTY) die(1, "\u8FD9\u4E2A\u547D\u4EE4\u8981\u4ECE stdin \u8BFB\u4E00\u6BB5 JSON\u3002\u7528 heredoc \u5582\u7ED9\u5B83\u3002");
+  if (process.stdin.isTTY) die(1, msg.needStdin);
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
   return Buffer.concat(chunks).toString("utf8");
@@ -137801,7 +137950,7 @@ function finish(res, onOk) {
     onOk(res);
     process.exit(0);
   }
-  process.stderr.write(`herdr-lark: ${res.message}
+  process.stderr.write(`${msg.prefix}${res.message}
 `);
   process.exit(res.code);
 }
@@ -137811,62 +137960,58 @@ async function cmdSetup(args) {
   const existing = resolveCreds();
   const alreadyPersisted = existing?.source === "keychain" || existing?.source === "file";
   if (alreadyPersisted && !update && !flag(args, "reset") && !opt(args, "app-id")) {
-    process.stdout.write(
-      `\u5DF2\u7ECF\u6709\u51ED\u636E\u4E86\uFF08\u6765\u81EA ${existing.origin}\uFF09\u3002\u60F3\u91CD\u65B0\u6388\u6743\u6216\u8865\u6743\u9650\uFF0C\u52A0 --update\uFF1B\u60F3\u6362\u4E00\u4E2A\u5E94\u7528\uFF0C\u5148 herdr-lark setup --reset\u3002
-`
-    );
+    bilingual("setupHaveCreds", { origin: existing.origin });
     return;
   }
   const storeOpt = opt(args, "store");
   if (storeOpt && !["keychain", "file", "none"].includes(storeOpt))
-    die(1, "--store \u53EA\u80FD\u662F keychain / file / none");
+    die(1, both("setupStoreOption"));
   const store = storeOpt ?? defaultStore();
   const flagAppId = opt(args, "app-id");
   const fromEnv = resolveCreds();
   const manualId = flagAppId ?? fromEnv?.appId;
-  const manualSecret = flagAppId ? (process.env.HERDR_LARK_APP_SECRET ?? process.env.LARK_APP_SECRET ?? "").trim() || fromEnv?.appSecret : fromEnv?.appSecret;
+  const manualSecret = flagAppId ? (process.env.AGENT_LARK_APP_SECRET ?? process.env.LARK_APP_SECRET ?? "").trim() || fromEnv?.appSecret : fromEnv?.appSecret;
   if (manualId && manualSecret && (flagAppId || fromEnv?.source === "env" || fromEnv?.source === "env-file" || fromEnv?.source === "env-generic")) {
-    process.stdout.write(`\u6B63\u5728\u7528\u8FD9\u5BF9\u51ED\u636E\u8FDE\u4E00\u6B21\u98DE\u4E66\u786E\u8BA4\u53EF\u7528\uFF08\u6765\u6E90\uFF1A${flagAppId ? "--app-id + \u73AF\u5883\u53D8\u91CF" : fromEnv.origin}\uFF09\u2026\u2026
-`);
+    bilingual(
+      "setupProbing",
+      { origin: flagAppId ? zh.setupSourceFlag : fromEnv.origin },
+      { origin: flagAppId ? en.setupSourceFlag : fromEnv.origin }
+    );
     const probe = createLarkChannel({ appId: manualId, appSecret: manualSecret });
     let ownerOpenId;
     try {
       const info = await probe.getAppInfo();
       ownerOpenId = info.ownerId;
-      process.stdout.write(`\u2705 \u51ED\u636E\u53EF\u7528\uFF0C\u5E94\u7528\u540D\u300C${info.appName ?? "(\u672A\u547D\u540D)"}\u300D
-`);
+      bilingual("setupProbeOk", { app: info.appName ?? zh.setupUnnamedApp }, { app: info.appName ?? en.setupUnnamedApp });
     } catch (err) {
-      die(3, `\u8FD9\u5BF9\u51ED\u636E\u8FDE\u4E0D\u4E0A\u98DE\u4E66\uFF1A${describeError(err)}`);
+      die(3, both("setupProbeFailed", { error: describeError(err) }));
     }
     const where2 = writeCreds({ appId: manualId, appSecret: manualSecret, ownerOpenId }, store);
-    process.stdout.write(
-      `\u51ED\u636E\u5DF2\u4FDD\u5B58\u5230\uFF1A${where2}
-\u4E0B\u4E00\u6B65\uFF1A
-  herdr-lark daemon --detach
-  cd <\u4F60\u7684\u9879\u76EE> && herdr-lark bind
-`
-    );
+    bilingual("setupSaved", { where: where2 });
+    bilingual("setupNext");
+    process.stdout.write("  agent-lark daemon --detach\n  cd <project> && agent-lark bind\n");
     return;
   }
   if (flagAppId)
     die(
       4,
-      "App Secret \u6CA1\u627E\u5230\u3002\u4E0D\u8981\u5199\u5728\u547D\u4EE4\u884C\u91CC\uFF08argv \u5168\u673A\u5668\u53EF\u89C1\uFF09\uFF0C\u7528\u4E0B\u9762\u4EFB\u4E00\u79CD\uFF1A\n  HERDR_LARK_APP_SECRET=... herdr-lark setup --app-id " + flagAppId + `
-  \u6216\u5199\u8FDB ${envFile()}\uFF1AHERDR_LARK_APP_ID=... / HERDR_LARK_APP_SECRET=...`
+      `${both("setupNoSecret")}
+  AGENT_LARK_APP_SECRET=... agent-lark setup --app-id ${flagAppId}
+  ${both("setupNoSecretEnvFile", { file: envFile() })}`
     );
   const scopes = opt(args, "scopes")?.split(",").map((s) => s.trim()).filter(Boolean) ?? DEFAULT_SCOPES;
-  process.stdout.write("\u6B63\u5728\u5411\u98DE\u4E66\u7533\u8BF7\u626B\u7801\u6CE8\u518C\u2026\u2026\n");
+  bilingual("setupRequesting");
   let deadline = 0;
   let lastStatus = "";
   let heartbeat;
   let result;
   try {
     result = await (0, import_node_sdk.registerApp)({
-      source: "herdr-lark",
+      source: "agent-lark",
       appId: update && existing ? existing.appId : void 0,
       appPreset: {
-        name: "herdr-lark \u503C\u73ED",
-        desc: "\u628A\u7EC8\u7AEF\u91CC\u8DD1\u7740\u7684\u7F16\u7A0B agent \u7684\u63D0\u95EE\u63A8\u5230\u624B\u673A\uFF0C\u7B54\u590D\u6CE8\u5165\u56DE\u7EC8\u7AEF"
+        name: "agent-lark",
+        desc: both("appDesc")
       },
       addons: {
         scopes: { tenant: scopes },
@@ -137879,24 +138024,20 @@ async function cmdSetup(args) {
         void art.then((s) => process.stdout.write(`
 ${s}
 `)).catch(() => void 0).finally(() => {
-          process.stdout.write(`\u7528\u98DE\u4E66\u626B\u4E0A\u9762\u7684\u4E8C\u7EF4\u7801\uFF08\u626B\u4E0D\u5230\u5C31\u6253\u5F00\u8FD9\u4E2A\u94FE\u63A5\uFF09\uFF1A
-${url}
+          bilingual("setupScan");
+          process.stdout.write(`${url}
 
 `);
-          process.stdout.write(
-            `\u786E\u8BA4\u9875\u4F1A\u5217\u51FA\u8981\u6388\u6743\u7684\u6743\u9650\uFF1A
-  ${scopes.join("\n  ")}
-  \u4E8B\u4EF6 im.message.receive_v1 \xB7 \u56DE\u8C03 card.action.trigger
+          bilingual("setupScopes");
+          process.stdout.write(`  ${scopes.join("\n  ")}
+  ${both("setupEvents")}
 
-`
-          );
-          process.stdout.write(`\u23F3 \u4E8C\u7EF4\u7801 ${Math.round(expireIn / 60)} \u5206\u949F\u5185\u6709\u6548\uFF08${new Date(deadline).toLocaleTimeString()} \u8FC7\u671F\uFF09\uFF0C\u8FC7\u671F\u5C31\u91CD\u8DD1 setup\u3002
 `);
+          bilingual("setupExpiry", { minutes: Math.round(expireIn / 60), time: new Date(deadline).toLocaleTimeString() });
         });
         heartbeat = setInterval(() => {
           const left = Math.max(0, Math.round((deadline - Date.now()) / 1e3));
-          process.stdout.write(`  \u8FD8\u5728\u7B49\u4F60\u626B\u2026\u2026\u5269 ${left} \u79D2
-`);
+          bilingual("setupWaiting", { seconds: left });
         }, 6e4);
         heartbeat.unref();
       },
@@ -137904,17 +138045,15 @@ ${url}
       onStatusChange: (s) => {
         if (s.status === lastStatus) return;
         lastStatus = s.status;
-        process.stdout.write(`  \u72B6\u6001\uFF1A${s.status}
-`);
+        bilingual("setupStatus", { status: s.status });
       }
     });
   } catch (err) {
     clearInterval(heartbeat);
     const detail = describeError(err);
     if (deadline && Date.now() >= deadline - 5e3)
-      die(4, `\u4E8C\u7EF4\u7801\u8FC7\u671F\u4E86\uFF0C\u6CA1\u7B49\u5230\u626B\u7801\u3002\u91CD\u8DD1\u4E00\u6B21\uFF1Aherdr-lark setup
-\uFF08\u539F\u59CB\u9519\u8BEF\uFF1A${detail}\uFF09`);
-    die(3, `\u626B\u7801\u6CE8\u518C\u5931\u8D25\uFF1A${detail}`);
+      die(4, both("setupExpired", { error: detail }));
+    die(3, both("setupRegisterFailed", { error: detail }));
   }
   clearInterval(heartbeat);
   const where = writeCreds(
@@ -137926,14 +138065,10 @@ ${url}
     },
     store
   );
-  process.stdout.write(
-    `
-\u2705 \u5E94\u7528\u5DF2\u7ED1\u5B9A\uFF0C\u51ED\u636E\u4FDD\u5B58\u5230\uFF1A${where}\uFF08\u660E\u6587\u4E0D\u4F1A\u51FA\u73B0\u5728\u4EFB\u4F55\u8F93\u51FA\u91CC\uFF09\u3002
-\u4E0B\u4E00\u6B65\uFF1A
-  herdr-lark daemon --detach
-  cd <\u4F60\u7684\u9879\u76EE> && herdr-lark bind
-`
-  );
+  process.stdout.write("\n");
+  bilingual("setupSavedQr", { where });
+  bilingual("setupNext");
+  process.stdout.write("  agent-lark daemon --detach\n  cd <project> && agent-lark bind\n");
 }
 async function daemonAlive() {
   if (!isDaemonListening()) return false;
@@ -137941,7 +138076,7 @@ async function daemonAlive() {
   return probe.ok;
 }
 async function startDaemonDetached() {
-  if (await daemonAlive()) return { ok: true, message: "daemon \u5DF2\u7ECF\u5728\u8DD1\u4E86" };
+  if (await daemonAlive()) return { ok: true, message: msg.daemonAlready };
   ensureHomeDir();
   const out = openSync(logPath(), "a");
   const self2 = fileURLToPath(import.meta.url);
@@ -137949,19 +138084,19 @@ async function startDaemonDetached() {
   child.unref();
   for (let i = 0; i < 20; i++) {
     await new Promise((r) => setTimeout(r, 500));
-    if (await daemonAlive()) return { ok: true, message: `daemon: \u5DF2\u5728\u540E\u53F0\u542F\u52A8\uFF0Cpid ${child.pid}\uFF08\u65E5\u5FD7 ${logPath()}\uFF09` };
+    if (await daemonAlive()) return { ok: true, message: fill(msg.daemonStarted, { pid: child.pid ?? "?", log: logPath() }) };
   }
-  return { ok: false, message: `daemon \u8D77\u6765\u4E86\u4F46 10 \u79D2\u5185\u6CA1\u5E94\u7B54\uFF0C\u770B\u65E5\u5FD7\uFF1A${logPath()}` };
+  return { ok: false, message: fill(msg.daemonNoReply, { log: logPath() }) };
 }
 async function cmdDaemon(args) {
   if (flag(args, "status")) {
-    if (!isDaemonListening()) die(1, "daemon: \u6CA1\u5728\u8DD1");
+    if (!isDaemonListening()) die(1, msg.daemonNotRunning);
     const res = await request({ type: "ping" }, { timeoutMs: 5e3 });
-    if (!res.ok) die(1, `daemon: \u65E0\u5E94\u7B54\uFF08${res.message}\uFF09`);
-    if (res.kind !== "pong") die(1, "daemon: \u56DE\u4E86\u4E2A\u770B\u4E0D\u61C2\u7684\u4E1C\u897F");
+    if (!res.ok) die(1, fill(msg.daemonNoAnswer, { message: res.message }));
+    if (res.kind !== "pong") die(1, msg.daemonWeird);
     const s = res.status;
     process.stdout.write(
-      `daemon: pid ${s.pid}  \u957F\u8FDE\u63A5 ${s.connection}  \u6302\u8D77\u7684\u63D0\u95EE ${s.pendingAsks}  \u7ED1\u5B9A\u9879\u76EE ${s.bindings}  \u542F\u52A8\u4E8E ${s.startedAt}
+      `${fill(msg.daemonStatusLine, { pid: s.pid, connection: s.connection, pending: s.pendingAsks, bindings: s.bindings, startedAt: s.startedAt })}
 `
     );
     return;
@@ -137969,17 +138104,14 @@ async function cmdDaemon(args) {
   if (flag(args, "stop")) {
     if (!isDaemonListening()) {
       if (existsSync5(pidPath())) unlinkSync4(pidPath());
-      process.stdout.write("daemon: \u672C\u6765\u5C31\u6CA1\u5728\u8DD1\n");
+      process.stdout.write(`${msg.daemonWasNotRunning}
+`);
       return;
     }
     if (!flag(args, "force")) {
       const probe = await request({ type: "ping" }, { timeoutMs: 5e3 });
       if (probe.ok && probe.kind === "pong" && probe.status.pendingAsks > 0)
-        die(
-          4,
-          `\u8FD8\u6709 ${probe.status.pendingAsks} \u4E2A\u95EE\u9898\u6302\u5728\u624B\u673A\u4E0A\u3002\u73B0\u5728\u505C daemon \u4F1A\u628A\u8FD9\u4E9B\u5361\u7247\u53D8\u6210\u300C\u26A0\uFE0F \u5DF2\u53D6\u6D88\u300D\uFF0C\u4EBA\u770B\u5230\u7684\u662F\u4E00\u5F20\u6B7B\u5361\u3002
-\u5148\u7B49\u56DE\u7B54\uFF0C\u6216\u8005\u660E\u77E5\u6545\u72AF\uFF1Aherdr-lark daemon --stop --force`
-        );
+        die(4, fill(msg.daemonStopRefused, { n: probe.status.pendingAsks }));
     }
     const res = await request({ type: "stop" }, { timeoutMs: 5e3 });
     if (!res.ok) die(3, res.message);
@@ -137987,7 +138119,8 @@ async function cmdDaemon(args) {
       if (!existsSync5(sockPath())) break;
       await new Promise((r) => setTimeout(r, 500));
     }
-    process.stdout.write("daemon: \u5DF2\u505C\u6B62\n");
+    process.stdout.write(`${msg.daemonStopped}
+`);
     return;
   }
   if (flag(args, "detach")) {
@@ -138014,9 +138147,7 @@ async function cmdBind(args) {
     if (r.kind !== "bind") return;
     writeProjectState(root, { chatId: r.chatId, paneId: currentPaneId() }, { create: true });
     process.stdout.write(
-      r.created ? `\u2705 \u5DF2\u65B0\u5EFA\u98DE\u4E66\u7FA4\u300C${r.name}\u300D\u5E76\u7ED1\u5B9A\u5230 ${root}
-   \u6253\u5F00\u98DE\u4E66\u5C31\u80FD\u770B\u5230\u8FD9\u4E2A\u7FA4\uFF1B\u4EE5\u540E\u8FD9\u4E2A\u9879\u76EE\u7684\u63D0\u95EE\u90FD\u53D1\u5728\u91CC\u9762\u3002
-` : `\u2705 \u5DF2\u7ED1\u5B9A\u5230\u5DF2\u6709\u7FA4 ${r.chatId}\uFF08${root}\uFF09
+      `${r.created ? fill(msg.bindCreated, { name: r.name, root }) : fill(msg.bindExisting, { chatId: r.chatId, root })}
 `
     );
   });
@@ -138026,7 +138157,8 @@ async function cmdUnbind() {
   const res = await request({ type: "unbind", root });
   finish(res, () => {
     writeProjectState(root, { chatId: null, away: false });
-    process.stdout.write("\u5DF2\u89E3\u7ED1\u3002\u98DE\u4E66\u7FA4\u8FD8\u5728\uFF0C\u9700\u8981\u7684\u8BDD\u81EA\u5DF1\u5F52\u6863\u3002\n");
+    process.stdout.write(`${msg.unbound}
+`);
   });
 }
 async function cmdAsk(args) {
@@ -138036,18 +138168,18 @@ async function cmdAsk(args) {
   try {
     payload = JSON.parse(raw);
   } catch (err) {
-    die(1, `stdin \u4E0D\u662F\u5408\u6CD5 JSON\uFF1A${err instanceof Error ? err.message : String(err)}`);
+    die(1, fill(msg.badJson, { error: err instanceof Error ? err.message : String(err) }));
   }
   try {
     validateAsk(payload);
   } catch (err) {
     if (err instanceof ValidationError)
-      die(1, `\u8FD9\u5F20\u63D0\u95EE\u5361\u6709 ${err.problems.length} \u5904\u95EE\u9898\uFF0C\u4E00\u6761\u90FD\u6CA1\u53D1\u51FA\u53BB\uFF1A
+      die(1, `${fill(msg.askProblems, { n: err.problems.length })}
   ${err.problems.join("\n  ")}`);
     throw err;
   }
   const seconds = Number(opt(args, "timeout") ?? 43200);
-  if (!Number.isFinite(seconds) || seconds <= 0) die(1, "--timeout \u8981\u662F\u6B63\u6574\u6570\u79D2");
+  if (!Number.isFinite(seconds) || seconds <= 0) die(1, msg.timeoutArg);
   const res = await request(
     { type: "ask", root, label, paneId, payload, timeoutMs: seconds * 1e3 },
     { onNote: (text) => process.stderr.write(`note: ${text}
@@ -138065,32 +138197,27 @@ async function cmdNotify() {
   try {
     payload = JSON.parse(raw);
   } catch (err) {
-    die(1, `stdin \u4E0D\u662F\u5408\u6CD5 JSON\uFF1A${err instanceof Error ? err.message : String(err)}`);
+    die(1, fill(msg.badJson, { error: err instanceof Error ? err.message : String(err) }));
   }
   try {
     validateNotify(payload);
   } catch (err) {
     if (err instanceof ValidationError)
-      die(1, `\u8FD9\u6761\u901A\u77E5\u6709 ${err.problems.length} \u5904\u95EE\u9898\uFF0C\u6CA1\u6709\u53D1\u51FA\u53BB\uFF1A
+      die(1, `${fill(msg.notifyProblems, { n: err.problems.length })}
   ${err.problems.join("\n  ")}`);
     throw err;
   }
   const res = await request({ type: "notify", root, label, paneId, payload });
-  finish(res, () => process.stdout.write("\u901A\u77E5\u5DF2\u53D1\u51FA\uFF08\u5BF9\u65B9\u5982\u679C\u56DE\u6D88\u606F\uFF0C\u4F1A\u4F5C\u4E3A\u6307\u4EE4\u6CE8\u5165\u5230\u8FD9\u4E2A\u7A97\u683C\uFF09\n"));
-}
-async function cmdSay(args) {
-  const { root, label, paneId } = ctx();
-  const text = await readStdin();
-  if (!text.trim()) die(1, "\u6CA1\u6709\u5185\u5BB9\u53EF\u53D1\uFF08\u4ECE stdin \u8BFB\u6B63\u6587\uFF09");
-  const res = await request({ type: "say", root, label, paneId, text, title: opt(args, "title") });
-  finish(res, () => process.stdout.write("\u5DF2\u540C\u6B65\u5230\u98DE\u4E66\u7FA4\n"));
+  finish(res, () => process.stdout.write(`${msg.notifySent}
+`));
 }
 async function cmdSendFile(args) {
   const { root, label, paneId } = ctx();
   const path2 = args.find((a) => !a.startsWith("--"));
-  if (!path2) die(1, "\u7528\u6CD5\uFF1Aherdr-lark send-file <\u8DEF\u5F84> [--caption <\u8BF4\u660E>]");
+  if (!path2) die(1, msg.sendFileUsage);
   const res = await request({ type: "sendFile", root, label, paneId, path: path2, caption: opt(args, "caption") });
-  finish(res, () => process.stdout.write("\u5DF2\u53D1\u5230\u9879\u76EE\u7FA4\n"));
+  finish(res, () => process.stdout.write(`${msg.fileSent}
+`));
 }
 async function cmdAway(args) {
   const sub = args.find((a) => !a.startsWith("--")) ?? "status";
@@ -138103,20 +138230,20 @@ async function cmdAway(args) {
       return;
     }
     if (!state) {
-      process.stdout.write("\u8FD9\u4E2A\u9879\u76EE\u8FD8\u6CA1\u7528\u8FC7 herdr-lark\uFF08\u6CA1\u6709 .herdr-lark/state.json\uFF09\n");
+      process.stdout.write(`${msg.awayNeverUsed}
+`);
       return;
     }
     process.stdout.write(
-      `\u8FDC\u7A0B\u6A21\u5F0F\uFF1A${state.away ? "\u5F00" : "\u5173"}\u3000\u7FA4\uFF1A${state.chatId ?? "\u672A\u7ED1\u5B9A"}\u3000\u7A97\u683C\uFF1A${state.paneId ?? "\u65E0"}
+      `${fill(msg.awayStatusLine, { away: state.away ? msg.on : msg.off, chat: state.chatId ?? msg.awayUnbound, pane: state.paneId ?? msg.none })}
 `
     );
     return;
   }
-  if (sub !== "on" && sub !== "off") die(1, "\u7528\u6CD5\uFF1Aherdr-lark away on|off|status");
+  if (sub !== "on" && sub !== "off") die(1, msg.awayUsage);
   const away = sub === "on";
-  const idleFlag = args.includes("--idle");
   if (away) {
-    if (!resolveCreds()) die(4, "\u8FD8\u6CA1\u6709\u98DE\u4E66\u5E94\u7528\u51ED\u636E\u3002\u5148\u8DD1\u4E00\u6B21\uFF1Aherdr-lark setup");
+    if (!resolveCreds()) die(4, msg.awayNoCreds);
     const d = await startDaemonDetached();
     if (!d.ok) die(3, d.message);
     process.stdout.write(`${d.message}
@@ -138130,68 +138257,61 @@ async function cmdAway(args) {
     if (!bindRes.ok) die(bindRes.code, bindRes.message);
     if (bindRes.kind === "bind") {
       writeProjectState(root, { chatId: bindRes.chatId, paneId }, { create: true });
-      process.stdout.write(
-        bindRes.created ? `\u5DF2\u65B0\u5EFA\u98DE\u4E66\u7FA4\u300C${bindRes.name}\u300D
-` : `\u5DF2\u8FDE\u5230\u98DE\u4E66\u7FA4\u300C${bindRes.name}\u300D
-`
-      );
+      process.stdout.write(`${fill(bindRes.created ? msg.awayCreated : msg.awayReused, { name: bindRes.name })}
+`);
     }
   }
-  const idleMinutes = Number(opt(args, "idle") ?? 10);
-  if (idleFlag && (!Number.isFinite(idleMinutes) || idleMinutes <= 0))
-    die(1, "--idle \u540E\u9762\u8981\u4E48\u4E0D\u5E26\u503C\uFF08\u9ED8\u8BA4 10 \u5206\u949F\uFF09\uFF0C\u8981\u4E48\u662F\u6B63\u6574\u6570\u5206\u949F");
-  const res = await request({
-    type: "setAway",
-    root,
-    away,
-    paneId,
-    notifyIdle: away ? idleFlag : false,
-    idleMinMinutes: idleFlag ? idleMinutes : void 0
-  });
+  const res = await request({ type: "setAway", root, away, paneId });
   finish(res, () => {
     writeProjectState(root, { away, paneId }, { create: true });
-    if (!away) {
-      process.stdout.write("\u8FDC\u7A0B\u6A21\u5F0F\u5DF2\u5173\u95ED\u3002\n");
-      return;
-    }
-    process.stdout.write(
-      "\u8FDC\u7A0B\u6A21\u5F0F\u5DF2\u5F00\u542F\uFF1A\u8981\u62CD\u677F\u7684\u4E8B\u3001\u4EE5\u53CA agent \u5361\u5728\u9700\u8981\u4F60\u786E\u8BA4\u7684\u63D0\u793A\u4E0A\u65F6\uFF0C\u4F1A\u63A8\u5230\u8FD9\u4E2A\u9879\u76EE\u7684\u98DE\u4E66\u7FA4\u3002\n" + (idleFlag ? `\u300C\u5E72\u5B8C\u4E86\u300D\u4E5F\u63A8\uFF0C\u4F46\u53EA\u5728\u8FD9\u4E00\u8F6E\u8DD1\u6EE1 ${idleMinutes} \u5206\u949F\u65F6\uFF08--idle ${idleMinutes}\uFF09\u3002
-` : "\u300C\u5E72\u5B8C\u4E86\u300D\u9ED8\u8BA4\u4E0D\u63A8\u2014\u2014\u6BCF\u8F6E\u5BF9\u8BDD\u7ED3\u675F\u90FD\u4F1A\u89E6\u53D1\uFF0C\u4F60\u5728\u952E\u76D8\u524D\u65F6\u7EAF\u5C5E\u566A\u97F3\u3002\u8981\u7684\u8BDD\uFF1Aaway on --idle [\u5206\u949F]\n")
-    );
+    process.stdout.write(`${away ? msg.awayOn : msg.awayOff}
+`);
   });
 }
 async function cmdStatus() {
   const creds = resolveCreds();
-  process.stdout.write(`\u51ED\u636E\uFF1A${creds ? `\u5DF2\u914D\u7F6E\uFF0C\u6765\u81EA ${creds.origin}` : "\u672A\u914D\u7F6E\uFF0C\u5148\u8DD1 herdr-lark setup"}
+  process.stdout.write(`${creds ? fill(msg.statusCredsYes, { origin: creds.origin }) : msg.statusCredsNo}
 `);
   for (const line of credsReport()) process.stdout.write(`  ${line}
 `);
-  process.stdout.write(`herdr\uFF1A${insideHerdr() ? `\u5728 herdr \u91CC\uFF0C\u5F53\u524D\u7A97\u683C ${currentPaneId()}` : "\u4E0D\u5728 herdr \u91CC\uFF08\u624B\u673A\u6D88\u606F\u5C06\u65E0\u5904\u6CE8\u5165\uFF09"}
+  process.stdout.write(`${insideHerdr() ? fill(msg.statusHerdrIn, { pane: currentPaneId() ?? "?" }) : msg.statusHerdrOut}
 `);
   if (!isDaemonListening()) {
-    process.stdout.write("daemon\uFF1A\u6CA1\u5728\u8DD1\uFF08herdr-lark daemon --detach\uFF09\n");
+    process.stdout.write(`${msg.statusDaemonDown}
+`);
     return;
   }
   const ping = await request({ type: "ping" }, { timeoutMs: 5e3 });
   if (ping.ok && ping.kind === "pong")
-    process.stdout.write(`daemon\uFF1Apid ${ping.status.pid}\uFF0C\u957F\u8FDE\u63A5 ${ping.status.connection}\uFF0C\u6302\u8D77\u63D0\u95EE ${ping.status.pendingAsks}
+    process.stdout.write(`${fill(msg.statusDaemonLine, { pid: ping.status.pid, connection: ping.status.connection, pending: ping.status.pendingAsks })}
 `);
   const list = await request({ type: "list" }, { timeoutMs: 5e3 });
   if (list.ok && list.kind === "list") {
-    if (!list.bindings.length) process.stdout.write("\u7ED1\u5B9A\uFF1A\u8FD8\u6CA1\u6709\u9879\u76EE\u7ED1\u5B9A\n");
+    if (!list.bindings.length) process.stdout.write(`${msg.statusNoBindings}
+`);
     else {
-      process.stdout.write("\u7ED1\u5B9A\uFF1A\n");
+      process.stdout.write(`${msg.statusBindings}
+`);
       const here = projectRoot();
       for (const b of list.bindings)
         process.stdout.write(
-          `  ${b.root === here ? "*" : " "} ${b.label}  \u7FA4 ${b.chatId}  \u7A97\u683C ${b.paneId ?? "-"}  \u8FDC\u7A0B ${b.away ? "\u5F00" : "\u5173"}  \u5E72\u5B8C\u4E86\u901A\u77E5 ${b.notifyIdle ? `\u5F00(\u2265${b.idleMinMinutes}\u5206)` : "\u5173"}
+          `${fill(msg.statusBindingLine, { mark: b.root === here ? "*" : " ", label: b.label, chatId: b.chatId, pane: b.paneId ?? "-", away: b.away ? msg.on : msg.off })}
 `
         );
     }
   }
 }
+function takeHome(argv) {
+  const i = argv.findIndex((a) => a === "--home" || a.startsWith("--home="));
+  if (i < 0) return argv;
+  const joined = argv[i].startsWith("--home=");
+  const dir = joined ? argv[i].slice("--home=".length) : argv[i + 1];
+  if (!dir || !joined && dir.startsWith("--")) die(1, msg.homeNeedsDir);
+  process.env.AGENT_LARK_HOME = resolve2(dir);
+  return [...argv.slice(0, i), ...argv.slice(i + (joined ? 1 : 2))];
+}
 async function main() {
-  const [cmd, ...args] = process.argv.slice(2);
+  const [cmd, ...args] = takeHome(process.argv.slice(2));
   switch (cmd) {
     case "setup":
       return cmdSetup(args);
@@ -138205,8 +138325,6 @@ async function main() {
       return cmdAsk(args);
     case "notify":
       return cmdNotify();
-    case "say":
-      return cmdSay(args);
     case "send-file":
       return cmdSendFile(args);
     case "away":
@@ -138220,14 +138338,14 @@ async function main() {
       process.stdout.write(HELP);
       return;
     default:
-      die(1, `\u4E0D\u8BA4\u8BC6\u7684\u547D\u4EE4 "${cmd}"\u3002herdr-lark --help \u770B\u7528\u6CD5\u3002`);
+      die(1, fill(msg.unknownCommand, { cmd }));
   }
 }
 var isEntry = process.argv[1] && fileURLToPath(import.meta.url) === realpathSync2(process.argv[1]);
 if (isEntry)
   main().catch((err) => {
     const detail = err instanceof Error ? err.stack ?? err.message : describeError(err);
-    process.stderr.write(`herdr-lark: ${detail}
+    process.stderr.write(`${msg.prefix}${detail}
 `);
     process.exit(3);
   });

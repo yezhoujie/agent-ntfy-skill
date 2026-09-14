@@ -5,14 +5,15 @@ import { tmpdir } from 'node:os';
 import type { Server } from 'node:net';
 import { createLarkChannel, type CardActionEvent, type LarkChannel, type NormalizedMessage } from '@larksuite/channel';
 import { BindingStore, type Binding } from './bindings.js';
-import { askCard, notifyCard, receiptCard, sayCard, statusCard } from './cards.js';
+import { askCard, notifyCard, receiptCard, statusCard } from './cards.js';
 import { resolveCreds } from './creds.js';
 import { agentList, findPaneForProject, promptPane } from './herdr.js';
 import { serve, type Request, type Response } from './ipc.js';
 import { ensureHomeDir, homeDir, logPath, pidPath, sockPath } from './paths.js';
-import { validateAsk, validateNotify, ValidationError, type AskPayload } from './validate.js';
+import { fill, msg, t } from './texts.js';
+import { validateAsk, validateNotify, ValidationError, type AskPayload, type Lang } from './validate.js';
 
-const INJECT_PREFIX = '[herdr-lark remote] ';
+const INJECT_PREFIX = '[agent-lark remote] ';
 const POLL_MS = 5_000;
 const STATUS_COOLDOWN_MS = 60_000;
 
@@ -46,12 +47,12 @@ function resolveSendable(
   path: string,
   root: string,
 ): { real: string; bytes: Buffer } | { error: string } {
-  if (!existsSync(path)) return { error: `文件不存在：${path}` };
+  if (!existsSync(path)) return { error: fill(msg.fileMissing, { path }) };
   let real: string;
   try {
     real = realpathSync(path);
   } catch (err) {
-    return { error: `路径解析失败：${String(err)}` };
+    return { error: fill(msg.fileRealpath, { error: String(err) }) };
   }
   const allowed = [root, join(homeDir(), 'media'), tmpdir()]
     .map((d) => {
@@ -62,17 +63,13 @@ function resolveSendable(
       }
     });
   if (!allowed.some((d) => within(real, d)))
-    return {
-      error:
-        `拒绝发送 ${real}\n只能发这些目录下的文件：\n  本项目 ${root}\n  ${join(homeDir(), 'media')}\n  ${tmpdir()}\n` +
-        '（这是防止 send-file 被用来把机器上任意文件读走）',
-    };
+    return { error: fill(msg.fileRefused, { real, root, media: join(homeDir(), 'media'), tmp: tmpdir() }) };
   const st = statSync(real);
-  if (!st.isFile()) return { error: `不是普通文件：${real}` };
+  if (!st.isFile()) return { error: fill(msg.fileNotRegular, { real }) };
   const isImage = /\.(png|jpe?g|gif|webp|bmp)$/i.test(real);
   const cap = isImage ? MAX_IMAGE_BYTES : MAX_FILE_BYTES;
   if (st.size > cap)
-    return { error: `文件太大：${(st.size / 1024 / 1024).toFixed(1)} MB，上限 ${cap / 1024 / 1024} MB` };
+    return { error: fill(msg.fileTooBig, { size: (st.size / 1024 / 1024).toFixed(1), cap: cap / 1024 / 1024 }) };
   return { real, bytes: readFileSync(real) };
 }
 
@@ -91,7 +88,7 @@ interface Pending {
 export async function runDaemon(): Promise<void> {
   const creds = resolveCreds();
   if (!creds) {
-    process.stderr.write('herdr-lark: 找不到飞书应用凭据。先跑一次：herdr-lark setup（或设好 HERDR_LARK_APP_ID / HERDR_LARK_APP_SECRET）\n');
+    process.stderr.write(`${msg.prefix}${msg.daemonNoCreds}\n`);
     process.exit(4);
   }
   ensureHomeDir();
@@ -101,7 +98,7 @@ export async function runDaemon(): Promise<void> {
     const { request } = await import('./ipc.js');
     const probe = await request({ type: 'ping' }, { timeoutMs: 2000 });
     if (probe.ok) {
-      process.stderr.write('herdr-lark: daemon 已经在跑了\n');
+      process.stderr.write(`${msg.prefix}${msg.daemonAlready}\n`);
       process.exit(3);
     }
   }
@@ -110,7 +107,6 @@ export async function runDaemon(): Promise<void> {
   const pendings = new Map<string, Pending>();
   const lastStatus = new Map<string, string>();
   const lastStatusPush = new Map<string, number>();
-  const workingSince = new Map<string, number>();
   const startedAt = new Date().toISOString();
 
   const channel: LarkChannel = createLarkChannel({
@@ -191,17 +187,19 @@ export async function runDaemon(): Promise<void> {
     }
   };
 
-  const explainPromptFailure = (code?: string, message?: string): string => {
+  /** Card-shell wording for the human; the language follows the receipt card. */
+  const explainPromptFailure = (code?: string, message?: string, lang: Lang = 'zh'): string => {
+    const T = t(lang);
     switch (code) {
       case 'agent_blocked':
-        return '终端里的 agent 正卡在一个需要你本人确认的提示上，收不了新输入。回电脑前处理一下。';
+        return T.promptAgentBlocked;
       case 'agent_not_found':
       case 'pane_not_found':
-        return '记录的 herdr 窗格已经不在了。到项目里跑一次 herdr-lark bind 或任意 herdr-lark 命令，重新记录窗格。';
+        return T.promptPaneGone;
       case 'spawn_failed':
-        return `herdr 命令没跑起来：${message ?? '未知原因'}`;
+        return T.promptNoHerdr;
       default:
-        return `herdr 拒绝了这次注入：${code ?? '未知'} ${message ?? ''}`.trim();
+        return fill(T.promptRefused, { code: code ?? '?', message: message ?? '' }).trim();
     }
   };
 
@@ -210,7 +208,7 @@ export async function runDaemon(): Promise<void> {
     let paneId = b.paneId;
     if (!paneId) paneId = findPaneForProject(await agentList(), b.root);
     if (!paneId) {
-      await receipt(b, '这个项目还没有记录到 herdr 窗格，消息没处可送。');
+      await receipt(b, t('zh').receiptNoPane);
       return;
     }
     const outcome = await promptPane(paneId, `${INJECT_PREFIX}${text}`);
@@ -249,12 +247,12 @@ export async function runDaemon(): Promise<void> {
   };
 
   /** Save an inbound attachment next to the daemon's state, never in the repo. */
-  const saveResources = async (msg: NormalizedMessage): Promise<{ files: string[]; spoken: string[]; unheard: number }> => {
+  const saveResources = async (incoming: NormalizedMessage): Promise<{ files: string[]; spoken: string[]; unheard: number }> => {
     const out = { files: [] as string[], spoken: [] as string[], unheard: 0 };
-    if (!msg.resources.length) return out;
-    const dir = join(homeDir(), 'media', createHash('sha1').update(msg.chatId).digest('hex').slice(0, 12));
+    if (!incoming.resources.length) return out;
+    const dir = join(homeDir(), 'media', createHash('sha1').update(incoming.chatId).digest('hex').slice(0, 12));
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    for (const res of msg.resources) {
+    for (const res of incoming.resources) {
       // Only images have their own download type; everything else (files,
       // voice notes, video) comes down the `file` path.
       const kind = res.type === 'image' ? 'image' : 'file';
@@ -262,9 +260,9 @@ export async function runDaemon(): Promise<void> {
       const name = res.fileName ?? `${res.type}-${Date.now()}.${ext}`;
       const dest = join(dir, `${Date.now()}-${name}`);
       try {
-        await channel.downloadResourceToFile(msg.messageId, res.fileKey, kind, dest);
+        await channel.downloadResourceToFile(incoming.messageId, res.fileKey, kind, dest);
       } catch (err) {
-        log('download.failed', { messageId: msg.messageId, type: res.type, err: String(err).slice(0, 200) });
+        log('download.failed', { messageId: incoming.messageId, type: res.type, err: String(err).slice(0, 200) });
         continue;
       }
       if (res.type === 'audio') {
@@ -278,28 +276,26 @@ export async function runDaemon(): Promise<void> {
     return out;
   };
 
-  channel.on('message', async (msg: NormalizedMessage) => {
-    if (msg.senderIsBot) return;
-    const b = bindings.byChat(msg.chatId);
+  channel.on('message', async (incoming: NormalizedMessage) => {
+    if (incoming.senderIsBot) return;
+    const b = bindings.byChat(incoming.chatId);
     if (!b) return;
-    const got = await saveResources(msg);
+    const got = await saveResources(incoming);
     // A voice message arrives as an `<audio .../>` placeholder in `content`.
     // Strip it: either the transcript replaces it, or the human is told
     // plainly that it could not be heard.
-    let text = msg.content.replace(/<audio\b[^>]*\/?>/gi, '').trim();
+    let text = incoming.content.replace(/<audio\b[^>]*\/?>/gi, '').trim();
     if (got.spoken.length) {
       const said = got.spoken.join('\n');
-      text = text ? `${text}\n（语音转文字）${said}` : said;
+      text = text ? `${text}\n${fill(msg.injectVoice, { text: said })}` : said;
     }
     if (got.unheard) {
-      const why =
-        '（收到 ' + got.unheard + ' 条语音，但转文字失败——多半是应用还没开 speech_to_text:speech 权限。' +
-        '请告诉用户：跑一次 herdr-lark setup --update 重新扫码补上这个权限，或者这次先打字。）';
+      const why = fill(msg.injectUnheard, { n: got.unheard });
       text = text ? `${text}\n${why}` : why;
     }
     if (got.files.length) {
       const list = got.files.map((f) => `  ${f}`).join('\n');
-      text = text ? `${text}\n（附件已存到本机）\n${list}` : `（我发了附件，已存到本机）\n${list}`;
+      text = text ? `${text}\n${msg.injectFilesWithText}\n${list}` : `${msg.injectFilesOnly}\n${list}`;
     }
     if (!text) return;
     const p = pendingFor(b.root);
@@ -320,12 +316,13 @@ export async function runDaemon(): Promise<void> {
       const b = bindings.byChat(evt.chatId);
       if (b) {
         const late = value.optionId ?? '';
-        await inject(b, late ? `（补充）我选 ${late}` : '（补充）我又点了一下上面那张卡');
+        await inject(b, late ? fill(msg.lateTapOption, { id: late }) : msg.lateTapNoOption);
       }
-      return { toast: { type: 'info', content: '这个问题已经结束了，刚才那下当成新指令发过去了' } };
+      return { toast: { type: 'info', content: t(p?.payload.lang ?? 'zh').toastClosed } };
     }
+    const T = t(p.payload.lang ?? 'zh');
     const opt = p.payload.options.find((o) => o.id === value.optionId);
-    if (!opt) return { toast: { type: 'error', content: '这个选项对不上，再试一次' } };
+    if (!opt) return { toast: { type: 'error', content: T.toastBadOption } };
     // Build the closed card before answering, so it can ride back on this very
     // callback: Feishu swaps the card in the same round trip and the buttons
     // are gone before a second tap is possible.
@@ -338,7 +335,7 @@ export async function runDaemon(): Promise<void> {
     });
     await answer(p, opt.label, 'button');
     return {
-      toast: { type: 'success', content: '已回复' },
+      toast: { type: 'success', content: T.toastAnswered },
       card: { type: 'raw', data: closed },
     };
   });
@@ -362,32 +359,17 @@ export async function runDaemon(): Promise<void> {
       const prev = lastStatus.get(b.root);
       lastStatus.set(b.root, a.agent_status);
       const now = Date.now();
-      if (a.agent_status === 'working' && prev !== 'working') workingSince.set(b.root, now);
       if (!prev || prev === a.agent_status) continue;
-
-      let kind: 'blocked' | 'idle' | null = null;
-      let ranMs = 0;
-      if (a.agent_status === 'blocked') {
-        // Stuck on a prompt only a human can answer: always worth a push.
-        kind = 'blocked';
-      } else if (prev === 'working' && (a.agent_status === 'idle' || a.agent_status === 'done')) {
-        // "Finished" fires at the end of every conversational turn, which is
-        // pure noise while the human is at the keyboard. Opt-in, and only
-        // when the turn actually ran long enough to be worth interrupting for.
-        if (!b.notifyIdle) continue;
-        ranMs = now - (workingSince.get(b.root) ?? now);
-        if (ranMs < b.idleMinMinutes * 60_000) continue;
-        kind = 'idle';
-      }
-      if (!kind) continue;
+      // Only "stuck on a prompt a human must answer" is worth a push; the end
+      // of a turn fires constantly and is noise while the human is at the keyboard.
+      if (a.agent_status !== 'blocked') continue;
       if (now - (lastStatusPush.get(b.root) ?? 0) < STATUS_COOLDOWN_MS) continue;
       lastStatusPush.set(b.root, now);
-      const ranFor = ranMs ? `\n跑了 ${Math.round(ranMs / 60_000)} 分钟` : '';
       const detail =
-        (a.terminal_title_stripped ? `**${a.terminal_title_stripped}**\n` : '') + `窗格 ${a.pane_id}${ranFor}`;
+        (a.terminal_title_stripped ? `**${a.terminal_title_stripped}**\n` : '') + fill(t('zh').statusPane, { pane: a.pane_id });
       try {
-        await channel.send(b.chatId, { card: statusCard(b.label, kind, detail) });
-        log('status.pushed', { root: b.root, kind });
+        await channel.send(b.chatId, { card: statusCard(b.label, detail) });
+        log('status.pushed', { root: b.root, kind: 'blocked' });
       } catch (err) {
         log('status.failed', { root: b.root, err: String(err) });
       }
@@ -405,7 +387,7 @@ export async function runDaemon(): Promise<void> {
       await closeWithout(p, 'cancelled', {
         ok: false,
         code: 3,
-        message: 'daemon 正在停止；问题已经发出去了，但这次拿不到答复了',
+        message: msg.askCancelledStop,
       });
     }
     try {
@@ -454,8 +436,6 @@ export async function runDaemon(): Promise<void> {
               chatId: b.chatId,
               paneId: b.paneId,
               away: b.away,
-              notifyIdle: b.notifyIdle,
-              idleMinMinutes: b.idleMinMinutes,
             })),
           };
 
@@ -468,8 +448,6 @@ export async function runDaemon(): Promise<void> {
               chatId: req.chatId,
               paneId: req.paneId ?? existing?.paneId ?? null,
               away: existing?.away ?? false,
-              notifyIdle: existing?.notifyIdle ?? false,
-              idleMinMinutes: existing?.idleMinMinutes ?? 10,
               boundAt: new Date().toISOString(),
             };
             bindings.set(b);
@@ -485,7 +463,7 @@ export async function runDaemon(): Promise<void> {
           // install whose bindings.json is gone. Creating a second group for
           // the same project would split the conversation in two, so look for
           // one the bot made for exactly this project root before creating.
-          const marker = `herdr-lark · ${req.root}`;
+          const marker = `agent-lark · ${req.root}`;
           try {
             for (const summary of await channel.listChats()) {
               let info;
@@ -501,8 +479,6 @@ export async function runDaemon(): Promise<void> {
                 chatId: summary.id,
                 paneId: req.paneId,
                 away: false,
-                notifyIdle: false,
-                idleMinMinutes: 10,
                 boundAt: new Date().toISOString(),
               };
               bindings.set(b);
@@ -518,14 +494,14 @@ export async function runDaemon(): Promise<void> {
             return {
               ok: false,
               code: 4,
-              message: '不知道该把谁拉进新群（没有记录应用 owner）。用 --chat <chat_id> 绑定一个你自己建好的群。',
+              message: msg.bindNoOwner,
             };
           }
           const name = req.name?.trim() || `🤖 ${req.label}`;
           try {
             const { chatId } = await channel.createChat({
               name,
-              description: `herdr-lark · ${req.root}`,
+              description: `agent-lark · ${req.root}`,
               inviteUserIds: [owner],
               userIdType: 'open_id',
             });
@@ -536,8 +512,6 @@ export async function runDaemon(): Promise<void> {
               chatId,
               paneId: req.paneId,
               away: false,
-              notifyIdle: false,
-              idleMinMinutes: 10,
               boundAt: new Date().toISOString(),
             };
             bindings.set(b);
@@ -545,22 +519,22 @@ export async function runDaemon(): Promise<void> {
             log('bind', { root: req.root, chatId, created: true });
             return { ok: true, kind: 'bind', chatId, created: true, name };
           } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
+            const detail = err instanceof Error ? err.message : String(err);
             return {
               ok: false,
-              code: /permission|99991672|scope/i.test(msg)
+              code: /permission|99991672|scope/i.test(detail)
                 ? 4
                 : 3,
-              message: `建群失败：${msg}\n若是权限问题，应用缺 im:chat（建群）权限，跑 herdr-lark setup --update 补授权，或用 --chat <chat_id> 绑已有群。`,
+              message: fill(msg.bindCreateFailed, { error: detail }),
             };
           }
         }
 
         case 'unbind': {
           const b = bindings.get(req.root);
-          if (!b) return { ok: false, code: 1, message: '这个项目本来就没绑定' };
+          if (!b) return { ok: false, code: 1, message: msg.unbindNone };
           const p = pendingFor(req.root);
-          if (p) return { ok: false, code: 4, message: '还有一个问题挂在手机上，先回答或等它超时' };
+          if (p) return { ok: false, code: 4, message: msg.unbindPending };
           bindings.remove(req.root);
           refreshPolicy();
           log('unbind', { root: req.root });
@@ -568,22 +542,16 @@ export async function runDaemon(): Promise<void> {
         }
 
         case 'setAway': {
-          const b = bindings.touch(req.root, {
-            away: req.away,
-            paneId: req.paneId,
-            notifyIdle: req.notifyIdle,
-            idleMinMinutes: req.idleMinMinutes,
-          });
-          if (!b) return { ok: false, code: 4, message: '这个项目还没 bind，先跑 herdr-lark bind' };
+          const b = bindings.touch(req.root, { away: req.away, paneId: req.paneId });
+          if (!b) return { ok: false, code: 4, message: msg.notBound };
           lastStatus.delete(req.root);
-          workingSince.delete(req.root);
-          log('away', { root: req.root, away: req.away, notifyIdle: b.notifyIdle });
+          log('away', { root: req.root, away: req.away });
           return { ok: true, kind: 'ack' };
         }
 
         case 'notify': {
           const b = bindings.touch(req.root, { paneId: req.paneId, label: req.label });
-          if (!b) return { ok: false, code: 4, message: '这个项目还没 bind，先跑 herdr-lark bind' };
+          if (!b) return { ok: false, code: 4, message: msg.notBound };
           let payload;
           try {
             payload = validateNotify(req.payload);
@@ -596,27 +564,13 @@ export async function runDaemon(): Promise<void> {
             log('notify.sent', { root: b.root });
             return { ok: true, kind: 'ack' };
           } catch (err) {
-            return { ok: false, code: 3, message: `发送失败：${err instanceof Error ? err.message : String(err)}` };
-          }
-        }
-
-        case 'say': {
-          const b = bindings.touch(req.root, { paneId: req.paneId, label: req.label });
-          if (!b) return { ok: false, code: 4, message: '这个项目还没 bind，先跑 herdr-lark away on' };
-          const text = req.text.trim();
-          if (!text) return { ok: false, code: 1, message: '没有内容可发' };
-          try {
-            await channel.send(b.chatId, { card: sayCard(text, b.label, req.title) });
-            log('say.sent', { root: b.root, chars: text.length });
-            return { ok: true, kind: 'ack' };
-          } catch (err) {
-            return { ok: false, code: 3, message: `发送失败：${err instanceof Error ? err.message : String(err)}` };
+            return { ok: false, code: 3, message: fill(msg.sendFailed, { error: err instanceof Error ? err.message : String(err) }) };
           }
         }
 
         case 'sendFile': {
           const b = bindings.touch(req.root, { paneId: req.paneId, label: req.label });
-          if (!b) return { ok: false, code: 4, message: '这个项目还没 bind，先跑 herdr-lark bind' };
+          if (!b) return { ok: false, code: 4, message: msg.notBound };
           const checked = resolveSendable(req.path, b.root);
           if ('error' in checked) return { ok: false, code: 1, message: checked.error };
           const { real, bytes } = checked;
@@ -635,15 +589,14 @@ export async function runDaemon(): Promise<void> {
             log('file.sent', { root: b.root, isImage, size: bytes.length });
             return { ok: true, kind: 'ack' };
           } catch (err) {
-            return { ok: false, code: 3, message: `发送失败：${err instanceof Error ? err.message : String(err)}` };
+            return { ok: false, code: 3, message: fill(msg.sendFailed, { error: err instanceof Error ? err.message : String(err) }) };
           }
         }
 
         case 'ask': {
           const b = bindings.touch(req.root, { paneId: req.paneId, label: req.label });
-          if (!b) return { ok: false, code: 4, message: '这个项目还没 bind，先跑 herdr-lark bind' };
-          if (pendingFor(req.root))
-            return { ok: false, code: 4, message: '这个项目已经有一个问题挂在手机上了；一次只能问一个' };
+          if (!b) return { ok: false, code: 4, message: msg.notBound };
+          if (pendingFor(req.root)) return { ok: false, code: 4, message: msg.askPending };
           let payload: AskPayload;
           try {
             payload = validateAsk(req.payload);
@@ -659,7 +612,7 @@ export async function runDaemon(): Promise<void> {
             });
             messageId = sent.messageId;
           } catch (err) {
-            return { ok: false, code: 3, message: `发送失败：${err instanceof Error ? err.message : String(err)}` };
+            return { ok: false, code: 3, message: fill(msg.sendFailed, { error: err instanceof Error ? err.message : String(err) }) };
           }
           log('ask.sent', { reqId, root: b.root, options: payload.options.length });
 
@@ -677,7 +630,7 @@ export async function runDaemon(): Promise<void> {
                 void closeWithout(p, 'timedout', {
                   ok: false,
                   code: 2,
-                  message: `等了 ${Math.round(req.timeoutMs / 1000)} 秒没人回答`,
+                  message: fill(msg.askTimedOut, { seconds: Math.round(req.timeoutMs / 1000) }),
                 });
               }, req.timeoutMs),
             };
@@ -689,22 +642,22 @@ export async function runDaemon(): Promise<void> {
                 void closeWithout(p, 'cancelled', {
                   ok: false,
                   code: 3,
-                  message: '提问方断开了',
+                  message: msg.askClientGone,
                 });
             });
-            ctx.note(`已发到飞书群，等你回答（最长 ${Math.round(req.timeoutMs / 1000)} 秒）`);
+            ctx.note(fill(msg.askNote, { seconds: Math.round(req.timeoutMs / 1000) }));
           });
         }
 
         default:
-          return { ok: false, code: 1, message: '不认识的请求' };
+          return { ok: false, code: 1, message: msg.ipcUnknownRequest };
       }
     },
   });
 
   writeFileSync(pidPath(), `${process.pid}\n`, { mode: 0o600 });
   log('daemon.started', { pid: process.pid });
-  process.stdout.write(`herdr-lark daemon: pid ${process.pid}，已连上飞书，socket ${sockPath()}\n`);
+  process.stdout.write(`${fill(msg.daemonReady, { pid: process.pid, sock: sockPath() })}\n`);
 
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
     process.on(sig, () => void shutdown(sig));

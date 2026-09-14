@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { dirname, join } from 'node:path';
+import { fill, msg } from './texts.js';
 
 export interface AppCreds {
   appId: string;
@@ -22,25 +23,25 @@ export interface ResolvedCreds extends AppCreds {
 
 export type StoreKind = 'keychain' | 'file' | 'none';
 
-const SERVICE = process.env.HERDR_LARK_KEYCHAIN?.trim() || 'herdr-lark';
+const SERVICE = process.env.AGENT_LARK_KEYCHAIN?.trim() || 'agent-lark';
 const ACCOUNT = 'app';
 
-/** `$XDG_CONFIG_HOME/herdr-lark`, i.e. `~/.config/herdr-lark` by default. */
+/** `$XDG_CONFIG_HOME/agent-lark`, i.e. `~/.config/agent-lark` by default. */
 export function configDir(): string {
   const xdg = process.env.XDG_CONFIG_HOME?.trim();
   const base = xdg || join(homedir(), platform() === 'win32' ? 'AppData/Roaming' : '.config');
-  return join(base, 'herdr-lark');
+  return join(base, 'agent-lark');
 }
 
 export const credentialsFile = (): string => join(configDir(), 'credentials.json');
-export const envFile = (): string => process.env.HERDR_LARK_ENV_FILE?.trim() || join(configDir(), '.env');
+export const envFile = (): string => process.env.AGENT_LARK_ENV_FILE?.trim() || join(configDir(), '.env');
 
 /**
  * Which secret store `setup` writes to. Defaults to the OS keychain where one
- * is reachable, a 0600 file otherwise. `HERDR_LARK_STORE` overrides.
+ * is reachable, a 0600 file otherwise. `AGENT_LARK_STORE` overrides.
  */
 export function defaultStore(): StoreKind {
-  const forced = process.env.HERDR_LARK_STORE?.trim();
+  const forced = process.env.AGENT_LARK_STORE?.trim();
   if (forced === 'keychain' || forced === 'file' || forced === 'none') return forced;
   return keychainAvailable() ? 'keychain' : 'file';
 }
@@ -49,11 +50,11 @@ export function defaultStore(): StoreKind {
 export function keychainName(): string {
   switch (platform()) {
     case 'darwin':
-      return 'macOS 钥匙串';
+      return msg.keychainDarwin;
     case 'win32':
-      return 'Windows DPAPI（当前用户加密）';
+      return msg.keychainWin32;
     default:
-      return 'libsecret (secret-tool)';
+      return msg.keychainLinux;
   }
 }
 
@@ -149,7 +150,7 @@ function keychainWrite(creds: AppCreds): void {
     });
     return;
   }
-  execFileSync('secret-tool', ['store', '--label', 'herdr-lark', 'service', SERVICE, 'account', ACCOUNT], {
+  execFileSync('secret-tool', ['store', '--label', 'agent-lark', 'service', SERVICE, 'account', ACCOUNT], {
     input: blob,
     stdio: ['pipe', 'ignore', 'pipe'],
   });
@@ -177,7 +178,7 @@ function fileRead(): AppCreds | null {
     const st = statSync(f);
     // 0600 is the contract; anything looser is a real exposure, not a nit.
     if (platform() !== 'win32' && (st.mode & 0o077) !== 0)
-      process.stderr.write(`herdr-lark: 警告 ${f} 权限过宽（${(st.mode & 0o777).toString(8)}），建议 chmod 600\n`);
+      process.stderr.write(`${fill(msg.credsPermWarning, { file: f, mode: (st.mode & 0o777).toString(8) })}\n`);
     return JSON.parse(readFileSync(f, 'utf8')) as AppCreds;
   } catch {
     return null;
@@ -230,8 +231,8 @@ function pair(id: string | undefined, secret: string | undefined): { appId: stri
  * Resolution order, highest first. Documented in README — users on a shared
  * machine need to know which layer wins.
  *
- *   1. HERDR_LARK_APP_ID / HERDR_LARK_APP_SECRET       (prefixed env)
- *   2. the env file (HERDR_LARK_ENV_FILE, else <config>/.env)
+ *   1. AGENT_LARK_APP_ID / AGENT_LARK_APP_SECRET       (prefixed env)
+ *   2. the env file (AGENT_LARK_ENV_FILE, else <config>/.env)
  *   3. the OS keychain                                  (what `setup` writes)
  *   4. <config>/credentials.json, mode 0600
  *   5. LARK_APP_ID / LARK_APP_SECRET                    (unprefixed, last resort)
@@ -240,17 +241,17 @@ function pair(id: string | undefined, secret: string | undefined): { appId: stri
  * names, so a machine running more than one would otherwise cross-wire.
  */
 export function resolveCreds(): ResolvedCreds | null {
-  const prefixed = pair(process.env.HERDR_LARK_APP_ID, process.env.HERDR_LARK_APP_SECRET);
+  const prefixed = pair(process.env.AGENT_LARK_APP_ID, process.env.AGENT_LARK_APP_SECRET);
   if (prefixed)
-    return { ...prefixed, ownerOpenId: process.env.HERDR_LARK_OWNER_OPEN_ID?.trim(), source: 'env', origin: '环境变量 HERDR_LARK_APP_ID/SECRET' };
+    return { ...prefixed, ownerOpenId: process.env.AGENT_LARK_OWNER_OPEN_ID?.trim(), source: 'env', origin: msg.originEnv };
 
   const ef = envFile();
   if (existsSync(ef)) {
     const vars = readEnvFile(ef);
     const fromFile =
-      pair(vars.HERDR_LARK_APP_ID, vars.HERDR_LARK_APP_SECRET) ?? pair(vars.LARK_APP_ID, vars.LARK_APP_SECRET);
+      pair(vars.AGENT_LARK_APP_ID, vars.AGENT_LARK_APP_SECRET) ?? pair(vars.LARK_APP_ID, vars.LARK_APP_SECRET);
     if (fromFile)
-      return { ...fromFile, ownerOpenId: vars.HERDR_LARK_OWNER_OPEN_ID, source: 'env-file', origin: ef };
+      return { ...fromFile, ownerOpenId: vars.AGENT_LARK_OWNER_OPEN_ID, source: 'env-file', origin: ef };
   }
 
   const kc = keychainRead();
@@ -261,13 +262,13 @@ export function resolveCreds(): ResolvedCreds | null {
 
   const generic = pair(process.env.LARK_APP_ID, process.env.LARK_APP_SECRET);
   if (generic)
-    return { ...generic, source: 'env-generic', origin: '环境变量 LARK_APP_ID/SECRET（通用名，可能与其他飞书工具冲突）' };
+    return { ...generic, source: 'env-generic', origin: msg.originGeneric };
 
   return null;
 }
 
 export function writeCreds(creds: AppCreds, store: StoreKind = defaultStore()): string {
-  if (store === 'none') return '没有落盘（这次只在内存里用）';
+  if (store === 'none') return msg.credsNotPersisted;
   if (store === 'keychain') {
     keychainWrite(creds);
     return `${keychainName()} (service: ${SERVICE})`;
@@ -290,12 +291,12 @@ export function clearCreds(): void {
 export function credsReport(): string[] {
   const lines: string[] = [];
   const mark = (ok: boolean): string => (ok ? '✓' : '·');
-  lines.push(`${mark(!!pair(process.env.HERDR_LARK_APP_ID, process.env.HERDR_LARK_APP_SECRET))} 环境变量 HERDR_LARK_APP_ID / HERDR_LARK_APP_SECRET`);
+  lines.push(`${mark(!!pair(process.env.AGENT_LARK_APP_ID, process.env.AGENT_LARK_APP_SECRET))} ${msg.reportEnv}`);
   const ef = envFile();
   const vars = existsSync(ef) ? readEnvFile(ef) : {};
-  lines.push(`${mark(!!(pair(vars.HERDR_LARK_APP_ID, vars.HERDR_LARK_APP_SECRET) ?? pair(vars.LARK_APP_ID, vars.LARK_APP_SECRET)))} env 文件 ${ef}`);
-  lines.push(`${mark(!!keychainRead())} ${keychainName()} (service: ${SERVICE})${keychainAvailable() ? '' : '（本机不可用）'}`);
+  lines.push(`${mark(!!(pair(vars.AGENT_LARK_APP_ID, vars.AGENT_LARK_APP_SECRET) ?? pair(vars.LARK_APP_ID, vars.LARK_APP_SECRET)))} ${fill(msg.reportEnvFile, { file: ef })}`);
+  lines.push(`${mark(!!keychainRead())} ${keychainName()} (service: ${SERVICE})${keychainAvailable() ? '' : msg.reportUnavailable}`);
   lines.push(`${mark(!!fileRead())} ${credentialsFile()}`);
-  lines.push(`${mark(!!pair(process.env.LARK_APP_ID, process.env.LARK_APP_SECRET))} 环境变量 LARK_APP_ID / LARK_APP_SECRET（通用名，最后兜底）`);
+  lines.push(`${mark(!!pair(process.env.LARK_APP_ID, process.env.LARK_APP_SECRET))} ${msg.reportGeneric}`);
   return lines;
 }

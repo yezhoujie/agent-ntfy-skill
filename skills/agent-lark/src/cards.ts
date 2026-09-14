@@ -1,55 +1,7 @@
+import { fill, t } from './texts.js';
 import type { AskOption, AskPayload, Lang, NotifyPayload } from './validate.js';
 
 export type AskState = 'pending' | 'answered' | 'timedout' | 'cancelled';
-
-const TEXTS = {
-  zh: {
-    doing: '在做',
-    background: '背景',
-    blocker: '卡点',
-    options: '选项',
-    recommend: '我的判断',
-    question: '你的判断',
-    recommended: '← 我推荐',
-    yourReply: '你的回复',
-    theQuestion: '（原问题）',
-    hint: '想说别的？直接在本群发消息就行，第一条消息就是答复。',
-    hintDanger: '红色按钮会二次确认；也可以直接在群里打字。',
-    answered: '已回答',
-    timedout: '已超时',
-    cancelled: '已取消',
-    confirmTitle: '确认执行',
-    confirmText: (label: string) => `“${label}”是不可逆或高代价的操作。确定选它？`,
-    notDelivered: '没能送达',
-    notDeliveredBody: (why: string) => `刚才那条消息没能送进终端：${why}`,
-    statusBlocked: '等你输入',
-    statusIdle: '干完了',
-  },
-  en: {
-    doing: 'Doing',
-    background: 'Background',
-    blocker: 'Blocker',
-    options: 'Options',
-    recommend: 'My recommendation',
-    question: 'Your call',
-    recommended: '← recommended',
-    yourReply: 'Your reply',
-    theQuestion: '(the question as asked)',
-    hint: 'Want to say something else? Just send a message in this group — the first one is the answer.',
-    hintDanger: 'Red buttons ask for confirmation; you can also just type here.',
-    answered: 'Answered',
-    timedout: 'Timed out',
-    cancelled: 'Cancelled',
-    confirmTitle: 'Confirm',
-    confirmText: (label: string) => `"${label}" is irreversible or high-cost. Go ahead?`,
-    notDelivered: 'Not delivered',
-    notDeliveredBody: (why: string) => `That message never reached the terminal: ${why}`,
-    statusBlocked: 'waiting for you',
-    statusIdle: 'finished',
-  },
-} as const;
-
-export const t = (lang: Lang = 'zh') => TEXTS[lang];
 
 /**
  * Card JSON 2.0. The `markdown` element is a real rich-text component —
@@ -150,7 +102,7 @@ export function askCard(ctx: AskCardContext): object {
       if (o.danger) {
         button.confirm = {
           title: { tag: 'plain_text', content: T.confirmTitle },
-          text: { tag: 'plain_text', content: T.confirmText(o.label) },
+          text: { tag: 'plain_text', content: fill(T.confirmText, { label: o.label }) },
         };
       }
       elements.push(button);
@@ -164,11 +116,6 @@ export function askCard(ctx: AskCardContext): object {
   );
 }
 
-/** A conversational reply: the terminal answer, mirrored verbatim. */
-export function sayCard(body: string, projectLabel: string, title?: string): object {
-  return card({ icon: '💬', title: title?.trim() || `[${projectLabel}]`, template: 'turquoise' }, [md(body)]);
-}
-
 export function notifyCard(p: NotifyPayload, projectLabel: string): object {
   return card({ icon: '📣', title: `[${projectLabel}] ${p.title}`, template: 'wathet' }, [md(p.body)]);
 }
@@ -177,23 +124,12 @@ export function notifyCard(p: NotifyPayload, projectLabel: string): object {
 export function receiptCard(projectLabel: string, why: string, lang: Lang = 'zh'): object {
   const T = t(lang);
   return card({ icon: '⚠️', title: `[${projectLabel}] ${T.notDelivered}`, template: 'orange' }, [
-    md(T.notDeliveredBody(why)),
+    md(fill(T.notDeliveredBody, { why })),
   ]);
 }
 
-export function statusCard(
-  projectLabel: string,
-  status: 'blocked' | 'idle',
-  detail: string,
-  lang: Lang = 'zh',
-): object {
+/** Pushed while remote mode is on and the agent is stuck on a prompt only a human can answer. */
+export function statusCard(projectLabel: string, detail: string, lang: Lang = 'zh'): object {
   const T = t(lang);
-  return card(
-    {
-      icon: status === 'blocked' ? '🔔' : '🏁',
-      title: `[${projectLabel}] ${status === 'blocked' ? T.statusBlocked : T.statusIdle}`,
-      template: status === 'blocked' ? 'orange' : 'green',
-    },
-    [md(detail)],
-  );
+  return card({ icon: '🔔', title: `[${projectLabel}] ${T.statusBlocked}`, template: 'orange' }, [md(detail)]);
 }

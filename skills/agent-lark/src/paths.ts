@@ -5,8 +5,8 @@ import { basename, join, resolve } from 'node:path';
 
 /** Daemon-side state directory. Everything the daemon owns lives here. */
 export function homeDir(): string {
-  const override = process.env.HERDR_LARK_HOME?.trim();
-  return override ? resolve(override) : join(homedir(), '.herdr-lark');
+  const override = process.env.AGENT_LARK_HOME?.trim();
+  return override ? resolve(override) : join(homedir(), '.agent-lark');
 }
 
 export function ensureHomeDir(): string {
@@ -45,7 +45,7 @@ export function projectLabel(root: string): string {
   return basename(root) || root;
 }
 
-export const projectStateDir = (root: string): string => join(root, '.herdr-lark');
+export const projectStateDir = (root: string): string => join(root, '.agent-lark');
 export const projectStatePath = (root: string): string => join(projectStateDir(root), 'state.json');
 
 export interface ProjectState {

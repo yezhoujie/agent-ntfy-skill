@@ -1,6 +1,7 @@
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
 import { existsSync, unlinkSync } from 'node:fs';
 import { ensureHomeDir, sockPath } from './paths.js';
+import { fill, msg } from './texts.js';
 
 /** Every request a thin client can make of the daemon. */
 export type Request =
@@ -9,10 +10,9 @@ export type Request =
   | { type: 'list' }
   | { type: 'bind'; root: string; label: string; paneId: string | null; chatId?: string; name?: string }
   | { type: 'unbind'; root: string }
-  | { type: 'setAway'; root: string; away: boolean; paneId: string | null; notifyIdle?: boolean; idleMinMinutes?: number }
+  | { type: 'setAway'; root: string; away: boolean; paneId: string | null }
   | { type: 'ask'; root: string; label: string; paneId: string | null; payload: unknown; timeoutMs: number }
   | { type: 'notify'; root: string; label: string; paneId: string | null; payload: unknown }
-  | { type: 'say'; root: string; label: string; paneId: string | null; text: string; title?: string }
   | { type: 'sendFile'; root: string; label: string; paneId: string | null; path: string; caption?: string };
 
 export interface DaemonStatus {
@@ -27,7 +27,7 @@ export type Response =
   | { ok: true; kind: 'pong'; status: DaemonStatus }
   | { ok: true; kind: 'ask'; reply: string; via: 'button' | 'text' }
   | { ok: true; kind: 'bind'; chatId: string; created: boolean; name: string }
-  | { ok: true; kind: 'list'; bindings: Array<{ root: string; label: string; chatId: string; paneId: string | null; away: boolean; notifyIdle: boolean; idleMinMinutes: number }> }
+  | { ok: true; kind: 'list'; bindings: Array<{ root: string; label: string; chatId: string; paneId: string | null; away: boolean }> }
   | { ok: true; kind: 'ack' }
   /** code maps 1:1 onto the CLI exit code the client should use. */
   | { ok: false; code: 1 | 2 | 3 | 4; message: string };
@@ -94,16 +94,16 @@ export function request(
     sock.on('error', (err: NodeJS.ErrnoException) => {
       const hint =
         err.code === 'ENOENT' || err.code === 'ECONNREFUSED'
-          ? 'daemon 没在跑。先执行：herdr-lark daemon --detach'
-          : `无法连接 daemon: ${err.message}`;
+          ? msg.ipcDaemonDown
+          : fill(msg.ipcConnect, { message: err.message });
       done({ ok: false, code: 3, message: hint });
     });
     sock.on('close', () => {
-      done({ ok: false, code: 3, message: 'daemon 在回答之前断开了连接（它可能崩溃或被停止了）' });
+      done({ ok: false, code: 3, message: msg.ipcClosed });
     });
     if (opts.timeoutMs) {
       sock.setTimeout(opts.timeoutMs, () => {
-        done({ ok: false, code: 3, message: 'daemon 没有在预期时间内响应' });
+        done({ ok: false, code: 3, message: msg.ipcTimeout });
       });
     }
   });
@@ -145,7 +145,7 @@ export function serve(handlers: ServeHandlers): Promise<Server> {
         try {
           req = JSON.parse(line) as Request;
         } catch {
-          sock.write(`${JSON.stringify({ frame: 'result', body: { ok: false, code: 1, message: '无法解析的请求' } })}\n`);
+          sock.write(`${JSON.stringify({ frame: 'result', body: { ok: false, code: 1, message: msg.ipcBadRequest } })}\n`);
           sock.end();
           return;
         }

@@ -66,20 +66,19 @@ function renderCard(card) {
 }
 
 const samples = [
-  ['待回答（三个选项，第三个是不可逆项）', askCard({ payload, projectLabel: 'herdr-lark', reqId: 'r1', state: 'pending' })],
-  ['已回答（按钮点了推荐项）', askCard({ payload, projectLabel: 'herdr-lark', reqId: 'r1', state: 'answered', reply: '保留固定目录' })],
-  ['已回答（手打的自由文本）', askCard({ payload, projectLabel: 'herdr-lark', reqId: 'r1', state: 'answered', reply: '都不要，改成放到 /tmp 下按天分目录，第二天自动过期' })],
-  ['超时', askCard({ payload, projectLabel: 'herdr-lark', reqId: 'r1', state: 'timedout' })],
-  ['取消（提问方被杀）', askCard({ payload, projectLabel: 'herdr-lark', reqId: 'r1', state: 'cancelled' })],
+  ['待回答（三个选项，第三个是不可逆项）', askCard({ payload, projectLabel: 'agent-lark', reqId: 'r1', state: 'pending' })],
+  ['已回答（按钮点了推荐项）', askCard({ payload, projectLabel: 'agent-lark', reqId: 'r1', state: 'answered', reply: '保留固定目录' })],
+  ['已回答（手打的自由文本）', askCard({ payload, projectLabel: 'agent-lark', reqId: 'r1', state: 'answered', reply: '都不要，改成放到 /tmp 下按天分目录，第二天自动过期' })],
+  ['超时', askCard({ payload, projectLabel: 'agent-lark', reqId: 'r1', state: 'timedout' })],
+  ['取消（提问方被杀）', askCard({ payload, projectLabel: 'agent-lark', reqId: 'r1', state: 'cancelled' })],
   ['单向通知 notify', notifyCard({ title: '测试全绿，开始迁移', body: '三个 CI runner 全部通过。\n\n下一步：**staging 库的 schema 迁移**，大约 10 分钟。完事再通知你。', lang: 'zh' }, 'ctle-job')],
   ['注入失败回执', receiptCard('ctle-job', '终端里的 agent 正卡在一个需要你本人确认的提示上，收不了新输入。回电脑前处理一下。')],
-  ['agent 卡住了', statusCard('ctle-job', 'blocked', '**宜兴网站内容安全任务数据丢失**\n窗格 w3:p1')],
-  ['agent 干完了', statusCard('herdr-lark', 'idle', '**Feishu remote interaction skill**\n窗格 w4:p1')],
+  ['agent 卡住了', statusCard('ctle-job', '**宜兴网站内容安全任务数据丢失**\n窗格 w3:p1')],
 ];
 
 const html = `<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
-<title>herdr-lark 卡片预览</title>
+<title>agent-lark 卡片预览</title>
 <style>
   :root { color-scheme: light; }
   body { margin:0; padding:32px; background:#f5f6f7; font:14px/1.6 -apple-system,"PingFang SC","Helvetica Neue",sans-serif; color:#1f2329; }
@@ -102,7 +101,7 @@ const html = `<!doctype html>
   .lock { margin-left:6px; font-size:12px; }
   @media (max-width:480px) { body{padding:16px} .item{width:100%} }
 </style></head><body>
-<h1>herdr-lark 卡片预览</h1>
+<h1>agent-lark 卡片预览</h1>
 <div class="sub">这是 <code>src/cards.ts</code> 渲染出的真实卡片 JSON，按飞书的样式画出来。飞书实际渲染会有细微差别（字体、圆角），结构与文案一致。</div>
 <div class="grid">
 ${samples.map(([cap, card]) => `<div class="item"><div class="cap">${esc(cap)}</div>${renderCard(card)}</div>`).join('\n')}
