@@ -7,6 +7,8 @@ version is only a tag you can pin (`npx skills add 'yezhoujie/agent-ntfy-skill#v
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-09-14
+
 ### Added
 
 - `confirm-sub --report-to <pane>`: a confirmation pane opened by the CLI sends its result (confirmed / timed
@@ -30,6 +32,8 @@ version is only a tag you can pin (`npx skills add 'yezhoujie/agent-ntfy-skill#v
 - `away off` clears `slot` / `confirmed` in `state.json` only when the lease was actually released (or there
   was none); when the release is refused or the daemon is not running the file keeps saying what the daemon's
   lease says. It also no longer re-targets the injection pane.
+- Restart the daemon after upgrading: `away on` now needs the daemon's `lease` command, which an older daemon
+  does not know (stop it with its own CLI: `agent-ntfy daemon --stop`).
 
 ## [0.1.1] - 2026-09-14
 
@@ -127,6 +131,7 @@ relative to those untagged versions.
 - A missing `security` command (the keychain exists only on macOS) is reported as such, with the
   `AGENT_NTFY_STORE` alternatives, instead of as a socket error.
 
-[Unreleased]: https://github.com/yezhoujie/agent-ntfy-skill/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/yezhoujie/agent-ntfy-skill/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/yezhoujie/agent-ntfy-skill/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/yezhoujie/agent-ntfy-skill/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/yezhoujie/agent-ntfy-skill/releases/tag/v0.1.0
