@@ -13,7 +13,7 @@ process.env.AGENT_LARK_APP_SECRET = 'fake-secret';
 
 const { runDaemon, DaemonStartError } = await import('../src/daemon.js');
 const { request } = await import('../src/ipc.js');
-const { msg } = await import('../src/texts.js');
+const { fill, msg, t } = await import('../src/texts.js');
 
 type Daemon = Awaited<ReturnType<typeof runDaemon>>;
 const homes: string[] = [];
@@ -51,7 +51,7 @@ async function ping() {
   return res.ok && res.kind === 'pong' ? res.status : null;
 }
 
-async function start(channelOpts: FakeChannelOptions = {}, retryMs = 50, opts: { owner?: string } = {}) {
+async function start(channelOpts: FakeChannelOptions = {}, retryMs = 50, opts: { owner?: string; pollMs?: number } = {}) {
   const home = freshHome();
   // The owner is read from the environment when the daemon starts; each test
   // says whether one is known.
@@ -59,7 +59,7 @@ async function start(channelOpts: FakeChannelOptions = {}, retryMs = 50, opts: {
   else delete process.env.AGENT_LARK_OWNER_OPEN_ID;
   const fake = createFakeChannel(channelOpts);
   const herdr = createFakeHerdr();
-  const daemon = await runDaemon({ createChannel: () => fake.channel, herdr: herdr.deps, connectRetryMs: retryMs });
+  const daemon = await runDaemon({ createChannel: () => fake.channel, herdr: herdr.deps, connectRetryMs: retryMs, pollMs: opts.pollMs });
   daemons.push(daemon);
   return { fake, herdr, daemon, home };
 }
@@ -647,4 +647,342 @@ test('a damaged bindings.json stops the daemon from starting with code 4 and the
     (err: unknown) => err instanceof DaemonStartError && err.code === 4 && err.message.includes(join(home, 'bindings.json')),
   );
   assert.equal(readFileSync(join(home, 'bindings.json'), 'utf8'), '{"bindings": [');
+});
+
+// ---- cards: multi-choice form, urgent flag, reactions, card language ---------
+
+const multiPayload = {
+  ...askPayload,
+  select: 'multi',
+  recommend: ['a'],
+  options: [
+    { id: 'a', label: 'Keep', consequence: 'c' },
+    { id: 'b', label: 'Drop', consequence: 'c' },
+    { id: 'c', label: 'Wipe', consequence: 'c', danger: true },
+  ],
+};
+type Card = { header: { template: string; title: { content: string } }; body: { elements: Array<Record<string, unknown>> } };
+const sentCard = (fake: { sent: Array<{ chatId?: string; input?: unknown; update?: string; card?: object }> }, i: number): Card =>
+  (fake.sent[i] as { input: { card: Card } }).input.card;
+// What Feishu sends back: the form values keyed by checker name, i.e. `opt:<id>`.
+const formSubmit = (reqId: string, ticks: Record<string, unknown>, chatId = 'oc_x') => ({
+  messageId: 'om_1',
+  chatId,
+  operator: { openId: 'ou_human' },
+  action: {
+    value: { reqId },
+    tag: 'button',
+    name: 'submit',
+    formValue: Object.fromEntries(Object.entries(ticks).map(([id, v]) => [`opt:${id}`, v])),
+  },
+});
+const reqIdOf = (card: Card): string => {
+  const form = card.body.elements.find((e) => e.tag === 'form') as { elements: Array<Record<string, unknown>> };
+  const submit = form.elements.at(-1) as { behaviors: Array<{ value: { reqId: string } }> };
+  return submit.behaviors[0]!.value.reqId;
+};
+
+test('multi-choice: the form is sent, a submit with two ticked comes back as "Keep、Drop" via form, the answered card rides the callback', PER_TEST, async () => {
+  const { daemon, fake } = await start();
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: null, payload: multiPayload, timeoutMs: 5000 });
+  await waitFor(() => fake.sent.length === 1, 'the question card to be sent');
+  const card = sentCard(fake, 0);
+  assert.equal(card.header.template, 'blue');
+  const reqId = reqIdOf(card);
+  const res = (await fake.cardAction(formSubmit(reqId, { a: true, b: 'true', c: false }))) as { toast: { type: string }; card: { type: string; data: Card } };
+  assert.equal(res.toast.type, 'success');
+  assert.equal(res.card.type, 'raw');
+  assert.equal(res.card.data.header.template, 'green');
+  assert.deepEqual(await asking, { ok: true, kind: 'ask', reply: 'Keep、Drop', via: 'form' });
+  const last = await waitFor(() => {
+    const l = fake.sent.at(-1);
+    return l && 'update' in l ? l : null;
+  }, 'the answered card rewrite');
+  assert.equal(last.update, 'om_1');
+  assert.equal((last.card as Card).header.template, 'green');
+  await daemon.stop();
+});
+
+test('multi-choice: an empty submit is an error toast and the question stays open; a later submit still answers it', PER_TEST, async () => {
+  const { daemon, fake } = await start();
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: null, payload: multiPayload, timeoutMs: 5000 });
+  await waitFor(() => fake.sent.length === 1, 'the question card to be sent');
+  const reqId = reqIdOf(sentCard(fake, 0));
+  const empty = (await fake.cardAction(formSubmit(reqId, { a: false, b: 'false', c: 0 }))) as { toast: { type: string; content: string }; card?: unknown };
+  assert.equal(empty.toast.type, 'error');
+  assert.equal(empty.toast.content, t('zh').pickAtLeastOne);
+  assert.equal(empty.card, undefined);
+  assert.equal((await ping())?.pendingAsks, 1);
+  const again = await request({ type: 'ask', root: '/p', label: 'p', paneId: null, payload: multiPayload, timeoutMs: 1000 });
+  assert.equal(again.ok, false);
+  await fake.cardAction(formSubmit(reqId, { c: true }));
+  assert.deepEqual(await asking, { ok: true, kind: 'ask', reply: 'Wipe', via: 'form' });
+  await daemon.stop();
+});
+
+test('multi-choice: a submit after the question closed is injected as a follow-up with the labels', PER_TEST, async () => {
+  const { daemon, fake, herdr } = await start();
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: 'w1:p1', payload: multiPayload, timeoutMs: 5000 });
+  await waitFor(() => fake.sent.length === 1, 'the question card to be sent');
+  const reqId = reqIdOf(sentCard(fake, 0));
+  await fake.message({ chatId: 'oc_x', content: 'wait' });
+  await asking;
+  const late = (await fake.cardAction(formSubmit(reqId, { b: true, c: true }))) as { toast: { type: string } };
+  assert.equal(late.toast.type, 'info');
+  await waitFor(() => herdr.prompts.length === 1, 'the follow-up injection');
+  assert.equal(herdr.prompts[0]!.paneId, 'w1:p1');
+  assert.equal(herdr.prompts[0]!.text, `[agent-lark remote] ${fill(msg.latePick, { labels: 'Drop、Wipe' })}`);
+  await daemon.stop();
+});
+
+test('multi-choice: typing in the group answers with the whole text', PER_TEST, async () => {
+  const { daemon, fake } = await start();
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: null, payload: multiPayload, timeoutMs: 5000 });
+  await waitFor(() => fake.sent.length === 1, 'the question card to be sent');
+  await fake.message({ chatId: 'oc_x', content: 'Keep, and archive the rest' });
+  assert.deepEqual(await asking, { ok: true, kind: 'ask', reply: 'Keep, and archive the rest', via: 'text' });
+  await daemon.stop();
+});
+
+test('ask --urgent: the card is red and the owner is flagged through urgentApp right after the card is sent', PER_TEST, async () => {
+  const { daemon, fake, home } = await start({ urgentApp: async () => ({ code: 0, data: { invalid_user_id_list: [] } }) }, 50, { owner: 'ou_owner' });
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const notes: string[] = [];
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: null, payload: askPayload, timeoutMs: 5000, urgent: true }, { onNote: (n) => notes.push(n) });
+  await waitFor(() => fake.urgents.length === 1, 'the urgent flag');
+  assert.equal(sentCard(fake, 0).header.template, 'red');
+  assert.deepEqual(fake.urgents, [{ path: { message_id: 'om_1' }, params: { user_id_type: 'open_id' }, data: { user_id_list: ['ou_owner'] } }]);
+  await fake.message({ chatId: 'oc_x', content: 'Keep' });
+  assert.deepEqual(await asking, { ok: true, kind: 'ask', reply: 'Keep', via: 'text' });
+  assert.equal(notes.filter((n) => /urgent/.test(n)).length, 0, notes.join('\n'));
+  assert.match(readFileSync(join(home, 'daemon.log'), 'utf8'), /urgent\.sent/);
+  await daemon.stop();
+});
+
+test('ask --urgent: a refused or thrown urgentApp, or no owner on record, is a note with the reason; the question goes on as usual', PER_TEST, async () => {
+  let mode: 'code' | 'throw' = 'code';
+  const { daemon, fake } = await start(
+    {
+      urgentApp: async () => {
+        if (mode === 'throw') throw new Error('network down');
+        return { code: 230024, msg: 'quota exceeded' };
+      },
+    },
+    50,
+    { owner: 'ou_owner' },
+  );
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const ask = async (expect: RegExp) => {
+    const notes: string[] = [];
+    const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: null, payload: askPayload, timeoutMs: 5000, urgent: true }, { onNote: (n) => notes.push(n) });
+    await waitFor(() => notes.some((n) => /urgent/i.test(n)), 'the urgent note');
+    assert.match(notes.find((n) => /urgent/i.test(n))!, expect);
+    await fake.message({ chatId: 'oc_x', content: 'Keep' });
+    assert.deepEqual(await asking, { ok: true, kind: 'ask', reply: 'Keep', via: 'text' });
+  };
+  await ask(/230024/);
+  mode = 'throw';
+  await ask(/network down/);
+  await daemon.stop();
+});
+
+test('ask --urgent with no owner on record: note, no urgentApp call', PER_TEST, async () => {
+  const { daemon, fake } = await start({ urgentApp: async () => ({ code: 0 }) });
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const notes: string[] = [];
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: null, payload: askPayload, timeoutMs: 5000, urgent: true }, { onNote: (n) => notes.push(n) });
+  await waitFor(() => notes.some((n) => /urgent/i.test(n)), 'the urgent note');
+  assert.equal(fake.urgents.length, 0);
+  await fake.message({ chatId: 'oc_x', content: 'Keep' });
+  await asking;
+  await daemon.stop();
+});
+
+test('a message injected into the pane gets a Get reaction; a reply to a question does not', PER_TEST, async () => {
+  const { daemon, fake, herdr } = await start();
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  await fake.message({ chatId: 'oc_x', content: 'hello there', messageId: 'om_human_1' });
+  await waitFor(() => fake.reactions.length === 1, 'the reaction');
+  assert.deepEqual(fake.reactions, [{ messageId: 'om_human_1', emoji: 'Get' }]);
+  assert.equal(herdr.prompts.length, 1);
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: 'w1:p1', payload: askPayload, timeoutMs: 5000 });
+  await waitFor(() => fake.sent.length === 1, 'the question card to be sent');
+  await fake.message({ chatId: 'oc_x', content: 'Keep', messageId: 'om_human_2' });
+  await asking;
+  await sleep(50);
+  assert.equal(fake.reactions.length, 1);
+  await daemon.stop();
+});
+
+test('injection refused by herdr: no reaction, and the receipt card speaks the language the project last used', PER_TEST, async () => {
+  const { daemon, fake, herdr } = await start();
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  await request({ type: 'notify', root: '/p', label: 'p', paneId: 'w1:p1', payload: { title: 't', body: 'b', lang: 'en' } });
+  herdr.outcome = { ok: false, code: 'agent_blocked', message: 'busy' };
+  await fake.message({ chatId: 'oc_x', content: 'hello there', messageId: 'om_human_1' });
+  const receipt = await waitFor(() => {
+    const l = fake.sent.at(-1);
+    return l && 'input' in l && fake.sent.length === 2 ? l : null;
+  }, 'the receipt card');
+  const card = (receipt.input as { card: Card }).card;
+  assert.equal(card.header.template, 'orange');
+  assert.equal(card.header.title.content, '⚠️ [p] Not delivered');
+  assert.match(String(card.body.elements[0]!.content), /stuck on a prompt only you can answer/);
+  assert.equal(fake.reactions.length, 0);
+  await daemon.stop();
+});
+
+test('a failing addReaction is only logged; the message is injected all the same', PER_TEST, async () => {
+  const { daemon, fake, herdr, home } = await start({
+    addReaction: async () => {
+      throw new Error('231017 unsupported');
+    },
+  });
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  await fake.message({ chatId: 'oc_x', content: 'hello there', messageId: 'om_human_1' });
+  await waitFor(() => /reaction\.failed/.test(readFileSync(join(home, 'daemon.log'), 'utf8')), 'the reaction failure in the log');
+  assert.equal(herdr.prompts.length, 1);
+  assert.match(herdr.prompts[0]!.text, /hello there/);
+  assert.equal(fake.sent.length, 0, 'no receipt card for a reaction failure');
+  await daemon.stop();
+});
+
+test('with no language on record the receipt card is English (the status card takes its language from the same place)', PER_TEST, async () => {
+  const { daemon, fake, herdr } = await start();
+  await connected();
+  // no pane recorded and no agent in the project: nowhere to deliver
+  await bindChat('/p', 'oc_x');
+  await fake.message({ chatId: 'oc_x', content: 'anyone?', messageId: 'om_human_1' });
+  const receipt = await waitFor(() => (fake.sent.length === 1 ? fake.sent[0] : null), 'the receipt card');
+  const card = (receipt as { input: { card: Card } }).input.card;
+  assert.equal(card.header.title.content, '⚠️ [p] Not delivered');
+  assert.match(String(card.body.elements[0]!.content), /No herdr pane is recorded/);
+  assert.equal(herdr.prompts.length, 0);
+  await daemon.stop();
+});
+
+test('the stuck-on-a-prompt alert takes the language the project last used, English when it never said', PER_TEST, async () => {
+  const { daemon, fake, herdr } = await start({}, 50, { pollMs: 20 });
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  await request({ type: 'setAway', root: '/p', away: true, paneId: 'w1:p1' });
+  // the alert fires on a transition into blocked, so the pane is seen working first
+  herdr.agents = [{ agent: 'claude', agent_status: 'working', cwd: '/p', pane_id: 'w1:p1', focused: true, terminal_title_stripped: 'deploy' }];
+  await sleep(80);
+  herdr.agents = [{ ...herdr.agents[0]!, agent_status: 'blocked' }];
+  const alert = await waitFor(() => (fake.sent.length === 1 ? fake.sent[0] : null), 'the status card');
+  const card = (alert as { input: { card: Card } }).input.card;
+  assert.equal(card.header.template, 'orange');
+  assert.equal(card.header.title.content, '🔔 [p] waiting for you');
+  assert.equal(String(card.body.elements[0]!.content), '**deploy**\npane w1:p1');
+  await daemon.stop();
+});
+
+test('the stuck-on-a-prompt alert in Chinese once the project asked in Chinese', PER_TEST, async () => {
+  const { daemon, fake, herdr } = await start({}, 50, { pollMs: 20 });
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  await request({ type: 'notify', root: '/p', label: 'p', paneId: 'w1:p1', payload: { title: 't', body: 'b', lang: 'zh' } });
+  await request({ type: 'setAway', root: '/p', away: true, paneId: 'w1:p1' });
+  herdr.agents = [{ agent: 'claude', agent_status: 'working', cwd: '/p', pane_id: 'w1:p1', focused: true }];
+  await sleep(80);
+  herdr.agents = [{ ...herdr.agents[0]!, agent_status: 'blocked' }];
+  const alert = await waitFor(() => (fake.sent.length === 2 ? fake.sent[1] : null), 'the status card');
+  const card = (alert as { input: { card: Card } }).input.card;
+  assert.equal(card.header.title.content, '🔔 [p] 等你输入');
+  assert.equal(String(card.body.elements[0]!.content), '窗格 w1:p1');
+  await daemon.stop();
+});
+
+// ---- review follow-ups: fire-and-forget paths, urgent timing, callback latency
+
+const buttonTap = (reqId: string, optionId: string, chatId = 'oc_x') => ({
+  messageId: 'om_1',
+  chatId,
+  operator: { openId: 'ou_human' },
+  action: { value: { reqId, optionId }, tag: 'button' },
+});
+const buttonReqId = (card: Card): string => (card.body.elements.find((e) => e.tag === 'button') as { value: { reqId: string } }).value.reqId;
+
+test('a promptPane that throws does not take the daemon down: logged as inject.failed, ping still answers', PER_TEST, async () => {
+  const { daemon, fake, herdr, home } = await start();
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  herdr.deps.promptPane = async () => {
+    throw new Error('herdr exploded');
+  };
+  await fake.message({ chatId: 'oc_x', content: 'hello?', messageId: 'om_human_1' });
+  await waitFor(() => /inject\.failed/.test(readFileSync(join(home, 'daemon.log'), 'utf8')), 'inject.failed in the log');
+  assert.match(readFileSync(join(home, 'daemon.log'), 'utf8'), /herdr exploded/);
+  assert.ok((await ping())?.connected, 'daemon stopped answering');
+  await daemon.stop();
+});
+
+test('ask --urgent: a tap that lands while the urgent flag is still in flight answers the question, it is not a late tap', PER_TEST, async () => {
+  const { daemon, fake, herdr } = await start(
+    { urgentApp: async () => { await sleep(300); return { code: 0 }; } },
+    50,
+    { owner: 'ou_owner' },
+  );
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: 'w1:p1', payload: askPayload, timeoutMs: 5000, urgent: true });
+  await waitFor(() => fake.sent.length === 1, 'the question card to be sent');
+  const res = (await fake.cardAction(buttonTap(buttonReqId(sentCard(fake, 0)), 'b'))) as { toast: { type: string } };
+  assert.equal(res.toast.type, 'success');
+  assert.deepEqual(await asking, { ok: true, kind: 'ask', reply: 'Drop', via: 'button' });
+  assert.equal(herdr.prompts.length, 0, 'the tap was treated as a late one and injected');
+  await daemon.stop();
+});
+
+test('a card update that never returns does not hold the callback: button and form both answer within 200 ms, card attached', PER_TEST, async () => {
+  const { daemon, fake } = await start({ updateCard: () => new Promise<void>(() => {}) });
+  await connected();
+  await bindChat('/p', 'oc_x');
+  for (const [payload, tap] of [
+    [askPayload, (card: Card) => buttonTap(buttonReqId(card), 'a')],
+    [multiPayload, (card: Card) => formSubmit(reqIdOf(card), { a: true })],
+  ] as const) {
+    const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: null, payload, timeoutMs: 5000 });
+    const n = fake.sent.length;
+    await waitFor(() => fake.sent.length === n + 1, 'the question card to be sent');
+    const t0 = Date.now();
+    const res = (await fake.cardAction(tap(sentCard(fake, n)))) as { card?: { type: string; data: Card } };
+    const took = Date.now() - t0;
+    assert.ok(took < 200, `callback took ${took} ms`);
+    assert.equal(res.card?.type, 'raw');
+    assert.equal(res.card?.data.header.template, 'green');
+    assert.deepEqual(await asking, { ok: true, kind: 'ask', reply: 'Keep', via: payload === askPayload ? 'button' : 'form' });
+  }
+  await daemon.stop();
+});
+
+test('single-choice: a tap after the question closed is injected with the label, like a late form submit', PER_TEST, async () => {
+  const { daemon, fake, herdr } = await start();
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: 'w1:p1', payload: askPayload, timeoutMs: 5000 });
+  await waitFor(() => fake.sent.length === 1, 'the question card to be sent');
+  const reqId = buttonReqId(sentCard(fake, 0));
+  await fake.message({ chatId: 'oc_x', content: 'wait' });
+  await asking;
+  const late = (await fake.cardAction(buttonTap(reqId, 'b'))) as { toast: { type: string } };
+  assert.equal(late.toast.type, 'info');
+  await waitFor(() => herdr.prompts.length === 1, 'the follow-up injection');
+  assert.equal(herdr.prompts[0]!.text, `[agent-lark remote] ${fill(msg.latePick, { labels: 'Drop' })}`);
+  await daemon.stop();
 });

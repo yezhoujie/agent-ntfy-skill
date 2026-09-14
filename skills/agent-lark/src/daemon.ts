@@ -5,7 +5,7 @@ import { platform, tmpdir } from 'node:os';
 import type { Server, Socket } from 'node:net';
 import { createLarkChannel, type CardActionEvent, type LarkChannel, type LarkChannelOptions, type NormalizedMessage } from '@larksuite/channel';
 import { BindingStore, BindingsFileError, groupName, taskNameProblem, type Binding } from './bindings.js';
-import { askCard, notifyCard, receiptCard, statusCard } from './cards.js';
+import { askCard, checkerName, notifyCard, optionIdOf, receiptCard, statusCard } from './cards.js';
 import { resolveCreds } from './creds.js';
 import { agentList, findPaneForProject, promptPane } from './herdr.js';
 import { isDaemonListening, serve, type Candidate, type Request, type Response } from './ipc.js';
@@ -53,6 +53,8 @@ export interface DaemonDeps {
   herdr?: HerdrDeps;
   /** First retry interval after a failed Feishu connect; doubles up to a minute. */
   connectRetryMs?: number;
+  /** How often the panes of away projects are polled for a stuck agent. */
+  pollMs?: number;
 }
 
 export interface DaemonHandle {
@@ -135,10 +137,26 @@ interface Pending {
   chatId: string;
   messageId: string;
   label: string;
+  /** Carries `select` and the option order the reply of a form submit follows. */
   payload: AskPayload;
+  urgent: boolean;
   settle: (r: Response) => void;
   timer: NodeJS.Timeout;
   done: boolean;
+}
+
+/** How many closed questions are remembered, so a late form submit can still be read as labels. */
+const CLOSED_KEEP = 50;
+
+/**
+ * A checker inside a form reports its state in a shape the card docs do not
+ * pin down; anything that plausibly means "ticked" counts, so a true value in
+ * whatever spelling is not lost. The raw form is logged for the record.
+ */
+function isTicked(v: unknown): boolean {
+  if (v === true || v === 1 || v === 'true' || v === '1' || v === 'checked') return true;
+  if (Array.isArray(v)) return v.length > 0;
+  return false;
 }
 
 export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
@@ -161,6 +179,12 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
     throw err;
   }
   const pendings = new Map<string, Pending>();
+  /** Questions already closed, newest last; a late submit on one is still read as labels. */
+  const closed = new Map<string, AskPayload>();
+  const remember = (p: Pending): void => {
+    closed.set(p.reqId, p.payload);
+    while (closed.size > CLOSED_KEEP) closed.delete(closed.keys().next().value!);
+  };
   const lastStatus = new Map<string, string>();
   const lastStatusPush = new Map<string, number>();
   const startedAt = new Date().toISOString();
@@ -200,12 +224,13 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
   const answer = async (
     p: Pending,
     reply: string,
-    via: 'button' | 'text',
+    via: 'button' | 'form' | 'text',
   ): Promise<void> => {
     if (p.done) return;
     p.done = true;
     clearTimeout(p.timer);
     pendings.delete(p.reqId);
+    remember(p);
     p.settle({ ok: true, kind: 'ask', reply, via });
     log('ask.answered', { reqId: p.reqId, via, root: p.root });
     try {
@@ -223,6 +248,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
     p.done = true;
     clearTimeout(p.timer);
     pendings.delete(p.reqId);
+    remember(p);
     p.settle(res);
     log(`ask.${state}`, { reqId: p.reqId, root: p.root });
     try {
@@ -235,9 +261,12 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
     }
   };
 
+  /** The language of cards the daemon sends on its own: the project's last ask / notify, else English. */
+  const langOf = (b: Binding | undefined): Lang => b?.lang ?? 'en';
+
   const receipt = async (b: Binding, why: string): Promise<void> => {
     try {
-      await channel.send(b.chatId, { card: receiptCard(b.label, why) });
+      await channel.send(b.chatId, { card: receiptCard(b.label, why, langOf(b)) });
     } catch (err) {
       log('receipt.failed', { root: b.root, err: String(err) });
     }
@@ -259,17 +288,35 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
     }
   };
 
-  /** Deliver a free-standing phone message into the project's pane. */
-  const inject = async (b: Binding, text: string): Promise<void> => {
-    let paneId = b.paneId;
-    if (!paneId) paneId = herdr.findPaneForProject(await herdr.agentList(), b.root);
-    if (!paneId) {
-      await receipt(b, t('zh').receiptNoPane);
-      return;
+  /**
+   * Deliver a free-standing phone message into the project's pane. `reactTo`
+   * is the human's message: once delivered it gets a "Get" reaction, the one
+   * sign on the phone that the terminal has it.
+   */
+  const inject = async (b: Binding, text: string, reactTo?: string): Promise<void> => {
+    try {
+      let paneId = b.paneId;
+      if (!paneId) paneId = herdr.findPaneForProject(await herdr.agentList(), b.root);
+      if (!paneId) {
+        await receipt(b, t(langOf(b)).receiptNoPane);
+        return;
+      }
+      const outcome = await herdr.promptPane(paneId, `${INJECT_PREFIX}${text}`);
+      log('inject', { root: b.root, paneId, ok: outcome.ok, code: outcome.code });
+      if (!outcome.ok) {
+        await receipt(b, explainPromptFailure(outcome.code, outcome.message, langOf(b)));
+        return;
+      }
+      if (!reactTo) return;
+      try {
+        await channel.addReaction(reactTo, 'Get');
+      } catch (err) {
+        log('reaction.failed', { messageId: reactTo, err: String(err).slice(0, 200) });
+      }
+    } catch (err) {
+      // The adapter promises not to throw; if it ever does, the daemon must not die of it.
+      log('inject.failed', { root: b.root, err: String(err).slice(0, 200) });
     }
-    const outcome = await herdr.promptPane(paneId, `${INJECT_PREFIX}${text}`);
-    log('inject', { root: b.root, paneId, ok: outcome.ok, code: outcome.code });
-    if (!outcome.ok) await receipt(b, explainPromptFailure(outcome.code, outcome.message));
   };
 
   /**
@@ -332,7 +379,19 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
     return out;
   };
 
-  channel.on('message', async (incoming: NormalizedMessage) => {
+  // Whatever the SDK does with a rejecting event handler, nothing in here may
+  // become an unhandled rejection: each handler logs its own failure.
+  const guarded = <A extends unknown[], R>(name: string, fn: (...args: A) => Promise<R>) =>
+    async (...args: A): Promise<R | undefined> => {
+      try {
+        return await fn(...args);
+      } catch (err) {
+        log(`${name}.failed`, { err: String(err).slice(0, 200) });
+        return undefined;
+      }
+    };
+
+  channel.on('message', guarded('message', async (incoming: NormalizedMessage) => {
     if (incoming.senderIsBot) return;
     const b = bindings.activeByChat(incoming.chatId);
     if (!b) return;
@@ -359,42 +418,71 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
       await answer(p, text, 'text');
       return;
     }
-    await inject(b, text);
-  });
+    await inject(b, text, incoming.messageId);
+  }));
 
-  channel.on('cardAction', async (evt: CardActionEvent) => {
+  // Feishu waits three seconds for the callback response, so nothing in here
+  // waits on a Feishu REST call or on herdr: the card rewrite rides back on
+  // the response itself, and the REST fallback / the injection run behind it.
+  channel.on('cardAction', guarded('card-action', async (evt: CardActionEvent) => {
     const value = (evt.action.value ?? {}) as { reqId?: string; optionId?: string };
     if (!value.reqId) return;
     const p = pendings.get(value.reqId);
+    const form = evt.action.formValue;
+    if (form) log('form.submitted', { reqId: value.reqId, formValue: form });
     if (!p || p.done) {
-      // A second tap after the question closed: the human is correcting
-      // themselves, so it becomes an instruction rather than nothing.
+      // A second tap or submit after the question closed: the human is
+      // correcting themselves, so it becomes an instruction rather than nothing.
       const b = bindings.activeByChat(evt.chatId);
       if (b) {
-        const late = value.optionId ?? '';
-        await inject(b, late ? fill(msg.lateTapOption, { id: late }) : msg.lateTapNoOption);
+        let text: string;
+        if (form) {
+          const was = closed.get(value.reqId);
+          const picked = was
+            ? was.options.filter((o) => isTicked(form[checkerName(o.id)])).map((o) => o.label)
+            : Object.keys(form)
+                .filter((k) => isTicked(form[k]))
+                .map((k) => optionIdOf(k) ?? k);
+          text = fill(msg.latePick, { labels: picked.join('、') || '?' });
+        } else {
+          const late = value.optionId ?? '';
+          const label = closed.get(value.reqId)?.options.find((o) => o.id === late)?.label ?? late;
+          text = label ? fill(msg.latePick, { labels: label }) : msg.lateTapNoOption;
+        }
+        void inject(b, text).catch((err) => log('inject.failed', { err: String(err).slice(0, 200) }));
       }
-      return { toast: { type: 'info', content: t(p?.payload.lang ?? 'zh').toastClosed } };
+      return { toast: { type: 'info', content: t(closed.get(value.reqId)?.lang ?? langOf(b)).toastClosed } };
     }
     const T = t(p.payload.lang ?? 'zh');
-    const opt = p.payload.options.find((o) => o.id === value.optionId);
-    if (!opt) return { toast: { type: 'error', content: T.toastBadOption } };
+    let reply: string;
+    let via: 'button' | 'form';
+    if (form) {
+      const picked = p.payload.options.filter((o) => isTicked(form[checkerName(o.id)]));
+      if (!picked.length) return { toast: { type: 'error', content: T.pickAtLeastOne } };
+      reply = picked.map((o) => o.label).join('、');
+      via = 'form';
+    } else {
+      const opt = p.payload.options.find((o) => o.id === value.optionId);
+      if (!opt) return { toast: { type: 'error', content: T.toastBadOption } };
+      reply = opt.label;
+      via = 'button';
+    }
     // Build the closed card before answering, so it can ride back on this very
     // callback: Feishu swaps the card in the same round trip and the buttons
     // are gone before a second tap is possible.
-    const closed = askCard({
+    const closedCard = askCard({
       payload: p.payload,
       projectLabel: p.label,
       reqId: p.reqId,
       state: 'answered',
-      reply: opt.label,
+      reply,
     });
-    await answer(p, opt.label, 'button');
+    void answer(p, reply, via).catch((err) => log('answer.failed', { reqId: p.reqId, err: String(err).slice(0, 200) }));
     return {
       toast: { type: 'success', content: T.toastAnswered },
-      card: { type: 'raw', data: closed },
+      card: { type: 'raw', data: closedCard },
     };
-  });
+  }));
 
   // ---- Feishu connection: IPC comes up first, the handshake runs behind it ----
   // A machine that is offline at boot, or a Feishu outage, must not turn the
@@ -482,6 +570,38 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
     }
   };
 
+  /**
+   * Flag a card to the owner in-app. Only the bot's own messages can be
+   * flagged, and the app needs the urgent scope; a refusal never touches the
+   * question itself, it is only noted to the caller.
+   */
+  const flagUrgent = async (messageId: string): Promise<{ ok: true } | { ok: false; error: string }> => {
+    const owner = creds.ownerOpenId;
+    if (!owner) {
+      log('urgent.failed', { messageId, reason: 'no-owner' });
+      return { ok: false, error: msg.urgentNoOwner };
+    }
+    try {
+      const res = await channel.rawClient.im.v1.message.urgentApp({
+        path: { message_id: messageId },
+        params: { user_id_type: 'open_id' },
+        data: { user_id_list: [owner] },
+      });
+      const refused = feishuError(res);
+      if (refused) {
+        log('urgent.failed', { messageId, code: refused.code, msg: refused.msg });
+        return { ok: false, error: fill(msg.urgentRefused, { code: refused.code, msg: refused.msg }) };
+      }
+      log('urgent.sent', { messageId });
+      return { ok: true };
+    } catch (err) {
+      const body = (err as { response?: { data?: unknown } } | null)?.response?.data;
+      const refused = feishuError(body) ?? feishuError(err);
+      log('urgent.failed', { messageId, err: String(err).slice(0, 200) });
+      return { ok: false, error: refused ? fill(msg.urgentRefused, { code: refused.code, msg: refused.msg }) : err instanceof Error ? err.message : String(err) };
+    }
+  };
+
   const notConnected = (): Response => ({ ok: false, code: 3, message: fill(msg.notConnected, { error: lastError ?? msg.connecting }) });
   const agents = herdr.agentList;
 
@@ -503,17 +623,18 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
       if (a.agent_status !== 'blocked') continue;
       if (now - (lastStatusPush.get(b.root) ?? 0) < STATUS_COOLDOWN_MS) continue;
       lastStatusPush.set(b.root, now);
+      const lang = langOf(b);
       const detail =
-        (a.terminal_title_stripped ? `**${a.terminal_title_stripped}**\n` : '') + fill(t('zh').statusPane, { pane: a.pane_id });
+        (a.terminal_title_stripped ? `**${a.terminal_title_stripped}**\n` : '') + fill(t(lang).statusPane, { pane: a.pane_id });
       try {
-        await channel.send(b.chatId, { card: statusCard(b.label, detail) });
+        await channel.send(b.chatId, { card: statusCard(b.label, detail, lang) });
         log('status.pushed', { root: b.root, kind: 'blocked' });
       } catch (err) {
         log('status.failed', { root: b.root, err: String(err) });
       }
     }
   };
-  const pollTimer = setInterval(() => void poll(), POLL_MS);
+  const pollTimer = setInterval(() => void poll().catch((err) => log('poll.failed', { err: String(err).slice(0, 200) })), deps.pollMs ?? POLL_MS);
   pollTimer.unref();
 
   // ---- IPC ----------------------------------------------------------------
@@ -525,9 +646,9 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
   });
   const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
   const onSignal: Record<(typeof signals)[number], () => void> = {
-    SIGINT: () => void stop('SIGINT'),
-    SIGTERM: () => void stop('SIGTERM'),
-    SIGHUP: () => void stop('SIGHUP'),
+    SIGINT: () => void stopSafely('SIGINT'),
+    SIGTERM: () => void stopSafely('SIGTERM'),
+    SIGHUP: () => void stopSafely('SIGHUP'),
   };
 
   const closeServer = async (): Promise<void> => {
@@ -602,6 +723,9 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
     resolveDone();
   };
 
+  /** stop() never rejects by design; this keeps a future slip out of the unhandled-rejection path. */
+  const stopSafely = (why: string): Promise<void> => stop(why).catch((err) => log('stop.failed', { why, err: String(err).slice(0, 200) }));
+
   server = await serve({
     handle: async (req: Request, ctx): Promise<Response> => {
       switch (req.type) {
@@ -622,7 +746,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
 
         case 'stop':
           // The ack goes out on this connection first; the wind-down starts a tick later.
-          setTimeout(() => void stop('stop requested'), 50);
+          setTimeout(() => void stopSafely('stop requested'), 50);
           return { ok: true, kind: 'ack' };
 
         case 'list':
@@ -907,48 +1031,57 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
           }
           if (payload.lang) bindings.touch(req.root, { lang: payload.lang });
           const reqId = randomUUID().replace(/-/g, '').slice(0, 16);
+          const urgent = req.urgent === true;
           let messageId: string;
           try {
             const sent = await channel.send(b.chatId, {
-              card: askCard({ payload, projectLabel: b.label, reqId, state: 'pending' }),
+              card: askCard({ payload, projectLabel: b.label, reqId, state: 'pending', urgent }),
             });
             messageId = sent.messageId;
           } catch (err) {
             return { ok: false, code: 3, message: fill(msg.sendFailed, { error: err instanceof Error ? err.message : String(err) }) };
           }
-          log('ask.sent', { reqId, root: b.root, options: payload.options.length });
-
-          return await new Promise<Response>((resolve) => {
-            const p: Pending = {
-              reqId,
-              root: b.root,
-              chatId: b.chatId,
-              messageId,
-              label: b.label,
-              payload,
-              settle: resolve,
-              done: false,
-              timer: setTimeout(() => {
-                void closeWithout(p, 'timedout', {
-                  ok: false,
-                  code: 2,
-                  message: fill(msg.askTimedOut, { seconds: Math.round(req.timeoutMs / 1000) }),
-                });
-              }, req.timeoutMs),
-            };
-            pendings.set(reqId, p);
-            // The client dying (a harness tool timeout) must not leave a dead
-            // question on the phone.
-            ctx.onClose(() => {
-              if (!p.done)
-                void closeWithout(p, 'cancelled', {
-                  ok: false,
-                  code: 3,
-                  message: msg.askClientGone,
-                });
-            });
-            ctx.note(fill(msg.askNote, { seconds: Math.round(req.timeoutMs / 1000) }));
+          log('ask.sent', { reqId, root: b.root, options: payload.options.length, select: payload.select, urgent });
+          // Registered before anything else goes over the wire: the card is on
+          // the phone from `send` on, and a tap that lands while the urgent flag
+          // is still in flight must find its question.
+          let settle!: (r: Response) => void;
+          const result = new Promise<Response>((resolve) => {
+            settle = resolve;
           });
+          const closeLater = (state: 'timedout' | 'cancelled', res: Response): void => {
+            void closeWithout(p, state, res).catch((err) => log('close.failed', { reqId, state, err: String(err).slice(0, 200) }));
+          };
+          const p: Pending = {
+            reqId,
+            root: b.root,
+            chatId: b.chatId,
+            messageId,
+            label: b.label,
+            payload,
+            urgent,
+            settle,
+            done: false,
+            timer: setTimeout(() => {
+              closeLater('timedout', {
+                ok: false,
+                code: 2,
+                message: fill(msg.askTimedOut, { seconds: Math.round(req.timeoutMs / 1000) }),
+              });
+            }, req.timeoutMs),
+          };
+          pendings.set(reqId, p);
+          // The client dying (a harness tool timeout) must not leave a dead
+          // question on the phone.
+          ctx.onClose(() => {
+            if (!p.done) closeLater('cancelled', { ok: false, code: 3, message: msg.askClientGone });
+          });
+          if (urgent) {
+            const r = await flagUrgent(messageId);
+            if (!r.ok) ctx.note(fill(msg.urgentNotSent, { error: r.error }));
+          }
+          ctx.note(fill(msg.askNote, { seconds: Math.round(req.timeoutMs / 1000) }));
+          return await result;
         }
 
         default:
@@ -965,7 +1098,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
   writeFileSync(pidPath(), `${process.pid}\n`, { mode: 0o600 });
   log('daemon.started', { pid: process.pid, endpoint: ipcEndpoint() });
   for (const sig of signals) process.on(sig, onSignal[sig]);
-  void connectLoop();
+  void connectLoop().catch((err) => log('connect-loop.failed', { err: String(err).slice(0, 200) }));
 
   return { stop: () => stop('stop()'), done };
 }

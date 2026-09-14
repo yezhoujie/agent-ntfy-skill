@@ -14,16 +14,21 @@ export interface AskOption {
   danger?: boolean;
 }
 
+export type Select = 'single' | 'multi';
+
 export interface AskPayload {
   title: string;
   doing: string;
   description: string;
   blocker: string;
   options: AskOption[];
-  recommend: string;
+  /** One option id, or with `select: 'multi'` the ids to tick by default. */
+  recommend: string | string[];
   reasoning: string;
   question: string;
   lang?: Lang;
+  /** Whether the human picks one option (buttons) or any number (a form of checkers). */
+  select: Select;
 }
 
 export interface NotifyPayload {
@@ -113,13 +118,44 @@ export function validateAsk(raw: unknown): AskPayload {
     });
   }
 
-  const recommend = str(o.recommend);
-  if (!recommend) problems.push(msg.vRecommendRequired);
-  else if (options.length && !options.some((x) => x.id === recommend))
-    problems.push(fill(msg.vRecommendUnknown, { id: recommend }));
-  else {
-    const rec = options.find((x) => x.id === recommend);
-    if (rec?.danger) problems.push(fill(msg.vRecommendDanger, { id: recommend }));
+  let select: Select = 'single';
+  if (o.select !== undefined && o.select !== null) {
+    if (o.select === 'single' || o.select === 'multi') select = o.select;
+    else problems.push(fill(msg.vSelect, { value: JSON.stringify(o.select) }));
+  }
+
+  // The recommendation must point at real, non-danger options: one id for a
+  // single choice, a list of distinct ids for a multi choice.
+  const checkOne = (id: string): void => {
+    if (options.length && !options.some((x) => x.id === id)) problems.push(fill(msg.vRecommendUnknown, { id }));
+    else if (options.find((x) => x.id === id)?.danger) problems.push(fill(msg.vRecommendDanger, { id }));
+  };
+  let recommend: string | string[] = '';
+  if (select === 'multi') {
+    const list = Array.isArray(o.recommend) ? o.recommend.map(str) : null;
+    if (!list || list.some((x) => x === null)) problems.push(msg.vRecommendArray);
+    else if (list.length === 0) problems.push(msg.vRecommendEmpty);
+    else {
+      const ids = list as string[];
+      const seen = new Set<string>();
+      for (const id of ids) {
+        if (seen.has(id)) problems.push(fill(msg.vRecommendDupItem, { id }));
+        else {
+          seen.add(id);
+          checkOne(id);
+        }
+      }
+      recommend = ids;
+    }
+  } else if (Array.isArray(o.recommend)) {
+    problems.push(msg.vRecommendString);
+  } else {
+    const one = str(o.recommend);
+    if (!one) problems.push(msg.vRecommendRequired);
+    else {
+      checkOne(one);
+      recommend = one;
+    }
   }
 
   const lang = checkLang(o.lang, problems);
@@ -131,10 +167,11 @@ export function validateAsk(raw: unknown): AskPayload {
     description: values.description!,
     blocker: values.blocker!,
     options,
-    recommend: recommend!,
+    recommend,
     reasoning: values.reasoning!,
     question: values.question!,
     lang,
+    select,
   };
 }
 

@@ -39,11 +39,16 @@ function field(label: string, value: string): string {
   return `**${label}**　${value}`;
 }
 
-function optionLines(options: AskOption[], recommend: string, lang: Lang): string {
+/** The ids the agent leans towards, whether one or several. */
+export function recommendedIds(p: AskPayload): string[] {
+  return Array.isArray(p.recommend) ? p.recommend : [p.recommend];
+}
+
+function optionLines(options: AskOption[], recommended: string[], lang: Lang): string {
   const T = t(lang);
   return options
     .map((o, i) => {
-      const flag = o.id === recommend ? `　${T.recommended}` : o.danger ? '　⚠️' : '';
+      const flag = recommended.includes(o.id) ? `　${T.recommended}` : o.danger ? '　⚠️' : '';
       return `${i + 1}. **${o.label}**${flag}\n   ${o.consequence}`;
     })
     .join('\n');
@@ -55,6 +60,8 @@ export interface AskCardContext {
   reqId: string;
   state: AskState;
   reply?: string;
+  /** Flagged in-app to the owner; the pending header turns red. */
+  urgent?: boolean;
 }
 
 const HEADER: Record<AskState, { template: string; icon: string }> = {
@@ -64,11 +71,75 @@ const HEADER: Record<AskState, { template: string; icon: string }> = {
   cancelled: { template: 'grey', icon: '⚠️' },
 };
 
+/** A native confirm dialog on a button. */
+function confirm(T: ReturnType<typeof t>, text: string): object {
+  return {
+    title: { tag: 'plain_text', content: T.confirmTitle },
+    text: { tag: 'plain_text', content: text },
+  };
+}
+
+/**
+ * Single choice: one button per option. Both the 1.0 `value` field and 2.0
+ * `behaviors` reach the callback as `action.value`; `value` is kept because it
+ * is the shorter of the two and was verified to work on a schema-2.0 card.
+ */
+function optionButtons(p: AskPayload, reqId: string, recommended: string[], T: ReturnType<typeof t>): object[] {
+  return p.options.map((o) => {
+    const button: Record<string, unknown> = {
+      tag: 'button',
+      text: { tag: 'plain_text', content: o.label },
+      type: o.danger ? 'danger' : recommended.includes(o.id) ? 'primary' : 'default',
+      value: { reqId, optionId: o.id },
+    };
+    if (o.danger) button.confirm = confirm(T, fill(T.confirmText, { label: o.label }));
+    return button;
+  });
+}
+
+/** Form field name of an option's checker; option ids are free-form, the prefix keeps them clear of the form's own names. */
+export const checkerName = (optionId: string): string => `opt:${optionId}`;
+export const optionIdOf = (checkerName: string): string | null => (checkerName.startsWith('opt:') ? checkerName.slice(4) : null);
+
+/**
+ * Multi choice: a form with one checker per option and a submit button. The
+ * checkers only hold their state locally; the submit button sends them all in
+ * one callback carrying `reqId`. A danger option cannot get its own confirm
+ * dialog inside a form, so the dialog sits on the submit button whenever the
+ * card holds one.
+ */
+function optionForm(p: AskPayload, reqId: string, recommended: string[], T: ReturnType<typeof t>): object {
+  const submit: Record<string, unknown> = {
+    tag: 'button',
+    name: 'submit',
+    form_action_type: 'submit',
+    type: 'primary',
+    text: { tag: 'plain_text', content: T.submit },
+    behaviors: [{ type: 'callback', value: { reqId } }],
+  };
+  if (p.options.some((o) => o.danger)) submit.confirm = confirm(T, T.confirmMultiText);
+  return {
+    tag: 'form',
+    name: 'ask',
+    elements: [
+      ...p.options.map((o) => ({
+        tag: 'checker',
+        name: checkerName(o.id),
+        checked: recommended.includes(o.id),
+        text: { tag: 'lark_md', content: `**${o.label}**　${o.consequence}` },
+      })),
+      submit,
+    ],
+  };
+}
+
 export function askCard(ctx: AskCardContext): object {
   const { payload: p, state } = ctx;
   const lang = p.lang ?? 'zh';
   const T = t(lang);
   const head = HEADER[state];
+  const template = state === 'pending' && ctx.urgent ? 'red' : head.template;
+  const recommended = recommendedIds(p);
   const statusWord =
     state === 'answered' ? T.answered : state === 'timedout' ? T.timedout : state === 'cancelled' ? T.cancelled : '';
 
@@ -82,36 +153,23 @@ export function askCard(ctx: AskCardContext): object {
     md(field(T.background, p.description)),
     md(field(T.blocker, p.blocker)),
     hr(),
-    md(`**${T.options}**\n\n${optionLines(p.options, p.recommend, lang)}`),
+    md(`**${T.options}**\n\n${optionLines(p.options, recommended, lang)}`),
     hr(),
     md(field(T.recommend, p.reasoning)),
     md(`**${T.question}**　${p.question}`),
   );
 
   if (state === 'pending') {
-    for (const o of p.options) {
-      const button: Record<string, unknown> = {
-        tag: 'button',
-        text: { tag: 'plain_text', content: o.label },
-        type: o.danger ? 'danger' : o.id === p.recommend ? 'primary' : 'default',
-        // Both the 1.0 `value` field and 2.0 `behaviors` reach the callback as
-        // `action.value`; `value` is kept because it is the shorter of the two
-        // and was verified to work on a schema-2.0 card.
-        value: { reqId: ctx.reqId, optionId: o.id },
-      };
-      if (o.danger) {
-        button.confirm = {
-          title: { tag: 'plain_text', content: T.confirmTitle },
-          text: { tag: 'plain_text', content: fill(T.confirmText, { label: o.label }) },
-        };
-      }
-      elements.push(button);
+    if (p.select === 'multi') {
+      elements.push(optionForm(p, ctx.reqId, recommended, T), note(T.hintMulti));
+    } else {
+      elements.push(...optionButtons(p, ctx.reqId, recommended, T));
+      elements.push(note(p.options.some((o) => o.danger) ? T.hintDanger : T.hint));
     }
-    elements.push(note(p.options.some((o) => o.danger) ? T.hintDanger : T.hint));
   }
 
   return card(
-    { icon: head.icon, title: `[${ctx.projectLabel}] ${p.title}${statusWord ? ` · ${statusWord}` : ''}`, template: head.template },
+    { icon: head.icon, title: `[${ctx.projectLabel}] ${p.title}${statusWord ? ` · ${statusWord}` : ''}`, template },
     elements,
   );
 }
@@ -121,7 +179,7 @@ export function notifyCard(p: NotifyPayload, projectLabel: string): object {
 }
 
 /** Sent into the group when a phone message could not reach the terminal. */
-export function receiptCard(projectLabel: string, why: string, lang: Lang = 'zh'): object {
+export function receiptCard(projectLabel: string, why: string, lang: Lang = 'en'): object {
   const T = t(lang);
   return card({ icon: '⚠️', title: `[${projectLabel}] ${T.notDelivered}`, template: 'orange' }, [
     md(fill(T.notDeliveredBody, { why })),
@@ -129,7 +187,7 @@ export function receiptCard(projectLabel: string, why: string, lang: Lang = 'zh'
 }
 
 /** Pushed while remote mode is on and the agent is stuck on a prompt only a human can answer. */
-export function statusCard(projectLabel: string, detail: string, lang: Lang = 'zh'): object {
+export function statusCard(projectLabel: string, detail: string, lang: Lang = 'en'): object {
   const T = t(lang);
   return card({ icon: '🔔', title: `[${projectLabel}] ${T.statusBlocked}`, template: 'orange' }, [md(detail)]);
 }

@@ -18,7 +18,7 @@ export type Request =
   | { type: 'unbind'; root: string }
   | { type: 'rename'; root: string; paneId: string | null; name: string }
   | { type: 'setAway'; root: string; away: boolean; paneId: string | null }
-  | { type: 'ask'; root: string; label: string; paneId: string | null; payload: unknown; timeoutMs: number }
+  | { type: 'ask'; root: string; label: string; paneId: string | null; payload: unknown; timeoutMs: number; urgent?: boolean }
   | { type: 'notify'; root: string; label: string; paneId: string | null; payload: unknown }
   | { type: 'sendFile'; root: string; label: string; paneId: string | null; path: string; caption?: string };
 
@@ -37,7 +37,8 @@ export interface DaemonStatus {
 
 export type Response =
   | { ok: true; kind: 'pong'; status: DaemonStatus }
-  | { ok: true; kind: 'ask'; reply: string; via: 'button' | 'text' }
+  /** `via`: a button tap · a multi-choice form submit · a typed message. */
+  | { ok: true; kind: 'ask'; reply: string; via: 'button' | 'form' | 'text' }
   /** `how`: the live group was kept · a released one was taken back · a new one was created · `chatId` was named outright. */
   | { ok: true; kind: 'bind'; chatId: string; how: 'existing' | 'reused' | 'created' | 'chat'; name: string }
   | { ok: true; kind: 'unbind'; chatId: string; name: string }

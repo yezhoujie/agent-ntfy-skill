@@ -32,6 +32,8 @@ const DEFAULT_SCOPES = [
   'im:message.group_msg',
   'im:chat',
   'im:resource',
+  // `ask --urgent` flags the owner in-app; without this the flag is refused and only noted.
+  'im:message.urgent',
   // Voice messages arrive as an opaque `<audio/>` placeholder without this.
   'speech_to_text:speech',
 ];
@@ -411,7 +413,7 @@ async function cmdAsk(args: string[]): Promise<void> {
   const seconds = Number(opt(args, 'timeout') ?? 43_200);
   if (!Number.isFinite(seconds) || seconds <= 0) die(1, msg.timeoutArg);
   const res = await request(
-    { type: 'ask', root, label, paneId, payload, timeoutMs: seconds * 1000 },
+    { type: 'ask', root, label, paneId, payload, timeoutMs: seconds * 1000, urgent: flag(args, 'urgent') },
     { onNote: (text) => process.stderr.write(`note: ${text}\n`) },
   );
   finish(res, (r) => {

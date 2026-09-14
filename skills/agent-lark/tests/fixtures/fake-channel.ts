@@ -8,14 +8,25 @@ export type SentItem = { chatId: string; input: unknown } | { update: string; ca
 export interface FakeChannelOptions {
   /** Replaces connect(); lets a test make the first attempts fail. */
   connect?: () => Promise<void>;
+  /** Replaces the REST card update (the record in `sent` is still kept); lets a test make it hang. */
+  updateCard?: (messageId: string, card: object) => Promise<void>;
   listChats?: ChannelLike['listChats'];
   getChatInfo?: ChannelLike['getChatInfo'];
   createChat?: ChannelLike['createChat'];
   addReaction?: ChannelLike['addReaction'];
   /** Answers `rawClient.im.v1.chat.update`; every call is also recorded in `renames`. */
   chatUpdate?: (req: ChatUpdateRequest) => Promise<ChatUpdateResult>;
+  /** Answers `rawClient.im.v1.message.urgentApp`; every call is also recorded in `urgents`. */
+  urgentApp?: (req: UrgentAppRequest) => Promise<UrgentAppResult>;
   rawClient?: unknown;
 }
+
+export interface UrgentAppRequest {
+  path: { message_id: string };
+  params: { user_id_type: string };
+  data: { user_id_list: string[] };
+}
+export type UrgentAppResult = { code?: number; msg?: string; data?: { invalid_user_id_list: string[] } };
 
 export interface ChatUpdateRequest {
   path: { chat_id: string };
@@ -32,6 +43,10 @@ export interface FakeChannel {
   policy: unknown[];
   /** Group updates (name / description) issued through rawClient, oldest first. */
   renames: Array<{ chatId: string; name: string | undefined; description: string | undefined }>;
+  /** Urgent flags issued through rawClient, oldest first. */
+  urgents: UrgentAppRequest[];
+  /** Reactions added with the default addReaction (a configured one is not recorded). */
+  reactions: Array<{ messageId: string; emoji: string }>;
   /** Deliver a message as if the human typed it in the group. */
   message(partial: Partial<NormalizedMessage> & { chatId: string; content: string }): Promise<void>;
   /** Tap a button on a card. */
@@ -50,6 +65,8 @@ export function createFakeChannel(opts: FakeChannelOptions = {}): FakeChannel {
     disconnectCalls: 0,
     policy: [],
     renames: [],
+    urgents: [],
+    reactions: [],
     channel: undefined as unknown as ChannelLike,
     async message(partial) {
       const evt: NormalizedMessage = {
@@ -72,22 +89,26 @@ export function createFakeChannel(opts: FakeChannelOptions = {}): FakeChannel {
     },
   };
   let connected = false;
+  // Only the raw-client calls a test configured exist; the rest throw, so a
+  // path that reaches the raw client unexpectedly fails loudly.
+  const rawV1: Record<string, unknown> = {};
+  if (opts.chatUpdate)
+    rawV1.chat = {
+      update: async (req: ChatUpdateRequest): Promise<ChatUpdateResult> => {
+        fake.renames.push({ chatId: req.path.chat_id, name: req.data.name, description: req.data.description });
+        return opts.chatUpdate!(req);
+      },
+    };
+  if (opts.urgentApp)
+    rawV1.message = {
+      urgentApp: async (req: UrgentAppRequest): Promise<UrgentAppResult> => {
+        fake.urgents.push(req);
+        return opts.urgentApp!(req);
+      },
+    };
   const rawClient =
     opts.rawClient ??
-    (opts.chatUpdate
-      ? {
-          im: {
-            v1: {
-              chat: {
-                update: async (req: ChatUpdateRequest): Promise<ChatUpdateResult> => {
-                  fake.renames.push({ chatId: req.path.chat_id, name: req.data.name, description: req.data.description });
-                  return opts.chatUpdate!(req);
-                },
-              },
-            },
-          },
-        }
-      : undefined) ??
+    (Object.keys(rawV1).length ? { im: { v1: rawV1 } } : undefined) ??
     new Proxy(
       {},
       {
@@ -126,11 +147,17 @@ export function createFakeChannel(opts: FakeChannelOptions = {}): FakeChannel {
     },
     async updateCard(messageId: string, card: object): Promise<void> {
       fake.sent.push({ update: messageId, card });
+      if (opts.updateCard) await opts.updateCard(messageId, card);
     },
     listChats: opts.listChats ?? notImplemented('listChats'),
     getChatInfo: opts.getChatInfo ?? notImplemented('getChatInfo'),
     createChat: opts.createChat ?? notImplemented('createChat'),
-    addReaction: opts.addReaction ?? notImplemented('addReaction'),
+    addReaction:
+      opts.addReaction ??
+      (async (messageId: string, emoji: string): Promise<string> => {
+        fake.reactions.push({ messageId, emoji });
+        return `rid_${fake.reactions.length}`;
+      }),
     downloadResourceToFile: notImplemented('downloadResourceToFile'),
     rawClient,
   };

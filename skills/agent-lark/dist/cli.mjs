@@ -136286,6 +136286,10 @@ var init_texts = __esm({
       theQuestion: "\uFF08\u539F\u95EE\u9898\uFF09",
       hint: "\u60F3\u8BF4\u522B\u7684\uFF1F\u76F4\u63A5\u5728\u672C\u7FA4\u53D1\u6D88\u606F\u5C31\u884C\uFF0C\u7B2C\u4E00\u6761\u6D88\u606F\u5C31\u662F\u7B54\u590D\u3002",
       hintDanger: "\u7EA2\u8272\u6309\u94AE\u4F1A\u4E8C\u6B21\u786E\u8BA4\uFF1B\u4E5F\u53EF\u4EE5\u76F4\u63A5\u5728\u7FA4\u91CC\u6253\u5B57\u3002",
+      hintMulti: "\u52FE\u9009\u540E\u70B9\u63D0\u4EA4\uFF1B\u60F3\u8BF4\u522B\u7684\u76F4\u63A5\u5728\u7FA4\u91CC\u6253\u5B57\uFF0C\u6574\u6BB5\u5C31\u662F\u56DE\u590D\u3002",
+      submit: "\u63D0\u4EA4",
+      confirmMultiText: "\u6240\u9009\u9879\u91CC\u6709\u4E0D\u53EF\u9006\u6216\u9AD8\u4EE3\u4EF7\u7684\u64CD\u4F5C\u3002\u786E\u5B9A\u63D0\u4EA4\uFF1F",
+      pickAtLeastOne: "\u81F3\u5C11\u9009\u4E00\u9879",
       answered: "\u5DF2\u56DE\u7B54",
       timedout: "\u5DF2\u8D85\u65F6",
       cancelled: "\u5DF2\u53D6\u6D88",
@@ -136342,6 +136346,10 @@ var init_texts = __esm({
       theQuestion: "(the question as asked)",
       hint: "Want to say something else? Just send a message in this group \u2014 the first one is the answer.",
       hintDanger: "Red buttons ask for confirmation; you can also just type here.",
+      hintMulti: "Tick what applies, then Submit; to say something else just type in the group \u2014 the whole message is the reply.",
+      submit: "Submit",
+      confirmMultiText: "The selection includes an irreversible or high-cost option. Submit anyway?",
+      pickAtLeastOne: "Pick at least one",
       answered: "Answered",
       timedout: "Timed out",
       cancelled: "Cancelled",
@@ -136396,7 +136404,8 @@ var init_texts = __esm({
   unbind                             Let the live group go (it stays in Feishu; the next away on offers it back)
   bind [--chat <id>] [--name <task>] [--reuse <chat_id> | --new]
                                      Bind without switching remote mode on; --chat names a group outright
-  ask [--timeout <seconds>]          Read JSON from stdin, push a question card, block until answered
+  ask [--timeout <seconds>] [--urgent]
+                                     Read JSON from stdin, push a question card, block until answered (--urgent flags the owner in-app)
   notify                             Read JSON from stdin, push a titled notification card (important things only)
   send-file <path> [--caption <t>]   Send an image or file to the project group
   status                             Daemon and binding overview
@@ -136520,8 +136529,11 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       injectUnheard: "({n} voice message(s) received but transcription failed \u2014 most likely the app lacks the speech_to_text:speech scope. Tell the user: run agent-lark setup --update to rescan and add that scope, or type instead this time.)",
       injectFilesWithText: "(attachments saved locally)",
       injectFilesOnly: "(I sent attachments; they are saved locally)",
-      lateTapOption: "(follow-up) I pick {id}",
       lateTapNoOption: "(follow-up) I tapped the card above again",
+      latePick: "(follow-up) I pick {labels}",
+      urgentNotSent: "the urgent flag was not delivered ({error}); the question itself was sent and is waiting as usual",
+      urgentNoOwner: "the app owner is not recorded, so there is nobody to flag; rerun agent-lark setup --update to record it",
+      urgentRefused: "Feishu error {code} {msg}",
       // validation
       vTitleRequired: "title: required and non-empty",
       vTitleTooLong: "title: over {max} characters, got {n}",
@@ -136545,6 +136557,11 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       vRecommendRequired: "recommend: required; the id of one option",
       vRecommendUnknown: 'recommend: "{id}" is not the id of any option',
       vRecommendDanger: 'recommend: "{id}" is marked danger; an irreversible or high-cost option cannot be the recommendation \u2014 list it and let the human choose',
+      vRecommendString: 'recommend: with select "single" (the default) it must be one option id, a string \u2014 set select: "multi" to recommend several',
+      vRecommendArray: 'recommend: with select "multi" it must be an array of option ids (strings)',
+      vRecommendEmpty: 'recommend: with select "multi" the array must be non-empty \u2014 at least one option to tick by default',
+      vRecommendDupItem: 'recommend: "{id}" is listed twice',
+      vSelect: 'select: must be "single" or "multi", got {value}',
       vLang: 'lang: must be "zh" or "en", got {value}',
       vBodyRequired: "body: required and non-empty",
       vBodyTooLong: "body: over {max} characters",
@@ -137290,13 +137307,41 @@ function validateAsk(raw) {
         options.push({ id, label, consequence, danger: opt2.danger === true });
     });
   }
-  const recommend = str2(o.recommend);
-  if (!recommend) problems.push(msg.vRecommendRequired);
-  else if (options.length && !options.some((x) => x.id === recommend))
-    problems.push(fill(msg.vRecommendUnknown, { id: recommend }));
-  else {
-    const rec = options.find((x) => x.id === recommend);
-    if (rec?.danger) problems.push(fill(msg.vRecommendDanger, { id: recommend }));
+  let select = "single";
+  if (o.select !== void 0 && o.select !== null) {
+    if (o.select === "single" || o.select === "multi") select = o.select;
+    else problems.push(fill(msg.vSelect, { value: JSON.stringify(o.select) }));
+  }
+  const checkOne = (id) => {
+    if (options.length && !options.some((x) => x.id === id)) problems.push(fill(msg.vRecommendUnknown, { id }));
+    else if (options.find((x) => x.id === id)?.danger) problems.push(fill(msg.vRecommendDanger, { id }));
+  };
+  let recommend = "";
+  if (select === "multi") {
+    const list = Array.isArray(o.recommend) ? o.recommend.map(str2) : null;
+    if (!list || list.some((x) => x === null)) problems.push(msg.vRecommendArray);
+    else if (list.length === 0) problems.push(msg.vRecommendEmpty);
+    else {
+      const ids = list;
+      const seen = /* @__PURE__ */ new Set();
+      for (const id of ids) {
+        if (seen.has(id)) problems.push(fill(msg.vRecommendDupItem, { id }));
+        else {
+          seen.add(id);
+          checkOne(id);
+        }
+      }
+      recommend = ids;
+    }
+  } else if (Array.isArray(o.recommend)) {
+    problems.push(msg.vRecommendString);
+  } else {
+    const one = str2(o.recommend);
+    if (!one) problems.push(msg.vRecommendRequired);
+    else {
+      checkOne(one);
+      recommend = one;
+    }
   }
   const lang = checkLang(o.lang, problems);
   if (problems.length) throw new ValidationError(problems);
@@ -137309,7 +137354,8 @@ function validateAsk(raw) {
     recommend,
     reasoning: values.reasoning,
     question: values.question,
-    lang
+    lang,
+    select
   };
 }
 function validateNotify(raw) {
@@ -137365,19 +137411,66 @@ function card(header, elements) {
 function field(label, value) {
   return `**${label}**\u3000${value}`;
 }
-function optionLines(options, recommend, lang) {
+function recommendedIds(p) {
+  return Array.isArray(p.recommend) ? p.recommend : [p.recommend];
+}
+function optionLines(options, recommended, lang) {
   const T = t(lang);
   return options.map((o, i) => {
-    const flag2 = o.id === recommend ? `\u3000${T.recommended}` : o.danger ? "\u3000\u26A0\uFE0F" : "";
+    const flag2 = recommended.includes(o.id) ? `\u3000${T.recommended}` : o.danger ? "\u3000\u26A0\uFE0F" : "";
     return `${i + 1}. **${o.label}**${flag2}
    ${o.consequence}`;
   }).join("\n");
+}
+function confirm(T, text) {
+  return {
+    title: { tag: "plain_text", content: T.confirmTitle },
+    text: { tag: "plain_text", content: text }
+  };
+}
+function optionButtons(p, reqId, recommended, T) {
+  return p.options.map((o) => {
+    const button = {
+      tag: "button",
+      text: { tag: "plain_text", content: o.label },
+      type: o.danger ? "danger" : recommended.includes(o.id) ? "primary" : "default",
+      value: { reqId, optionId: o.id }
+    };
+    if (o.danger) button.confirm = confirm(T, fill(T.confirmText, { label: o.label }));
+    return button;
+  });
+}
+function optionForm(p, reqId, recommended, T) {
+  const submit = {
+    tag: "button",
+    name: "submit",
+    form_action_type: "submit",
+    type: "primary",
+    text: { tag: "plain_text", content: T.submit },
+    behaviors: [{ type: "callback", value: { reqId } }]
+  };
+  if (p.options.some((o) => o.danger)) submit.confirm = confirm(T, T.confirmMultiText);
+  return {
+    tag: "form",
+    name: "ask",
+    elements: [
+      ...p.options.map((o) => ({
+        tag: "checker",
+        name: checkerName(o.id),
+        checked: recommended.includes(o.id),
+        text: { tag: "lark_md", content: `**${o.label}**\u3000${o.consequence}` }
+      })),
+      submit
+    ]
+  };
 }
 function askCard(ctx2) {
   const { payload: p, state } = ctx2;
   const lang = p.lang ?? "zh";
   const T = t(lang);
   const head = HEADER[state];
+  const template = state === "pending" && ctx2.urgent ? "red" : head.template;
+  const recommended = recommendedIds(p);
   const statusWord = state === "answered" ? T.answered : state === "timedout" ? T.timedout : state === "cancelled" ? T.cancelled : "";
   const elements = [];
   if (state === "answered" && ctx2.reply) {
@@ -137390,51 +137483,38 @@ function askCard(ctx2) {
     hr(),
     md(`**${T.options}**
 
-${optionLines(p.options, p.recommend, lang)}`),
+${optionLines(p.options, recommended, lang)}`),
     hr(),
     md(field(T.recommend, p.reasoning)),
     md(`**${T.question}**\u3000${p.question}`)
   );
   if (state === "pending") {
-    for (const o of p.options) {
-      const button = {
-        tag: "button",
-        text: { tag: "plain_text", content: o.label },
-        type: o.danger ? "danger" : o.id === p.recommend ? "primary" : "default",
-        // Both the 1.0 `value` field and 2.0 `behaviors` reach the callback as
-        // `action.value`; `value` is kept because it is the shorter of the two
-        // and was verified to work on a schema-2.0 card.
-        value: { reqId: ctx2.reqId, optionId: o.id }
-      };
-      if (o.danger) {
-        button.confirm = {
-          title: { tag: "plain_text", content: T.confirmTitle },
-          text: { tag: "plain_text", content: fill(T.confirmText, { label: o.label }) }
-        };
-      }
-      elements.push(button);
+    if (p.select === "multi") {
+      elements.push(optionForm(p, ctx2.reqId, recommended, T), note(T.hintMulti));
+    } else {
+      elements.push(...optionButtons(p, ctx2.reqId, recommended, T));
+      elements.push(note(p.options.some((o) => o.danger) ? T.hintDanger : T.hint));
     }
-    elements.push(note(p.options.some((o) => o.danger) ? T.hintDanger : T.hint));
   }
   return card(
-    { icon: head.icon, title: `[${ctx2.projectLabel}] ${p.title}${statusWord ? ` \xB7 ${statusWord}` : ""}`, template: head.template },
+    { icon: head.icon, title: `[${ctx2.projectLabel}] ${p.title}${statusWord ? ` \xB7 ${statusWord}` : ""}`, template },
     elements
   );
 }
 function notifyCard(p, projectLabel2) {
   return card({ icon: "\u{1F4E3}", title: `[${projectLabel2}] ${p.title}`, template: "wathet" }, [md(p.body)]);
 }
-function receiptCard(projectLabel2, why, lang = "zh") {
+function receiptCard(projectLabel2, why, lang = "en") {
   const T = t(lang);
   return card({ icon: "\u26A0\uFE0F", title: `[${projectLabel2}] ${T.notDelivered}`, template: "orange" }, [
     md(fill(T.notDeliveredBody, { why }))
   ]);
 }
-function statusCard(projectLabel2, detail, lang = "zh") {
+function statusCard(projectLabel2, detail, lang = "en") {
   const T = t(lang);
   return card({ icon: "\u{1F514}", title: `[${projectLabel2}] ${T.statusBlocked}`, template: "orange" }, [md(detail)]);
 }
-var md, hr, note, HEADER;
+var md, hr, note, HEADER, checkerName, optionIdOf;
 var init_cards = __esm({
   "src/cards.ts"() {
     "use strict";
@@ -137452,6 +137532,8 @@ var init_cards = __esm({
       timedout: { template: "grey", icon: "\u231B" },
       cancelled: { template: "grey", icon: "\u26A0\uFE0F" }
     };
+    checkerName = (optionId) => `opt:${optionId}`;
+    optionIdOf = (checkerName2) => checkerName2.startsWith("opt:") ? checkerName2.slice(4) : null;
   }
 });
 
@@ -137502,6 +137584,11 @@ function resolveSendable(path2, root) {
     return { error: fill(msg.fileTooBig, { size: (st.size / 1024 / 1024).toFixed(1), cap: cap / 1024 / 1024 }) };
   return { real, bytes: readFileSync4(real) };
 }
+function isTicked(v) {
+  if (v === true || v === 1 || v === "true" || v === "1" || v === "checked") return true;
+  if (Array.isArray(v)) return v.length > 0;
+  return false;
+}
 async function runDaemon(deps = {}) {
   const creds = resolveCreds();
   if (!creds) throw new DaemonStartError(4, msg.daemonNoCreds);
@@ -137520,6 +137607,11 @@ async function runDaemon(deps = {}) {
     throw err;
   }
   const pendings = /* @__PURE__ */ new Map();
+  const closed = /* @__PURE__ */ new Map();
+  const remember = (p) => {
+    closed.set(p.reqId, p.payload);
+    while (closed.size > CLOSED_KEEP) closed.delete(closed.keys().next().value);
+  };
   const lastStatus = /* @__PURE__ */ new Map();
   const lastStatusPush = /* @__PURE__ */ new Map();
   const startedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -137547,6 +137639,7 @@ async function runDaemon(deps = {}) {
     p.done = true;
     clearTimeout(p.timer);
     pendings.delete(p.reqId);
+    remember(p);
     p.settle({ ok: true, kind: "ask", reply, via });
     log("ask.answered", { reqId: p.reqId, via, root: p.root });
     try {
@@ -137563,6 +137656,7 @@ async function runDaemon(deps = {}) {
     p.done = true;
     clearTimeout(p.timer);
     pendings.delete(p.reqId);
+    remember(p);
     p.settle(res);
     log(`ask.${state}`, { reqId: p.reqId, root: p.root });
     try {
@@ -137574,9 +137668,10 @@ async function runDaemon(deps = {}) {
       log("ask.update-failed", { reqId: p.reqId, err: String(err) });
     }
   };
+  const langOf = (b) => b?.lang ?? "en";
   const receipt = async (b, why) => {
     try {
-      await channel.send(b.chatId, { card: receiptCard(b.label, why) });
+      await channel.send(b.chatId, { card: receiptCard(b.label, why, langOf(b)) });
     } catch (err) {
       log("receipt.failed", { root: b.root, err: String(err) });
     }
@@ -137595,16 +137690,29 @@ async function runDaemon(deps = {}) {
         return fill(T.promptRefused, { code: code ?? "?", message: message ?? "" }).trim();
     }
   };
-  const inject = async (b, text) => {
-    let paneId = b.paneId;
-    if (!paneId) paneId = herdr.findPaneForProject(await herdr.agentList(), b.root);
-    if (!paneId) {
-      await receipt(b, t("zh").receiptNoPane);
-      return;
+  const inject = async (b, text, reactTo) => {
+    try {
+      let paneId = b.paneId;
+      if (!paneId) paneId = herdr.findPaneForProject(await herdr.agentList(), b.root);
+      if (!paneId) {
+        await receipt(b, t(langOf(b)).receiptNoPane);
+        return;
+      }
+      const outcome = await herdr.promptPane(paneId, `${INJECT_PREFIX}${text}`);
+      log("inject", { root: b.root, paneId, ok: outcome.ok, code: outcome.code });
+      if (!outcome.ok) {
+        await receipt(b, explainPromptFailure(outcome.code, outcome.message, langOf(b)));
+        return;
+      }
+      if (!reactTo) return;
+      try {
+        await channel.addReaction(reactTo, "Get");
+      } catch (err) {
+        log("reaction.failed", { messageId: reactTo, err: String(err).slice(0, 200) });
+      }
+    } catch (err) {
+      log("inject.failed", { root: b.root, err: String(err).slice(0, 200) });
     }
-    const outcome = await herdr.promptPane(paneId, `${INJECT_PREFIX}${text}`);
-    log("inject", { root: b.root, paneId, ok: outcome.ok, code: outcome.code });
-    if (!outcome.ok) await receipt(b, explainPromptFailure(outcome.code, outcome.message));
   };
   const transcribe = async (audioPath) => {
     try {
@@ -137648,7 +137756,15 @@ async function runDaemon(deps = {}) {
     }
     return out;
   };
-  channel.on("message", async (incoming) => {
+  const guarded = (name, fn) => async (...args) => {
+    try {
+      return await fn(...args);
+    } catch (err) {
+      log(`${name}.failed`, { err: String(err).slice(0, 200) });
+      return void 0;
+    }
+  };
+  channel.on("message", guarded("message", async (incoming) => {
     if (incoming.senderIsBot) return;
     const b = bindings.activeByChat(incoming.chatId);
     if (!b) return;
@@ -137677,36 +137793,58 @@ ${list}`;
       await answer(p, text, "text");
       return;
     }
-    await inject(b, text);
-  });
-  channel.on("cardAction", async (evt) => {
+    await inject(b, text, incoming.messageId);
+  }));
+  channel.on("cardAction", guarded("card-action", async (evt) => {
     const value = evt.action.value ?? {};
     if (!value.reqId) return;
     const p = pendings.get(value.reqId);
+    const form = evt.action.formValue;
+    if (form) log("form.submitted", { reqId: value.reqId, formValue: form });
     if (!p || p.done) {
       const b = bindings.activeByChat(evt.chatId);
       if (b) {
-        const late = value.optionId ?? "";
-        await inject(b, late ? fill(msg.lateTapOption, { id: late }) : msg.lateTapNoOption);
+        let text;
+        if (form) {
+          const was = closed.get(value.reqId);
+          const picked = was ? was.options.filter((o) => isTicked(form[checkerName(o.id)])).map((o) => o.label) : Object.keys(form).filter((k) => isTicked(form[k])).map((k) => optionIdOf(k) ?? k);
+          text = fill(msg.latePick, { labels: picked.join("\u3001") || "?" });
+        } else {
+          const late = value.optionId ?? "";
+          const label = closed.get(value.reqId)?.options.find((o) => o.id === late)?.label ?? late;
+          text = label ? fill(msg.latePick, { labels: label }) : msg.lateTapNoOption;
+        }
+        void inject(b, text).catch((err) => log("inject.failed", { err: String(err).slice(0, 200) }));
       }
-      return { toast: { type: "info", content: t(p?.payload.lang ?? "zh").toastClosed } };
+      return { toast: { type: "info", content: t(closed.get(value.reqId)?.lang ?? langOf(b)).toastClosed } };
     }
     const T = t(p.payload.lang ?? "zh");
-    const opt2 = p.payload.options.find((o) => o.id === value.optionId);
-    if (!opt2) return { toast: { type: "error", content: T.toastBadOption } };
-    const closed = askCard({
+    let reply;
+    let via;
+    if (form) {
+      const picked = p.payload.options.filter((o) => isTicked(form[checkerName(o.id)]));
+      if (!picked.length) return { toast: { type: "error", content: T.pickAtLeastOne } };
+      reply = picked.map((o) => o.label).join("\u3001");
+      via = "form";
+    } else {
+      const opt2 = p.payload.options.find((o) => o.id === value.optionId);
+      if (!opt2) return { toast: { type: "error", content: T.toastBadOption } };
+      reply = opt2.label;
+      via = "button";
+    }
+    const closedCard = askCard({
       payload: p.payload,
       projectLabel: p.label,
       reqId: p.reqId,
       state: "answered",
-      reply: opt2.label
+      reply
     });
-    await answer(p, opt2.label, "button");
+    void answer(p, reply, via).catch((err) => log("answer.failed", { reqId: p.reqId, err: String(err).slice(0, 200) }));
     return {
       toast: { type: "success", content: T.toastAnswered },
-      card: { type: "raw", data: closed }
+      card: { type: "raw", data: closedCard }
     };
-  });
+  }));
   let connected = false;
   let lastError = null;
   let stopping = false;
@@ -137773,6 +137911,32 @@ ${msg.renamePermissionHint}` : text;
       return { ok: false, error: fill(msg.renameThrew, { error: err instanceof Error ? err.message : String(err) }) };
     }
   };
+  const flagUrgent = async (messageId) => {
+    const owner = creds.ownerOpenId;
+    if (!owner) {
+      log("urgent.failed", { messageId, reason: "no-owner" });
+      return { ok: false, error: msg.urgentNoOwner };
+    }
+    try {
+      const res = await channel.rawClient.im.v1.message.urgentApp({
+        path: { message_id: messageId },
+        params: { user_id_type: "open_id" },
+        data: { user_id_list: [owner] }
+      });
+      const refused = feishuError(res);
+      if (refused) {
+        log("urgent.failed", { messageId, code: refused.code, msg: refused.msg });
+        return { ok: false, error: fill(msg.urgentRefused, { code: refused.code, msg: refused.msg }) };
+      }
+      log("urgent.sent", { messageId });
+      return { ok: true };
+    } catch (err) {
+      const body = err?.response?.data;
+      const refused = feishuError(body) ?? feishuError(err);
+      log("urgent.failed", { messageId, err: String(err).slice(0, 200) });
+      return { ok: false, error: refused ? fill(msg.urgentRefused, { code: refused.code, msg: refused.msg }) : err instanceof Error ? err.message : String(err) };
+    }
+  };
   const notConnected = () => ({ ok: false, code: 3, message: fill(msg.notConnected, { error: lastError ?? msg.connecting }) });
   const agents = herdr.agentList;
   const poll = async () => {
@@ -137790,17 +137954,18 @@ ${msg.renamePermissionHint}` : text;
       if (a.agent_status !== "blocked") continue;
       if (now - (lastStatusPush.get(b.root) ?? 0) < STATUS_COOLDOWN_MS) continue;
       lastStatusPush.set(b.root, now);
+      const lang = langOf(b);
       const detail = (a.terminal_title_stripped ? `**${a.terminal_title_stripped}**
-` : "") + fill(t("zh").statusPane, { pane: a.pane_id });
+` : "") + fill(t(lang).statusPane, { pane: a.pane_id });
       try {
-        await channel.send(b.chatId, { card: statusCard(b.label, detail) });
+        await channel.send(b.chatId, { card: statusCard(b.label, detail, lang) });
         log("status.pushed", { root: b.root, kind: "blocked" });
       } catch (err) {
         log("status.failed", { root: b.root, err: String(err) });
       }
     }
   };
-  const pollTimer = setInterval(() => void poll(), POLL_MS);
+  const pollTimer = setInterval(() => void poll().catch((err) => log("poll.failed", { err: String(err).slice(0, 200) })), deps.pollMs ?? POLL_MS);
   pollTimer.unref();
   let server;
   const sockets = /* @__PURE__ */ new Set();
@@ -137810,9 +137975,9 @@ ${msg.renamePermissionHint}` : text;
   });
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
   const onSignal = {
-    SIGINT: () => void stop("SIGINT"),
-    SIGTERM: () => void stop("SIGTERM"),
-    SIGHUP: () => void stop("SIGHUP")
+    SIGINT: () => void stopSafely("SIGINT"),
+    SIGTERM: () => void stopSafely("SIGTERM"),
+    SIGHUP: () => void stopSafely("SIGHUP")
   };
   const closeServer = async () => {
     if (!server) return;
@@ -137878,6 +138043,7 @@ ${msg.renamePermissionHint}` : text;
     log("daemon.stopped", { why });
     resolveDone();
   };
+  const stopSafely = (why) => stop(why).catch((err) => log("stop.failed", { why, err: String(err).slice(0, 200) }));
   server = await serve({
     handle: async (req, ctx2) => {
       switch (req.type) {
@@ -137896,7 +138062,7 @@ ${msg.renamePermissionHint}` : text;
             }
           };
         case "stop":
-          setTimeout(() => void stop("stop requested"), 50);
+          setTimeout(() => void stopSafely("stop requested"), 50);
           return { ok: true, kind: "ack" };
         case "list":
           return {
@@ -138140,45 +138306,52 @@ ${msg.renamePermissionHint}` : text;
           }
           if (payload.lang) bindings.touch(req.root, { lang: payload.lang });
           const reqId = randomUUID2().replace(/-/g, "").slice(0, 16);
+          const urgent = req.urgent === true;
           let messageId;
           try {
             const sent = await channel.send(b.chatId, {
-              card: askCard({ payload, projectLabel: b.label, reqId, state: "pending" })
+              card: askCard({ payload, projectLabel: b.label, reqId, state: "pending", urgent })
             });
             messageId = sent.messageId;
           } catch (err) {
             return { ok: false, code: 3, message: fill(msg.sendFailed, { error: err instanceof Error ? err.message : String(err) }) };
           }
-          log("ask.sent", { reqId, root: b.root, options: payload.options.length });
-          return await new Promise((resolve3) => {
-            const p = {
-              reqId,
-              root: b.root,
-              chatId: b.chatId,
-              messageId,
-              label: b.label,
-              payload,
-              settle: resolve3,
-              done: false,
-              timer: setTimeout(() => {
-                void closeWithout(p, "timedout", {
-                  ok: false,
-                  code: 2,
-                  message: fill(msg.askTimedOut, { seconds: Math.round(req.timeoutMs / 1e3) })
-                });
-              }, req.timeoutMs)
-            };
-            pendings.set(reqId, p);
-            ctx2.onClose(() => {
-              if (!p.done)
-                void closeWithout(p, "cancelled", {
-                  ok: false,
-                  code: 3,
-                  message: msg.askClientGone
-                });
-            });
-            ctx2.note(fill(msg.askNote, { seconds: Math.round(req.timeoutMs / 1e3) }));
+          log("ask.sent", { reqId, root: b.root, options: payload.options.length, select: payload.select, urgent });
+          let settle;
+          const result = new Promise((resolve3) => {
+            settle = resolve3;
           });
+          const closeLater = (state, res) => {
+            void closeWithout(p, state, res).catch((err) => log("close.failed", { reqId, state, err: String(err).slice(0, 200) }));
+          };
+          const p = {
+            reqId,
+            root: b.root,
+            chatId: b.chatId,
+            messageId,
+            label: b.label,
+            payload,
+            urgent,
+            settle,
+            done: false,
+            timer: setTimeout(() => {
+              closeLater("timedout", {
+                ok: false,
+                code: 2,
+                message: fill(msg.askTimedOut, { seconds: Math.round(req.timeoutMs / 1e3) })
+              });
+            }, req.timeoutMs)
+          };
+          pendings.set(reqId, p);
+          ctx2.onClose(() => {
+            if (!p.done) closeLater("cancelled", { ok: false, code: 3, message: msg.askClientGone });
+          });
+          if (urgent) {
+            const r = await flagUrgent(messageId);
+            if (!r.ok) ctx2.note(fill(msg.urgentNotSent, { error: r.error }));
+          }
+          ctx2.note(fill(msg.askNote, { seconds: Math.round(req.timeoutMs / 1e3) }));
+          return await result;
         }
         default:
           return { ok: false, code: 1, message: msg.ipcUnknownRequest };
@@ -138193,10 +138366,10 @@ ${msg.renamePermissionHint}` : text;
 `, { mode: 384 });
   log("daemon.started", { pid: process.pid, endpoint: ipcEndpoint() });
   for (const sig of signals) process.on(sig, onSignal[sig]);
-  void connectLoop();
+  void connectLoop().catch((err) => log("connect-loop.failed", { err: String(err).slice(0, 200) }));
   return { stop: () => stop("stop()"), done };
 }
-var INJECT_PREFIX, POLL_MS, STATUS_COOLDOWN_MS, CONNECT_RETRY_MS, CONNECT_RETRY_MAX_MS, CLOSE_GRACE_MS, CANCEL_CARD_MS, DaemonStartError, MAX_IMAGE_BYTES, MAX_FILE_BYTES;
+var INJECT_PREFIX, POLL_MS, STATUS_COOLDOWN_MS, CONNECT_RETRY_MS, CONNECT_RETRY_MAX_MS, CLOSE_GRACE_MS, CANCEL_CARD_MS, DaemonStartError, MAX_IMAGE_BYTES, MAX_FILE_BYTES, CLOSED_KEEP;
 var init_daemon = __esm({
   "src/daemon.ts"() {
     "use strict";
@@ -138225,6 +138398,7 @@ var init_daemon = __esm({
     };
     MAX_IMAGE_BYTES = 10 * 1024 * 1024;
     MAX_FILE_BYTES = 30 * 1024 * 1024;
+    CLOSED_KEEP = 50;
   }
 });
 
@@ -138256,6 +138430,8 @@ var DEFAULT_SCOPES = [
   "im:message.group_msg",
   "im:chat",
   "im:resource",
+  // `ask --urgent` flags the owner in-app; without this the flag is refused and only noted.
+  "im:message.urgent",
   // Voice messages arrive as an opaque `<audio/>` placeholder without this.
   "speech_to_text:speech"
 ];
@@ -138581,7 +138757,7 @@ async function cmdAsk(args) {
   const seconds = Number(opt(args, "timeout") ?? 43200);
   if (!Number.isFinite(seconds) || seconds <= 0) die(1, msg.timeoutArg);
   const res = await request(
-    { type: "ask", root, label, paneId, payload, timeoutMs: seconds * 1e3 },
+    { type: "ask", root, label, paneId, payload, timeoutMs: seconds * 1e3, urgent: flag(args, "urgent") },
     { onNote: (text) => process.stderr.write(`note: ${text}
 `) }
   );

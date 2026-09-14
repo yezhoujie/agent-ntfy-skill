@@ -26,6 +26,10 @@ export const zh = {
   theQuestion: '（原问题）',
   hint: '想说别的？直接在本群发消息就行，第一条消息就是答复。',
   hintDanger: '红色按钮会二次确认；也可以直接在群里打字。',
+  hintMulti: '勾选后点提交；想说别的直接在群里打字，整段就是回复。',
+  submit: '提交',
+  confirmMultiText: '所选项里有不可逆或高代价的操作。确定提交？',
+  pickAtLeastOne: '至少选一项',
   answered: '已回答',
   timedout: '已超时',
   cancelled: '已取消',
@@ -83,6 +87,10 @@ export const en: Record<keyof typeof zh, string> = {
   theQuestion: '(the question as asked)',
   hint: 'Want to say something else? Just send a message in this group — the first one is the answer.',
   hintDanger: 'Red buttons ask for confirmation; you can also just type here.',
+  hintMulti: 'Tick what applies, then Submit; to say something else just type in the group — the whole message is the reply.',
+  submit: 'Submit',
+  confirmMultiText: 'The selection includes an irreversible or high-cost option. Submit anyway?',
+  pickAtLeastOne: 'Pick at least one',
   answered: 'Answered',
   timedout: 'Timed out',
   cancelled: 'Cancelled',
@@ -142,7 +150,8 @@ export const msg = {
   unbind                             Let the live group go (it stays in Feishu; the next away on offers it back)
   bind [--chat <id>] [--name <task>] [--reuse <chat_id> | --new]
                                      Bind without switching remote mode on; --chat names a group outright
-  ask [--timeout <seconds>]          Read JSON from stdin, push a question card, block until answered
+  ask [--timeout <seconds>] [--urgent]
+                                     Read JSON from stdin, push a question card, block until answered (--urgent flags the owner in-app)
   notify                             Read JSON from stdin, push a titled notification card (important things only)
   send-file <path> [--caption <t>]   Send an image or file to the project group
   status                             Daemon and binding overview
@@ -272,8 +281,11 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
     '({n} voice message(s) received but transcription failed — most likely the app lacks the speech_to_text:speech scope. Tell the user: run agent-lark setup --update to rescan and add that scope, or type instead this time.)',
   injectFilesWithText: '(attachments saved locally)',
   injectFilesOnly: '(I sent attachments; they are saved locally)',
-  lateTapOption: '(follow-up) I pick {id}',
   lateTapNoOption: '(follow-up) I tapped the card above again',
+  latePick: '(follow-up) I pick {labels}',
+  urgentNotSent: 'the urgent flag was not delivered ({error}); the question itself was sent and is waiting as usual',
+  urgentNoOwner: 'the app owner is not recorded, so there is nobody to flag; rerun agent-lark setup --update to record it',
+  urgentRefused: 'Feishu error {code} {msg}',
   // validation
   vTitleRequired: 'title: required and non-empty',
   vTitleTooLong: 'title: over {max} characters, got {n}',
@@ -297,6 +309,11 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   vRecommendRequired: 'recommend: required; the id of one option',
   vRecommendUnknown: 'recommend: "{id}" is not the id of any option',
   vRecommendDanger: 'recommend: "{id}" is marked danger; an irreversible or high-cost option cannot be the recommendation — list it and let the human choose',
+  vRecommendString: 'recommend: with select "single" (the default) it must be one option id, a string — set select: "multi" to recommend several',
+  vRecommendArray: 'recommend: with select "multi" it must be an array of option ids (strings)',
+  vRecommendEmpty: 'recommend: with select "multi" the array must be non-empty — at least one option to tick by default',
+  vRecommendDupItem: 'recommend: "{id}" is listed twice',
+  vSelect: 'select: must be "single" or "multi", got {value}',
   vLang: 'lang: must be "zh" or "en", got {value}',
   vBodyRequired: 'body: required and non-empty',
   vBodyTooLong: 'body: over {max} characters',

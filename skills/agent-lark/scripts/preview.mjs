@@ -1,5 +1,11 @@
 // Dev-only: render every card this skill can send into one local HTML page,
-// so the layout can be judged before a Feishu app exists. Not shipped.
+// so the layout can be judged before a Feishu app exists. Not shipped, not
+// part of `npm test`.
+//
+// It imports the compiled modules, so build them first (without --noEmit,
+// which is what `npm run typecheck` uses):
+//   npx tsc -p tsconfig.json && node scripts/preview.mjs
+// then open card-preview.html (gitignored).
 import { writeFileSync } from 'node:fs';
 import { askCard, notifyCard, receiptCard, statusCard } from '../dist/cards.js';
 
@@ -19,13 +25,34 @@ const payload = {
     '倾向保留固定目录：走到这条路径的用户本来就最可能环境是坏的，留个现场值。最强反对：磁盘上垃圾目录会累积，没人负责清理。',
   question: '保留固定目录，还是用完即删？',
   lang: 'zh',
+  select: 'single',
+};
+
+const multiPayload = {
+  ...payload,
+  title: '这轮发版要带上哪些',
+  doing: '整理发版说明',
+  description: '三项改动都已合并，各自独立，可以任选组合发出去。',
+  blocker: '不知道你想让哪些在这一版里露面。',
+  options: [
+    { id: 'group', label: '群生命周期', consequence: '解绑后可复用群；文档要补一节' },
+    { id: 'multi', label: '多选卡', consequence: '需要飞书客户端 7.9 以上' },
+    { id: 'rename', label: '改名命令', consequence: '小改动，无风险' },
+    { id: 'wipe', label: '顺手删掉旧版本的群', consequence: '飞书里的旧群一并解散，不可恢复', danger: true },
+  ],
+  select: 'multi',
+  recommend: ['group', 'rename'],
+  reasoning: '群生命周期与改名是这轮的主线；多选卡门槛高，先不宣传。',
+  question: '勾上要发的几项。',
 };
 
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
 
-// lark_md subset actually used by cards.ts: **bold** and line breaks.
+// markdown / lark_md subset actually used by cards.ts: **bold**, line breaks,
+// and the grey <font> tag the caption lines use.
 const larkMd = (s) =>
   esc(s)
+    .replace(/&lt;font color='grey'&gt;(.+?)&lt;\/font&gt;/gs, '<span class="grey">$1</span>')
     .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
     .replace(/\n/g, '<br>');
 
@@ -38,35 +65,56 @@ const TEMPLATE_COLORS = {
   wathet: '#1cafff',
 };
 
+const button = (b) =>
+  `<button class="btn ${b.type}">${esc(b.text.content)}${b.confirm ? '<span class="lock">⚠</span>' : ''}</button>`;
+
+// Card JSON 2.0: elements sit directly under body.elements; buttons are
+// elements of their own, a multi-choice question is a form of checkers.
 function renderElements(elements) {
-  return elements
-    .map((el) => {
-      if (el.tag === 'hr') return '<div class="hr"></div>';
-      if (el.tag === 'div') return `<div class="div">${larkMd(el.text.content)}</div>`;
-      if (el.tag === 'note')
-        return `<div class="note">${el.elements.map((e) => esc(e.content)).join(' ')}</div>`;
-      if (el.tag === 'action')
-        return `<div class="actions">${el.actions
-          .map(
-            (b) =>
-              `<button class="btn ${b.type}">${esc(b.text.content)}${b.confirm ? '<span class="lock">⚠</span>' : ''}</button>`,
+  const out = [];
+  let buttons = [];
+  const flush = () => {
+    if (buttons.length) out.push(`<div class="actions">${buttons.map(button).join('')}</div>`);
+    buttons = [];
+  };
+  for (const el of elements) {
+    if (el.tag === 'button') {
+      buttons.push(el);
+      continue;
+    }
+    flush();
+    if (el.tag === 'hr') out.push('<div class="hr"></div>');
+    else if (el.tag === 'markdown') out.push(`<div class="div${el.text_size === 'notation' ? ' small' : ''}">${larkMd(el.content)}</div>`);
+    else if (el.tag === 'form')
+      out.push(
+        `<div class="form">${el.elements
+          .map((e) =>
+            e.tag === 'checker'
+              ? `<label class="checker"><input type="checkbox" ${e.checked ? 'checked' : ''} disabled> <span>${larkMd(e.text.content)}</span></label>`
+              : e.tag === 'button'
+                ? `<div class="actions">${button(e)}</div>`
+                : '',
           )
-          .join('')}</div>`;
-      return '';
-    })
-    .join('');
+          .join('')}</div>`,
+      );
+  }
+  flush();
+  return out.join('');
 }
 
 function renderCard(card) {
   const color = TEMPLATE_COLORS[card.header?.template] ?? '#3370ff';
   return `<div class="card">
     <div class="header" style="background:${color}">${esc(card.header.title.content)}</div>
-    <div class="body">${renderElements(card.elements)}</div>
+    <div class="body">${renderElements(card.body.elements)}</div>
   </div>`;
 }
 
 const samples = [
   ['待回答（三个选项，第三个是不可逆项）', askCard({ payload, projectLabel: 'agent-lark', reqId: 'r1', state: 'pending' })],
+  ['待回答 · 多选（勾选器 + 提交；含不可逆项，提交前二次确认）', askCard({ payload: multiPayload, projectLabel: 'agent-lark', reqId: 'r2', state: 'pending' })],
+  ['待回答 · --urgent（红头，已应用内加急）', askCard({ payload, projectLabel: 'agent-lark', reqId: 'r3', state: 'pending', urgent: true })],
+  ['已回答 · 多选提交了两项', askCard({ payload: multiPayload, projectLabel: 'agent-lark', reqId: 'r2', state: 'answered', reply: '群生命周期、改名命令' })],
   ['已回答（按钮点了推荐项）', askCard({ payload, projectLabel: 'agent-lark', reqId: 'r1', state: 'answered', reply: '保留固定目录' })],
   ['已回答（手打的自由文本）', askCard({ payload, projectLabel: 'agent-lark', reqId: 'r1', state: 'answered', reply: '都不要，改成放到 /tmp 下按天分目录，第二天自动过期' })],
   ['超时', askCard({ payload, projectLabel: 'agent-lark', reqId: 'r1', state: 'timedout' })],
@@ -93,7 +141,11 @@ const html = `<!doctype html>
   .div { margin:0 0 12px; word-break:break-word; }
   .div:last-child { margin-bottom:0; }
   .hr { height:1px; background:#dee0e3; margin:12px 0; }
-  .note { color:#8f959e; font-size:12px; margin-top:12px; }
+  .note, .small { color:#8f959e; font-size:12px; margin-top:12px; }
+  .grey { color:#8f959e; }
+  .form { border:1px solid #dee0e3; border-radius:6px; padding:8px 12px; margin-top:12px; }
+  .checker { display:flex; gap:8px; align-items:flex-start; padding:6px 0; border-bottom:1px solid #f0f1f2; }
+  .checker:last-of-type { border-bottom:0; }
   .actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
   .btn { font:inherit; font-size:14px; padding:6px 16px; border-radius:6px; cursor:default; border:1px solid #d0d3d6; background:#fff; color:#1f2329; }
   .btn.primary { background:#3370ff; border-color:#3370ff; color:#fff; }
