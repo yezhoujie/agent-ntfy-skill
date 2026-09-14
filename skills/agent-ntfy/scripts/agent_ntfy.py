@@ -73,6 +73,7 @@ EXIT_BY_KIND = {"invalid_input": EXIT_INVALID, "unknown_slot": EXIT_INVALID, "bu
 CONFIRM_TIMEOUT = 600  # 与 daemon.CONFIRM_TIMEOUT 同步（这里刻意不 import daemon）
 DAEMON_START_TIMEOUT = 5.0  # away on 起 daemon 后等它在 socket 上应答的上限（秒）
 PROBE_TIMEOUT = 2.0  # 单次探活的 socket 超时：daemon 已 bind 但还没进主循环（卡在初始化）时不能让调用方挂死
+REQUEST_TIMEOUT = 60.0  # 一问一答命令等 daemon 回第一条事件的上限：daemon 接了连接却不应答时不能让调用方挂死；要 > ntfyclient.TIMEOUT（daemon 同步发布最坏等 30 秒）
 STOP_TIMEOUT = 30.0  # --stop 等 daemon 退干净的总预算（关停最坏拖 2 + 5×N 秒：在途注入的宽限期 + 每张未送达回执的发布上限）
 STATE_KEYS = ("unassigned", "idle", "active", "confirming")  # daemon 的 slots 事件里 state_key 的取值；显示文案按语言取
 
@@ -313,8 +314,12 @@ def request(home: Path, req: dict, lang: str, *, not_sent: bool = False) -> dict
     not_sent：这条命令会发消息（notify），失败提示里要点明「消息未发送」。"""
     try:
         with connect(home) as s:
+            s.settimeout(REQUEST_TIMEOUT)
             send_request(s, {**req, "lang": lang}, home=home)
             return next(read_events(s), {"event": "error", "kind": "protocol", "sent": False, "message": texts.t("cli.no_response", lang)})
+    except TimeoutError:  # 连上了但 daemon 不应答（卡在主循环外）：按通信失败报，不是「连不上」
+        err(texts.t("cli.ask.comm_failed", lang, error=texts.t("cli.no_response", lang)) + (texts.t("cli.ask.disconnected.not_sent", lang) if not_sent else ""))
+        return None
     except OSError as e:
         err(texts.t("cli.connect_failed.not_sent" if not_sent else "cli.connect_failed", lang, path=sock_path(home), error=e.strerror or e))
         start_hint(lang)

@@ -868,6 +868,24 @@ class HerdrHelpersTest(unittest.TestCase):
         self.assertGreaterEqual(elapsed, 0.25)  # 真等到了监听端超时，不是连都没连上就返回（那样任何传输下都会「通过」）；留 50 ms 给 Windows 的定时器粒度（实测早醒 0.2 ms）
         self.assertLess(elapsed, 1.5)
 
+    def test_request_gives_up_on_a_silent_listener(self):
+        # daemon 接了连接却不回第一条事件：一问一答命令要在 REQUEST_TIMEOUT 内退出并报「没有回应」，不能挂死
+        home = Path(tempfile.mkdtemp(prefix="home-"))
+        self.addCleanup(shutil.rmtree, home, ignore_errors=True)
+        srv, cleanup = ipc.listen(home)
+        self.addCleanup(cleanup)
+        self.addCleanup(srv.close)
+        errbuf = io.StringIO()
+        started = time.monotonic()
+        with mock.patch("agent_ntfy.REQUEST_TIMEOUT", 0.3), contextlib.redirect_stderr(errbuf):
+            ev = agent_ntfy.request(home, {"cmd": "slots", "leased_by": "proj:/x", "pane": None}, "zh", not_sent=True)
+        elapsed = time.monotonic() - started
+        self.assertIsNone(ev)
+        self.assertGreaterEqual(elapsed, 0.25)
+        self.assertLess(elapsed, 1.5)
+        self.assertIn("daemon 没有回应", errbuf.getvalue())
+        self.assertIn("消息未发送", errbuf.getvalue())
+
     def test_probe_returns_status_event(self):
         h = Harness(self)
         ev = agent_ntfy.probe(h.home)

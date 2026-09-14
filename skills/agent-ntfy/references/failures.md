@@ -108,6 +108,8 @@ place of `No such file or directory` means `AGENT_NTFY_HOME` is too deep for a U
 
 **Connection lost** — `agent-ntfy: connection to the daemon lost (message sent; the reply can no longer reach this call)` or `… (message NOT sent)`; `agent-ntfy: talking to the daemon failed: <error> (message sent)` — restart or check the daemon (`daemon --status`), then follow the sent / not-sent hint.
 
+**Daemon accepted the connection but never answered** (not sent): `agent-ntfy: talking to the daemon failed: no response from the daemon (message NOT sent)` — one-shot commands (`notify`, `slots`, `release`, `add-slot`, `daemon --status|--stop`) give up after 60 s (`REQUEST_TIMEOUT`, longer than the daemon's 30 s publish limit) instead of hanging; the daemon is stuck outside its main loop — check `daemon --status`, restart it if that hangs too. `ask` and `confirm-sub` are not subject to this limit (they wait for a human).
+
 **Rejected by the daemon** (not sent): `agent-ntfy: message NOT sent: unauthenticated connection (token mismatch)` — tcp transport only: the token the client sent is not the running daemon's (`daemon.port` was rewritten after the client read it, or edited); run `daemon --status` and call again. A daemon that cannot read its own state answers `… NOT sent: <storage error>` (§9).
 
 ## 5. rc 4: a human must act on the terminal side
