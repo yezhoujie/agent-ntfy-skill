@@ -7,6 +7,14 @@ version is only a tag you can pin (`npx skills add 'yezhoujie/agent-ntfy-skill#v
 
 ## [Unreleased]
 
+### Added
+
+- `confirm-sub --report-to <pane>`: a confirmation pane opened by the CLI sends its result (confirmed / timed
+  out / interrupted / failed) back into the agent's session as one line prefixed `[agent-ntfy] `, so the
+  agent no longer has to poll `slots`. Set automatically on auto-opened panes.
+- A `confirm-sub` run by hand ends with a line to paste into the agent (`agent-ntfy: slotN is confirmed; …`)
+  and tells the user the terminal window can be closed — the only way the result reaches an agent without herdr.
+
 ## [0.1.1] - 2026-09-14
 
 ### Added
