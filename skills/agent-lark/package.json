@@ -1,0 +1,39 @@
+{
+  "name": "herdr-lark",
+  "version": "0.1.0",
+  "description": "把 herdr 里跑着的 agent 会话和飞书打通：要拍板的事推到手机，答复注入回原窗格",
+  "type": "module",
+  "bin": {
+    "herdr-lark": "./dist/cli.mjs"
+  },
+  "exports": "./dist/index.js",
+  "engines": {
+    "node": ">=20.12.0"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build"
+  },
+  "dependencies": {
+    "@larksuite/channel": "^0.7.1",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/qrcode": "^1.5.5",
+    "typescript": "^5.7.0",
+    "esbuild": "^0.25.0"
+  },
+  "license": "MIT",
+  "private": true,
+  "files": [
+    "dist/cli.mjs",
+    "SKILL.md",
+    "README.md",
+    "README.zh-CN.md",
+    "docs",
+    "examples",
+    "LICENSE"
+  ]
+}

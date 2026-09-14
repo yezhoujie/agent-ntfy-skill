@@ -1,0 +1,7 @@
+node_modules/
+# The bundle ships in the repo so `skills add` needs no build step.
+dist/*
+!dist/cli.mjs
+*.log
+.DS_Store
+card-preview.html
