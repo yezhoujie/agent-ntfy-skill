@@ -7,6 +7,36 @@ version is only a tag you can pin (`npx skills add 'yezhoujie/agent-ntfy-skill#v
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-14
+
+### Added
+
+- `--lang zh|en` on the command line (a top-level option, before the subcommand). The wording language is now
+  resolved once per process as `--lang` > `AGENT_NTFY_LANG` > the system locale (`LC_ALL` / `LC_MESSAGES` /
+  `LANG` starting with `zh`, or a Chinese Windows locale, means `zh`) > `en`, so a machine with a Chinese locale
+  gets Chinese wording without setting anything. Panes and daemons the CLI starts for you receive the resolved
+  language via `--lang` (no more dependence on the POSIX `env` tool).
+- The confirmation pane that `away on` / `confirm-sub` opens for you asks `Close this pane? [Y/n]` after a
+  successful check and closes itself on Enter (`--close-pane`, set only on auto-opened panes; never asked
+  after a failure, and never when stdout is not a terminal).
+- README §2.2: iPhone users use the ntfy web app added to the home screen — the iOS App Store app receives
+  notifications but has no reply box.
+
+### Changed
+
+- The confirmation guide and the "tell the user" text warn not to close the pane before pressing Enter and
+  tapping the button — closing it cancels the check.
+- The receipt for a phone message on a slot whose lease has no pane names the commands that register one
+  (`ask`, `notify`, `slots`, `release` without argument, `away on`, `away status`) instead of "any command".
+
+### Fixed
+
+- One-shot commands (`notify`, `slots`, `release`, `add-slot`, `daemon --status|--stop`) give up after 60 s
+  with "no response from the daemon" (exit 3) when the daemon accepted the connection but never answered,
+  instead of hanging until Ctrl-C.
+- The leases file is written through the same private atomic-write path as the topic pool file, so a leftover
+  temporary file with wide permissions can no longer be renamed into place as is.
+
 ## [0.1.0] - 2026-09-13
 
 First tagged release. Earlier commits were never versioned; the entries below describe what changed
@@ -70,5 +100,6 @@ relative to those untagged versions.
 - A missing `security` command (the keychain exists only on macOS) is reported as such, with the
   `AGENT_NTFY_STORE` alternatives, instead of as a socket error.
 
-[Unreleased]: https://github.com/yezhoujie/agent-ntfy-skill/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/yezhoujie/agent-ntfy-skill/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/yezhoujie/agent-ntfy-skill/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/yezhoujie/agent-ntfy-skill/releases/tag/v0.1.0
