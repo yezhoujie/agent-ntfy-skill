@@ -8872,11 +8872,11 @@ var require_mime_types = __commonJS({
       }
       return false;
     }
-    function contentType(str2) {
-      if (!str2 || typeof str2 !== "string") {
+    function contentType(str3) {
+      if (!str3 || typeof str3 !== "string") {
         return false;
       }
-      var mime = str2.indexOf("/") === -1 ? exports.lookup(str2) : str2;
+      var mime = str3.indexOf("/") === -1 ? exports.lookup(str3) : str3;
       if (!mime) {
         return false;
       }
@@ -9439,14 +9439,14 @@ var require_implementation = __commonJS({
       return arr;
     };
     var joiny = function(arr, joiner) {
-      var str2 = "";
+      var str3 = "";
       for (var i = 0; i < arr.length; i += 1) {
-        str2 += arr[i];
+        str3 += arr[i];
         if (i + 1 < arr.length) {
-          str2 += joiner;
+          str3 += joiner;
         }
       }
-      return str2;
+      return str3;
     };
     module.exports = function bind(that) {
       var target = this;
@@ -10018,8 +10018,8 @@ var require_form_data = __commonJS({
     var setToStringTag = require_es_set_tostringtag();
     var hasOwn = require_hasown();
     var populate = require_populate();
-    function escapeHeaderParam(str2) {
-      return String(str2).replace(/\r/g, "%0D").replace(/\n/g, "%0A").replace(/"/g, "%22");
+    function escapeHeaderParam(str3) {
+      return String(str3).replace(/\r/g, "%0D").replace(/\n/g, "%0A").replace(/"/g, "%22");
     }
     function FormData2(options) {
       if (!(this instanceof FormData2)) {
@@ -10343,13 +10343,13 @@ var require_ms = __commonJS({
         "val is not a non-empty string or a valid number. val=" + JSON.stringify(val)
       );
     };
-    function parse2(str2) {
-      str2 = String(str2);
-      if (str2.length > 100) {
+    function parse2(str3) {
+      str3 = String(str3);
+      if (str3.length > 100) {
         return;
       }
       var match = /^(-?(?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i.exec(
-        str2
+        str3
       );
       if (!match) {
         return;
@@ -10950,7 +10950,7 @@ var require_node = __commonJS({
     var { formatters } = module.exports;
     formatters.o = function(v) {
       this.inspectOpts.colors = this.useColors;
-      return util.inspect(v, this.inspectOpts).split("\n").map((str2) => str2.trim()).join(" ");
+      return util.inspect(v, this.inspectOpts).split("\n").map((str3) => str3.trim()).join(" ");
     };
     formatters.O = function(v) {
       this.inspectOpts.colors = this.useColors;
@@ -12063,8 +12063,8 @@ var require_axios = __commonJS({
       return result;
     };
     var kindOf = /* @__PURE__ */ ((cache) => (thing) => {
-      const str2 = toString.call(thing);
-      return cache[str2] || (cache[str2] = str2.slice(8, -1).toLowerCase());
+      const str3 = toString.call(thing);
+      return cache[str3] || (cache[str3] = str3.slice(8, -1).toLowerCase());
     })(/* @__PURE__ */ Object.create(null));
     var kindOfTest = (type) => {
       type = type.toLowerCase();
@@ -12144,8 +12144,8 @@ var require_axios = __commonJS({
     };
     var isURLSearchParams = kindOfTest("URLSearchParams");
     var [isReadableStream, isRequest, isResponse, isHeaders] = ["ReadableStream", "Request", "Response", "Headers"].map(kindOfTest);
-    var trim = (str2) => {
-      return str2.trim ? str2.trim() : str2.replace(/^[\s\uFEFF\xA0]+|[\s\uFEFF\xA0]+$/g, "");
+    var trim = (str3) => {
+      return str3.trim ? str3.trim() : str3.replace(/^[\s\uFEFF\xA0]+|[\s\uFEFF\xA0]+$/g, "");
     };
     function forEach(obj, fn, {
       allOwnKeys = false
@@ -12307,13 +12307,13 @@ var require_axios = __commonJS({
       } while (sourceObj && (!filter || filter(sourceObj, destObj)) && sourceObj !== Object.prototype);
       return destObj;
     };
-    var endsWith = (str2, searchString, position) => {
-      str2 = String(str2);
-      if (position === void 0 || position > str2.length) {
-        position = str2.length;
+    var endsWith = (str3, searchString, position) => {
+      str3 = String(str3);
+      if (position === void 0 || position > str3.length) {
+        position = str3.length;
       }
       position -= searchString.length;
-      const lastIndex = str2.indexOf(searchString, position);
+      const lastIndex = str3.indexOf(searchString, position);
       return lastIndex !== -1 && lastIndex === position;
     };
     var toArray = (thing) => {
@@ -12341,17 +12341,17 @@ var require_axios = __commonJS({
         fn.call(obj, pair2[0], pair2[1]);
       }
     };
-    var matchAll = (regExp, str2) => {
+    var matchAll = (regExp, str3) => {
       let matches;
       const arr = [];
-      while ((matches = regExp.exec(str2)) !== null) {
+      while ((matches = regExp.exec(str3)) !== null) {
         arr.push(matches);
       }
       return arr;
     };
     var isHTMLForm = kindOfTest("HTMLFormElement");
-    var toCamelCase = (str2) => {
-      return str2.toLowerCase().replace(/[-_\s]([a-z\d])(\w*)/g, function replacer(m, p1, p2) {
+    var toCamelCase = (str3) => {
+      return str3.toLowerCase().replace(/[-_\s]([a-z\d])(\w*)/g, function replacer(m, p1, p2) {
         return p1.toUpperCase() + p2;
       });
     };
@@ -12557,24 +12557,24 @@ var require_axios = __commonJS({
       });
       return parsed;
     };
-    function trimSPorHTAB(str2) {
+    function trimSPorHTAB(str3) {
       let start = 0;
-      let end = str2.length;
+      let end = str3.length;
       while (start < end) {
-        const code = str2.charCodeAt(start);
+        const code = str3.charCodeAt(start);
         if (code !== 9 && code !== 32) {
           break;
         }
         start += 1;
       }
       while (end > start) {
-        const code = str2.charCodeAt(end - 1);
+        const code = str3.charCodeAt(end - 1);
         if (code !== 9 && code !== 32) {
           break;
         }
         end -= 1;
       }
-      return start === 0 && end === str2.length ? str2 : str2.slice(start, end);
+      return start === 0 && end === str3.length ? str3 : str3.slice(start, end);
     }
     var INVALID_UNICODE_HEADER_VALUE_CHARS = new RegExp("[\\u0000-\\u0008\\u000a-\\u001f\\u007f]+", "g");
     var INVALID_BYTE_STRING_HEADER_VALUE_CHARS = new RegExp("[^\\u0009\\u0020-\\u007e\\u0080-\\u00ff]+", "g");
@@ -12603,11 +12603,11 @@ var require_axios = __commonJS({
       }
       return utils$1.isArray(value) ? value.map(normalizeValue) : sanitizeHeaderValue(String(value));
     }
-    function parseTokens(str2) {
+    function parseTokens(str3) {
       const tokens = /* @__PURE__ */ Object.create(null);
       const tokensRE = /([^\s,;=]+)\s*(?:=\s*([^,;]+))?/g;
       let match;
-      while (match = tokensRE.exec(str2)) {
+      while (match = tokensRE.exec(str3)) {
         tokens[match[1]] = match[2];
       }
       return tokens;
@@ -12655,12 +12655,12 @@ var require_axios = __commonJS({
     }
     function parseParameters(value) {
       const parameters = /* @__PURE__ */ Object.create(null);
-      const str2 = String(value);
+      const str3 = String(value);
       let start = 0;
       let quoted = false;
       let escaped = false;
       function parseParameter(end) {
-        const part = trimOWS(str2.slice(start, end));
+        const part = trimOWS(str3.slice(start, end));
         const equals = part.indexOf("=");
         if (equals < 1) {
           return;
@@ -12676,8 +12676,8 @@ var require_axios = __commonJS({
         const parameterValue = trimOWS(part.slice(equals + 1));
         parameters[normalizedName] = decodeQuotedString(parameterValue);
       }
-      for (let i = 0; i < str2.length; i++) {
-        const code = str2.charCodeAt(i);
+      for (let i = 0; i < str3.length; i++) {
+        const code = str3.charCodeAt(i);
         if (quoted) {
           if (escaped) {
             escaped = false;
@@ -12693,10 +12693,10 @@ var require_axios = __commonJS({
           start = i + 1;
         }
       }
-      parseParameter(str2.length);
+      parseParameter(str3.length);
       return parameters;
     }
-    var isValidHeaderName = (str2) => /^[-_a-zA-Z0-9^`|~,!#$%&'*+.]+$/.test(str2.trim());
+    var isValidHeaderName = (str3) => /^[-_a-zA-Z0-9^`|~,!#$%&'*+.]+$/.test(str3.trim());
     function matchHeaderValue(context, value, header, filter, isHeaderNameFilter) {
       if (utils$1.isFunction(filter)) {
         return filter.call(this, value, header);
@@ -12713,8 +12713,8 @@ var require_axios = __commonJS({
       }
     }
     function formatHeader(header) {
-      return header.trim().toLowerCase().replace(/([a-z\d])(\w*)/g, (w, char, str2) => {
-        return char.toUpperCase() + str2;
+      return header.trim().toLowerCase().replace(/([a-z\d])(\w*)/g, (w, char, str3) => {
+        return char.toUpperCase() + str3;
       });
     }
     function buildAccessors(obj, header) {
@@ -13223,7 +13223,7 @@ var require_axios = __commonJS({
       build(obj);
       return formData;
     }
-    function encode$1(str2) {
+    function encode$1(str3) {
       const charMap = {
         "!": "%21",
         "'": "%27",
@@ -13232,7 +13232,7 @@ var require_axios = __commonJS({
         "~": "%7E",
         "%20": "+"
       };
-      return encodeURIComponent(str2).replace(/[!'()~]|%20/g, function replacer(match) {
+      return encodeURIComponent(str3).replace(/[!'()~]|%20/g, function replacer(match) {
         return charMap[match];
       });
     }
@@ -13430,16 +13430,16 @@ var require_axios = __commonJS({
       ALPHA_DIGIT: ALPHA + ALPHA.toUpperCase() + DIGIT
     };
     var generateString = (size = 16, alphabet = ALPHABET.ALPHA_DIGIT) => {
-      let str2 = "";
+      let str3 = "";
       const {
         length
       } = alphabet;
       const randomValues = new Uint32Array(size);
       crypto.randomFillSync(randomValues);
       for (let i = 0; i < size; i++) {
-        str2 += alphabet[randomValues[i] % length];
+        str3 += alphabet[randomValues[i] % length];
       }
-      return str2;
+      return str3;
     };
     var platform$1 = {
       isNode: true,
@@ -14620,7 +14620,7 @@ var require_axios = __commonJS({
     };
     var asyncDecorator = (fn, scheduler = utils$1.asap) => (...args) => scheduler(() => fn(...args));
     var isHexDigit = (charCode) => charCode >= 48 && charCode <= 57 || charCode >= 65 && charCode <= 70 || charCode >= 97 && charCode <= 102;
-    var isPercentEncodedByte = (str2, i, len) => i + 2 < len && isHexDigit(str2.charCodeAt(i + 1)) && isHexDigit(str2.charCodeAt(i + 2));
+    var isPercentEncodedByte = (str3, i, len) => i + 2 < len && isHexDigit(str3.charCodeAt(i + 1)) && isHexDigit(str3.charCodeAt(i + 2));
     var hexValue = (charCode) => charCode <= 57 ? charCode - 48 : (charCode & 223) - 55;
     var isBase64Char = (charCode) => charCode >= 65 && charCode <= 90 || // A-Z
     charCode >= 97 && charCode <= 122 || // a-z
@@ -15801,7 +15801,7 @@ var require_axios = __commonJS({
       }
       return config;
     }
-    var encodeUTF8$1 = (str2) => encodeURIComponent(str2).replace(/%([0-9A-F]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    var encodeUTF8$1 = (str3) => encodeURIComponent(str3).replace(/%([0-9A-F]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
     function resolveConfig(config) {
       const newConfig = mergeConfig({}, config);
       const own2 = (key) => utils$1.hasOwnProp(newConfig, key) ? newConfig[key] : void 0;
@@ -16141,7 +16141,7 @@ var require_axios = __commonJS({
     var {
       isFunction
     } = utils$1;
-    var encodeUTF8 = (str2) => encodeURIComponent(str2).replace(/%([0-9A-F]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    var encodeUTF8 = (str3) => encodeURIComponent(str3).replace(/%([0-9A-F]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
     var decodeURIComponentSafe = (value) => {
       if (!utils$1.isString(value)) {
         return value;
@@ -16191,7 +16191,7 @@ var require_axios = __commonJS({
         return false;
       }
       const isReadableStreamSupported = isFetchSupported && isFunction(ReadableStream2);
-      const encodeText = isFetchSupported && (typeof TextEncoder2 === "function" ? /* @__PURE__ */ ((encoder) => (str2) => encoder.encode(str2))(new TextEncoder2()) : async (str2) => new Uint8Array(await new Request(str2).arrayBuffer()));
+      const encodeText = isFetchSupported && (typeof TextEncoder2 === "function" ? /* @__PURE__ */ ((encoder) => (str3) => encoder.encode(str3))(new TextEncoder2()) : async (str3) => new Uint8Array(await new Request(str3).arrayBuffer()));
       const supportsRequestStream = isRequestSupported && isReadableStreamSupported && test(() => {
         let duplexAccessed = false;
         const request2 = new Request(platform5.origin, {
@@ -17159,20 +17159,20 @@ var require_object_inspect = __commonJS({
     var gPO = (typeof Reflect === "function" ? Reflect.getPrototypeOf : Object.getPrototypeOf) || ([].__proto__ === Array.prototype ? function(O) {
       return O.__proto__;
     } : null);
-    function addNumericSeparator(num, str2) {
-      if (num === Infinity || num === -Infinity || num !== num || num && num > -1e3 && num < 1e3 || $test.call(/e/, str2)) {
-        return str2;
+    function addNumericSeparator(num, str3) {
+      if (num === Infinity || num === -Infinity || num !== num || num && num > -1e3 && num < 1e3 || $test.call(/e/, str3)) {
+        return str3;
       }
       var sepRegex = /[0-9](?=(?:[0-9]{3})+(?![0-9]))/g;
       if (typeof num === "number") {
         var int = num < 0 ? -$floor(-num) : $floor(num);
         if (int !== num) {
           var intStr = String(int);
-          var dec = $slice.call(str2, intStr.length + 1);
+          var dec = $slice.call(str3, intStr.length + 1);
           return $replace.call(intStr, sepRegex, "$&_") + "." + $replace.call($replace.call(dec, /([0-9]{3})/g, "$&_"), /_$/, "");
         }
       }
-      return $replace.call(str2, sepRegex, "$&_");
+      return $replace.call(str3, sepRegex, "$&_");
     }
     var utilInspect = require_util_inspect();
     var inspectCustom = utilInspect.custom;
@@ -17222,8 +17222,8 @@ var require_object_inspect = __commonJS({
         if (obj === 0) {
           return Infinity / obj > 0 ? "0" : "-0";
         }
-        var str2 = String(obj);
-        return numericSeparator ? addNumericSeparator(obj, str2) : str2;
+        var str3 = String(obj);
+        return numericSeparator ? addNumericSeparator(obj, str3) : str3;
       }
       if (typeof obj === "bigint") {
         var bigIntStr = String(obj) + "n";
@@ -17543,15 +17543,15 @@ var require_object_inspect = __commonJS({
       }
       return typeof x.nodeName === "string" && typeof x.getAttribute === "function";
     }
-    function inspectString(str2, opts) {
-      if (str2.length > opts.maxStringLength) {
-        var remaining = str2.length - opts.maxStringLength;
+    function inspectString(str3, opts) {
+      if (str3.length > opts.maxStringLength) {
+        var remaining = str3.length - opts.maxStringLength;
         var trailer = "... " + remaining + " more character" + (remaining > 1 ? "s" : "");
-        return inspectString($slice.call(str2, 0, opts.maxStringLength), opts) + trailer;
+        return inspectString($slice.call(str3, 0, opts.maxStringLength), opts) + trailer;
       }
       var quoteRE = quoteREs[opts.quoteStyle || "single"];
       quoteRE.lastIndex = 0;
-      var s = $replace.call($replace.call(str2, quoteRE, "\\$1"), /[\x00-\x1f]/g, lowbyte);
+      var s = $replace.call($replace.call(str3, quoteRE, "\\$1"), /[\x00-\x1f]/g, lowbyte);
       return wrapQuotes(s, "single", opts);
     }
     function lowbyte(c) {
@@ -17568,8 +17568,8 @@ var require_object_inspect = __commonJS({
       }
       return "\\x" + (n < 16 ? "0" : "") + $toUpperCase.call(n.toString(16));
     }
-    function markBoxed(str2) {
-      return "Object(" + str2 + ")";
+    function markBoxed(str3) {
+      return "Object(" + str3 + ")";
     }
     function weakCollectionOf(type) {
       return type + " { ? }";
@@ -18126,8 +18126,8 @@ var require_utils = __commonJS({
         return acc;
       }, target);
     };
-    var decode = function(str2, defaultDecoder, charset) {
-      var strWithoutPlus = str2.replace(/\+/g, " ");
+    var decode = function(str3, defaultDecoder, charset) {
+      var strWithoutPlus = str3.replace(/\+/g, " ");
       if (charset === "iso-8859-1") {
         return strWithoutPlus.replace(/%[0-9a-f]{2}/gi, unescape);
       }
@@ -18138,15 +18138,15 @@ var require_utils = __commonJS({
       }
     };
     var limit = 1024;
-    var encode = function encode2(str2, defaultEncoder, charset, kind, format) {
-      if (str2.length === 0) {
-        return str2;
+    var encode = function encode2(str3, defaultEncoder, charset, kind, format) {
+      if (str3.length === 0) {
+        return str3;
       }
-      var string = str2;
-      if (typeof str2 === "symbol") {
-        string = Symbol.prototype.toString.call(str2);
-      } else if (typeof str2 !== "string") {
-        string = String(str2);
+      var string = str3;
+      if (typeof str3 === "symbol") {
+        string = Symbol.prototype.toString.call(str3);
+      } else if (typeof str3 !== "string") {
+        string = String(str3);
       }
       if (charset === "iso-8859-1") {
         return escape(string).replace(/%u[0-9a-f]{4}/gi, function($0) {
@@ -18596,8 +18596,8 @@ var require_parse = __commonJS({
       strictNullHandling: false,
       throwOnLimitExceeded: false
     };
-    var interpretNumericEntities = function(str2) {
-      return str2.replace(/&#(\d+);/g, function($0, numberStr) {
+    var interpretNumericEntities = function(str3) {
+      return str3.replace(/&#(\d+);/g, function($0, numberStr) {
         return String.fromCharCode(parseInt(numberStr, 10));
       });
     };
@@ -18623,9 +18623,9 @@ var require_parse = __commonJS({
     };
     var isoSentinel = "utf8=%26%2310003%3B";
     var charsetSentinel = "utf8=%E2%9C%93";
-    var parseValues = function parseQueryStringValues(str2, options) {
+    var parseValues = function parseQueryStringValues(str3, options) {
       var obj = { __proto__: null };
-      var cleanStr = options.ignoreQueryPrefix ? str2.replace(/^\?/, "") : str2;
+      var cleanStr = options.ignoreQueryPrefix ? str3.replace(/^\?/, "") : str3;
       cleanStr = cleanStr.replace(/%5B/gi, "[").replace(/%5D/gi, "]");
       var limit = options.parameterLimit === Infinity ? void 0 : options.parameterLimit;
       var parts = cleanStr.split(
@@ -18872,17 +18872,17 @@ var require_parse = __commonJS({
         throwOnLimitExceeded: typeof opts.throwOnLimitExceeded === "boolean" ? opts.throwOnLimitExceeded : false
       };
     };
-    module.exports = function(str2, opts) {
+    module.exports = function(str3, opts) {
       var options = normalizeParseOptions(opts);
-      if (str2 === "" || str2 === null || typeof str2 === "undefined") {
+      if (str3 === "" || str3 === null || typeof str3 === "undefined") {
         return options.plainObjects ? { __proto__: null } : {};
       }
-      var tempObj = typeof str2 === "string" ? parseValues(str2, options) : str2;
+      var tempObj = typeof str3 === "string" ? parseValues(str3, options) : str3;
       var obj = options.plainObjects ? { __proto__: null } : {};
       var keys = Object.keys(tempObj);
       for (var i = 0; i < keys.length; ++i) {
         var key = keys[i];
-        var newObj = parseKeys(key, tempObj[key], options, typeof str2 === "string");
+        var newObj = parseKeys(key, tempObj[key], options, typeof str3 === "string");
         obj = utils.merge(obj, newObj, options);
       }
       if (options.allowSparse === true) {
@@ -25220,27 +25220,27 @@ var require_umd = __commonJS({
         }
         Long.fromBits = fromBits;
         var pow_dbl = Math.pow;
-        function fromString(str2, unsigned, radix) {
-          if (str2.length === 0) throw Error("empty string");
+        function fromString(str3, unsigned, radix) {
+          if (str3.length === 0) throw Error("empty string");
           if (typeof unsigned === "number") {
             radix = unsigned;
             unsigned = false;
           } else {
             unsigned = !!unsigned;
           }
-          if (str2 === "NaN" || str2 === "Infinity" || str2 === "+Infinity" || str2 === "-Infinity")
+          if (str3 === "NaN" || str3 === "Infinity" || str3 === "+Infinity" || str3 === "-Infinity")
             return unsigned ? UZERO : ZERO;
           radix = radix || 10;
           if (radix < 2 || 36 < radix) throw RangeError("radix");
           var p;
-          if ((p = str2.indexOf("-")) > 0) throw Error("interior hyphen");
+          if ((p = str3.indexOf("-")) > 0) throw Error("interior hyphen");
           else if (p === 0) {
-            return fromString(str2.substring(1), unsigned, radix).neg();
+            return fromString(str3.substring(1), unsigned, radix).neg();
           }
           var radixToPower = fromNumber(pow_dbl(radix, 8));
           var result = ZERO;
-          for (var i = 0; i < str2.length; i += 8) {
-            var size = Math.min(8, str2.length - i), value = parseInt(str2.substring(i, i + size), radix);
+          for (var i = 0; i < str3.length; i += 8) {
+            var size = Math.min(8, str3.length - i), value = parseInt(str3.substring(i, i + size), radix);
             if (size < 8) {
               var power = fromNumber(pow_dbl(radix, size));
               result = result.mul(power).add(fromNumber(value));
@@ -25889,8 +25889,8 @@ var require_minimal = __commonJS({
         writable: true
       });
     };
-    util.lcFirst = function lcFirst(str2) {
-      return str2.charAt(0).toLowerCase() + str2.substring(1);
+    util.lcFirst = function lcFirst(str3) {
+      return str3.charAt(0).toLowerCase() + str3.substring(1);
     };
     function newError(name) {
       function CustomError(message, properties) {
@@ -125063,7 +125063,7 @@ ${lines.join("\n")}
         raw: (opts === null || opts === void 0 ? void 0 : opts.includeRaw) ? event : void 0
       };
     }
-    function normalize2(event, opts) {
+    function normalize3(event, opts) {
       var _a, _b, _c, _d, _e;
       return __awaiter(this, void 0, void 0, function* () {
         const msg2 = event.message;
@@ -125505,7 +125505,7 @@ ${lines.join("\n")}
           // IM message — full safety pipeline
           "im.message.receive_v1": (raw) => __awaiter(this, void 0, void 0, function* () {
             try {
-              const msg2 = yield normalize2(raw, normalizeOpts);
+              const msg2 = yield normalize3(raw, normalizeOpts);
               yield this.safety.pushMessage(msg2);
             } catch (e) {
               this.emitError(e);
@@ -125653,7 +125653,7 @@ ${lines.join("\n")}
     exports.generateChallenge = generateChallenge;
     exports.internalCache = internalCache2;
     exports.messageCard = messageCard;
-    exports.normalize = normalize2;
+    exports.normalize = normalize3;
     exports.normalizeBotAdded = normalizeBotAdded2;
     exports.normalizeCardAction = normalizeCardAction2;
     exports.normalizeComment = normalizeComment2;
@@ -132609,14 +132609,14 @@ var require_regex = __commonJS({
     var TEST_KANJI = new RegExp("^" + kanji + "$");
     var TEST_NUMERIC = new RegExp("^" + numeric + "$");
     var TEST_ALPHANUMERIC = new RegExp("^[A-Z0-9 $%*+\\-./:]+$");
-    exports.testKanji = function testKanji(str2) {
-      return TEST_KANJI.test(str2);
+    exports.testKanji = function testKanji(str3) {
+      return TEST_KANJI.test(str3);
     };
-    exports.testNumeric = function testNumeric(str2) {
-      return TEST_NUMERIC.test(str2);
+    exports.testNumeric = function testNumeric(str3) {
+      return TEST_NUMERIC.test(str3);
     };
-    exports.testAlphanumeric = function testAlphanumeric(str2) {
-      return TEST_ALPHANUMERIC.test(str2);
+    exports.testAlphanumeric = function testAlphanumeric(str3) {
+      return TEST_ALPHANUMERIC.test(str3);
     };
   }
 });
@@ -133110,13 +133110,13 @@ var require_segments = __commonJS({
     var Regex = require_regex();
     var Utils = require_utils2();
     var dijkstra = require_dijkstra();
-    function getStringByteLength(str2) {
-      return unescape(encodeURIComponent(str2)).length;
+    function getStringByteLength(str3) {
+      return unescape(encodeURIComponent(str3)).length;
     }
-    function getSegments(regex, mode, str2) {
+    function getSegments(regex, mode, str3) {
       const segments = [];
       let result;
-      while ((result = regex.exec(str2)) !== null) {
+      while ((result = regex.exec(str3)) !== null) {
         segments.push({
           data: result[0],
           index: result.index,
@@ -135942,13 +135942,13 @@ var require_svg_tag = __commonJS({
     var Utils = require_utils3();
     function getColorAttrib(color, attrib) {
       const alpha = color.a / 255;
-      const str2 = attrib + '="' + color.hex + '"';
-      return alpha < 1 ? str2 + " " + attrib + '-opacity="' + alpha.toFixed(2).slice(1) + '"' : str2;
+      const str3 = attrib + '="' + color.hex + '"';
+      return alpha < 1 ? str3 + " " + attrib + '-opacity="' + alpha.toFixed(2).slice(1) + '"' : str3;
     }
     function svgCmd(cmd, x, y) {
-      let str2 = cmd + x;
-      if (typeof y !== "undefined") str2 += " " + y;
-      return str2;
+      let str3 = cmd + x;
+      if (typeof y !== "undefined") str3 += " " + y;
+      return str3;
     }
     function qrToPath(data, size, margin) {
       let path2 = "";
@@ -136388,12 +136388,17 @@ var init_texts = __esm({
   setup [--update] [--scopes a,b]  Create or update the Feishu app by QR code; credentials go to the keychain
   setup --app-id cli_xxx [--store]  Use an existing app; the secret is read from the environment / env file, never argv
   daemon [--detach|--status|--stop]  Resident process holding the Feishu connection (--stop is refused while a question is pending, unless --force)
-  bind [--chat <id>] [--name <n>]    Bind the current project to a Feishu group (a new one by default)
-  unbind                             Unbind the current project
+  away on [--name <task>] [--reuse <chat_id> | --new]
+                                     Remote mode on: daemon up, this project bound to a Feishu group named "<task> [<dir>]"
+                                     (exit 4 lists earlier groups to take back; rerun with --reuse or --new)
+  away off | status [--json]         Remote mode off / the project's state ({away, chatId, target, updated})
+  rename "<task>"                    Rename the project's live group to "<task> [<dir>]"
+  unbind                             Let the live group go (it stays in Feishu; the next away on offers it back)
+  bind [--chat <id>] [--name <task>] [--reuse <chat_id> | --new]
+                                     Bind without switching remote mode on; --chat names a group outright
   ask [--timeout <seconds>]          Read JSON from stdin, push a question card, block until answered
   notify                             Read JSON from stdin, push a titled notification card (important things only)
   send-file <path> [--caption <t>]   Send an image or file to the project group
-  away on | off | status [--json]    Remote mode; while on, a card is pushed when the agent is stuck on a prompt
   status                             Daemon and binding overview
 
 Global: --home <dir>  state directory (same as AGENT_LARK_HOME; default ~/.agent-lark)
@@ -136409,7 +136414,10 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       notifyProblems: "This notification has {n} problem(s); nothing was sent:",
       timeoutArg: "--timeout must be a positive integer (seconds)",
       sendFileUsage: "Usage: agent-lark send-file <path> [--caption <text>]",
-      awayUsage: "Usage: agent-lark away on|off|status",
+      awayUsage: "Usage: agent-lark away on [--name <task>] [--reuse <chat_id> | --new] | off | status [--json]",
+      renameUsage: 'Usage: agent-lark rename "<task name>"',
+      taskNameTooLong: "task name: over {max} characters (code points), got {n}",
+      setupNextLines: '  agent-lark daemon --detach\n  cd <project> && agent-lark away on --name "<task>"\n',
       // daemon command
       daemonNotRunning: "daemon: not running",
       daemonNoAnswer: "daemon: no answer ({message})",
@@ -136428,35 +136436,61 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       notConnected: "not connected to Feishu ({error}); the daemon keeps retrying, try again shortly",
       reconnecting: "the connection to Feishu dropped, reconnecting",
       connecting: "still connecting",
-      // bind / unbind
+      // bind / unbind / rename
       bindCreated: '\u2705 Created Feishu group "{name}" and bound it to {root}\n   Open Feishu to see the group; questions from this project will land there.',
       bindExisting: "\u2705 Bound to existing group {chatId} ({root})",
-      unbound: "Unbound. The Feishu group is still there; archive it yourself if you want.",
+      bindKept: '\u2705 Already bound to Feishu group "{name}" ({root})',
+      bindReused: '\u2705 Took back Feishu group "{name}" for {root}',
+      bindCandidates: "this project has no live group, but {n} earlier group(s) could be taken back (renamed) instead of creating another:",
+      bindCandidateLine: "{name}  released {time}  {chatId}",
+      bindCandidateHint: "ask the user which to reuse (rename) or create new; rerun with --reuse <chatId> or --new",
+      bindCandidateUnnamed: "(unnamed)",
+      bindCandidateNever: "-",
+      bindModeConflict: "--reuse and --new cannot be combined",
+      bindReuseUnknown: "--reuse {chatId}: not one of the groups this project could take back",
+      bindChatTaken: "group {chatId} is the live group of another project ({root}); unbind it there first",
+      bindScanFailed: "could not look through the Feishu groups for earlier ones of this project ({error}); only local records were considered",
+      bindRenameFailed: "bound, but renaming the group failed: {error}",
+      bindingsTwoActive: "bindings: {root} already has one active group ({chatId})",
+      bindingsFileBad: "cannot read the bindings file {path}: {error}\nFix or move it; it is left untouched.",
+      bindModeIgnored: "this project already has a live group; --reuse / --new were ignored (unbind first to pick another group)",
+      bindUpdateSkipped: "not connected to Feishu; the group's name and description were left as they are",
+      unbound: 'Unbound. The Feishu group "{name}" stays in Feishu; the next away on in this directory offers to rename and reuse it.',
+      renameNotBound: "this project has no live group; run agent-lark away on first",
+      renameFailed: "renaming the group failed: Feishu error {code} {msg}",
+      renameThrew: "renaming the group failed: {error}",
+      renamePermissionHint: "The bot may only rename a group it owns, or one whose settings let every member edit group info (232002 / 232016), and must be a member of it (232011).",
+      renamed: 'Renamed the Feishu group to "{name}"',
       // notify / send-file
       notifySent: "Notification sent (a reply from the phone is injected into this pane as an instruction)",
       fileSent: "Sent to the project group",
       // away
       awayNeverUsed: "This project has never used agent-lark (no .agent-lark/state.json)",
-      awayStatusLine: "remote mode: {away}  group: {chat}  pane: {pane}",
+      awayStatusLine: "remote mode: {away}  group: {chat}",
+      awayNotConnected: "daemon is up but not connected to Feishu: {error}",
+      awayOutsideHerdr: "Not inside herdr: messages sent from the phone are not injected anywhere, and there is no stuck-on-a-prompt alert.",
       on: "on",
       off: "off",
-      none: "none",
       awayUnbound: "not bound",
       awayNoCreds: "No Feishu app credentials yet. Run once: agent-lark setup",
       awayCreated: 'Created Feishu group "{name}"',
-      awayReused: 'Connected to Feishu group "{name}"',
+      awayReused: 'Took back Feishu group "{name}"',
+      awayKept: 'Connected to Feishu group "{name}"',
+      awayBoundChat: "Bound to Feishu group {chatId}",
       awayOff: "Remote mode is off.",
       awayOn: "Remote mode is on: decisions, and moments when the agent is stuck on a prompt that needs you, are pushed to this project's Feishu group.",
       // status
       statusCredsYes: "credentials: configured, from {origin}",
       statusCredsNo: "credentials: not configured; run agent-lark setup first",
-      statusHerdrIn: "herdr: inside herdr, current pane {pane}",
-      statusHerdrOut: "herdr: not inside herdr (phone messages have nowhere to be injected)",
+      statusHerdrIn: "herdr: inside herdr, pane {pane}",
+      statusHerdrOut: "herdr: not inside herdr",
       statusDaemonDown: "daemon: not running (agent-lark daemon --detach)",
       statusDaemonLine: "daemon: pid {pid}, connected {connected}, connection {connection}, pending questions {pending}",
       statusNoBindings: "bindings: none yet",
       statusBindings: "bindings:",
-      statusBindingLine: "  {mark} {label}  group {chatId}  pane {pane}  remote {away}",
+      statusBindingLine: "  {mark} {root}  {name}  {chatId}  away={away}  pane={pane}",
+      statusReleased: "released (take one back with away on --reuse <chat_id>; * marks this project):",
+      statusReleasedLine: "  {mark} {root}  {name}  {chatId}  released {time}",
       // ipc client / server
       ipcDaemonDown: "daemon is not running. Start it first: agent-lark daemon --detach",
       ipcConnect: "cannot connect to the daemon: {message}",
@@ -136465,14 +136499,14 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       ipcBadRequest: "unparseable request",
       ipcUnknownRequest: "unknown request",
       // daemon replies
-      notBound: "this project is not bound yet; run agent-lark bind first",
+      notBound: "this project is not bound yet; run agent-lark away on first",
       askPending: "this project already has a question pending on the phone; one at a time",
       askNote: "sent to the Feishu group, waiting for the answer (up to {seconds} s)",
       askTimedOut: "no answer after {seconds} s",
       askCancelledStop: "the daemon is stopping; the question was sent but no answer will arrive this time",
       askClientGone: "the asking client disconnected",
       sendFailed: "send failed: {error}",
-      unbindNone: "this project was not bound",
+      unbindNone: "this project is not bound",
       unbindPending: "a question is still pending on the phone; answer it or wait for the timeout",
       bindNoOwner: "nobody to invite into a new group (the app owner is not recorded). Use --chat <chat_id> to bind a group you created yourself.",
       bindCreateFailed: "creating the group failed: {error}\nIf this is a permission problem the app lacks the im:chat (create group) scope: run agent-lark setup --update, or bind an existing group with --chat <chat_id>.",
@@ -136853,7 +136887,6 @@ function readProjectState(root) {
     return {
       away: parsed.away === true,
       chatId: typeof parsed.chatId === "string" ? parsed.chatId : null,
-      paneId: typeof parsed.paneId === "string" ? parsed.paneId : null,
       target: typeof parsed.target === "string" ? parsed.target : root,
       updated: typeof parsed.updated === "string" ? parsed.updated : ""
     };
@@ -136872,7 +136905,6 @@ function writeProjectState(root, patch, opts = {}) {
   const current = readProjectState(root) ?? {
     away: false,
     chatId: null,
-    paneId: null,
     target: root,
     updated: ""
   };
@@ -136898,6 +136930,177 @@ var init_paths = __esm({
     bindingsPath = () => join2(homeDir(), "bindings.json");
     projectStateDir = (root) => join2(root, ".agent-lark");
     projectStatePath = (root) => join2(projectStateDir(root), "state.json");
+  }
+});
+
+// src/bindings.ts
+import { readFileSync as readFileSync3, renameSync as renameSync3, writeFileSync as writeFileSync3 } from "node:fs";
+function groupName(task, label) {
+  const t2 = task?.trim();
+  return t2 ? `${t2} [${label}]` : `[${label}]`;
+}
+function taskNameProblem(task) {
+  const n = Array.from(task).length;
+  return n > MAX_TASK_NAME ? fill(msg.taskNameTooLong, { max: MAX_TASK_NAME, n }) : null;
+}
+function str(v) {
+  return typeof v === "string" ? v : null;
+}
+function normalize2(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw;
+  if (typeof r.root !== "string" || typeof r.chatId !== "string") return null;
+  const lang = r.lang === "zh" || r.lang === "en" ? r.lang : null;
+  return {
+    root: r.root,
+    label: str(r.label) ?? r.root,
+    chatId: r.chatId,
+    name: str(r.name),
+    paneId: str(r.paneId),
+    away: r.away === true,
+    lang,
+    boundAt: str(r.boundAt) ?? "",
+    releasedAt: str(r.releasedAt)
+  };
+}
+var MAX_TASK_NAME, BindingsFileError, BindingStore;
+var init_bindings = __esm({
+  "src/bindings.ts"() {
+    "use strict";
+    init_paths();
+    init_texts();
+    MAX_TASK_NAME = 60;
+    BindingsFileError = class extends Error {
+      constructor(path2, cause) {
+        super(fill(msg.bindingsFileBad, { path: path2, error: cause instanceof Error ? cause.message : String(cause) }));
+        this.path = path2;
+        this.name = "BindingsFileError";
+      }
+    };
+    BindingStore = class {
+      constructor(opts = {}) {
+        this.opts = opts;
+        this.load();
+      }
+      map = /* @__PURE__ */ new Map();
+      /**
+       * Read the file. A missing file is an empty store; anything else that
+       * cannot be read is an error, so a damaged file is never silently replaced
+       * by an empty one on the next write.
+       */
+      load() {
+        const file = bindingsPath();
+        let text;
+        try {
+          text = readFileSync3(file, "utf8");
+        } catch (err) {
+          if (err.code === "ENOENT") return;
+          throw new BindingsFileError(file, err);
+        }
+        let entries;
+        try {
+          const parsed = JSON.parse(text);
+          const list = parsed && typeof parsed === "object" ? parsed.bindings : void 0;
+          if (list !== void 0 && !Array.isArray(list)) throw new Error('"bindings" is not an array');
+          entries = list ?? [];
+        } catch (err) {
+          throw new BindingsFileError(file, err);
+        }
+        let dirty = false;
+        for (const raw of entries) {
+          const b = normalize2(raw);
+          if (!b) continue;
+          const held = this.map.get(b.chatId);
+          if (held) {
+            const loser = held.boundAt <= b.boundAt ? held : b;
+            this.opts.onDropped?.({ root: loser.root, chatId: loser.chatId });
+            dirty = true;
+            if (loser === b) continue;
+          }
+          this.map.set(b.chatId, b);
+        }
+        const liveByRoot = /* @__PURE__ */ new Map();
+        for (const b of this.map.values()) {
+          if (b.releasedAt !== null) continue;
+          const other = liveByRoot.get(b.root);
+          if (!other) {
+            liveByRoot.set(b.root, b);
+            continue;
+          }
+          const older = other.boundAt <= b.boundAt ? other : b;
+          older.releasedAt = (/* @__PURE__ */ new Date()).toISOString();
+          if (older === other) liveByRoot.set(b.root, b);
+          this.opts.onRepaired?.({ root: older.root, chatId: older.chatId });
+          dirty = true;
+        }
+        if (dirty) this.persist();
+      }
+      persist() {
+        ensureHomeDir();
+        const file = bindingsPath();
+        const tmp = `${file}.tmp`;
+        const data = { bindings: [...this.map.values()] };
+        writeFileSync3(tmp, `${JSON.stringify(data, null, 2)}
+`, { mode: 384 });
+        renameSync3(tmp, file);
+      }
+      /** The project's live group, if it has one. */
+      active(root) {
+        for (const b of this.map.values()) if (b.root === root && b.releasedAt === null) return b;
+        return void 0;
+      }
+      /** Groups the project let go of, oldest release first. */
+      released(root) {
+        return [...this.map.values()].filter((b) => b.root === root && b.releasedAt !== null).sort((a, b) => (a.releasedAt ?? "").localeCompare(b.releasedAt ?? ""));
+      }
+      byChat(chatId) {
+        return this.map.get(chatId);
+      }
+      /** Only a live group is listened to; a released one is still on record but no longer ours to act on. */
+      activeByChat(chatId) {
+        const b = this.map.get(chatId);
+        return b && b.releasedAt === null ? b : void 0;
+      }
+      all() {
+        return [...this.map.values()];
+      }
+      activeAll() {
+        return [...this.map.values()].filter((b) => b.releasedAt === null);
+      }
+      activeChatIds() {
+        return this.activeAll().map((b) => b.chatId);
+      }
+      /** Add or replace an entry. A project has at most one live group; a second one is refused before anything is written. */
+      set(b) {
+        if (b.releasedAt === null) {
+          const live = this.active(b.root);
+          if (live && live.chatId !== b.chatId) throw new Error(fill(msg.bindingsTwoActive, { root: b.root, chatId: live.chatId }));
+        }
+        this.map.set(b.chatId, b);
+        this.persist();
+      }
+      /** Refresh the fields a live call carries on the project's live group, without disturbing the binding. */
+      touch(root, patch) {
+        const b = this.active(root);
+        if (!b) return void 0;
+        if (patch.paneId !== void 0 && patch.paneId !== null) b.paneId = patch.paneId;
+        if (patch.away !== void 0) b.away = patch.away;
+        if (patch.label) b.label = patch.label;
+        if (patch.lang) b.lang = patch.lang;
+        if (patch.name !== void 0) b.name = patch.name;
+        this.persist();
+        return b;
+      }
+      /** Let go of the project's live group: it stays on record, remote mode goes off with it. */
+      release(root) {
+        const b = this.active(root);
+        if (!b) return void 0;
+        b.releasedAt = (/* @__PURE__ */ new Date()).toISOString();
+        b.away = false;
+        this.persist();
+        return b;
+      }
+    };
   }
 });
 
@@ -137031,7 +137234,7 @@ var init_ipc = __esm({
 });
 
 // src/validate.ts
-function str(v) {
+function str2(v) {
   return typeof v === "string" && v.trim() ? v.trim() : null;
 }
 function checkLang(v, problems) {
@@ -137043,7 +137246,7 @@ function checkLang(v, problems) {
 function validateAsk(raw) {
   const problems = [];
   const o = raw ?? {};
-  const title = str(o.title);
+  const title = str2(o.title);
   if (!title) problems.push(msg.vTitleRequired);
   else if (title.length > LIMITS.title) problems.push(fill(msg.vTitleTooLong, { max: LIMITS.title, n: title.length }));
   else if (title.includes("\n")) problems.push(msg.vTitleNewline);
@@ -137056,7 +137259,7 @@ function validateAsk(raw) {
   ];
   const values = {};
   for (const [key, hint] of simple) {
-    const v = str(o[key]);
+    const v = str2(o[key]);
     if (!v) problems.push(fill(msg.vFieldRequired, { key, hint }));
     else if (v.length > LIMITS.field) problems.push(fill(msg.vFieldTooLong, { key, max: LIMITS.field, n: v.length }));
     else values[key] = v;
@@ -137072,9 +137275,9 @@ function validateAsk(raw) {
     const seen = /* @__PURE__ */ new Set();
     o.options.forEach((item, i) => {
       const opt2 = item ?? {};
-      const id = str(opt2.id);
-      const label = str(opt2.label);
-      const consequence = str(opt2.consequence);
+      const id = str2(opt2.id);
+      const label = str2(opt2.label);
+      const consequence = str2(opt2.consequence);
       if (!id) problems.push(fill(msg.vOptionId, { i }));
       else if (seen.has(id)) problems.push(fill(msg.vOptionIdDup, { i, id }));
       else seen.add(id);
@@ -137087,7 +137290,7 @@ function validateAsk(raw) {
         options.push({ id, label, consequence, danger: opt2.danger === true });
     });
   }
-  const recommend = str(o.recommend);
+  const recommend = str2(o.recommend);
   if (!recommend) problems.push(msg.vRecommendRequired);
   else if (options.length && !options.some((x) => x.id === recommend))
     problems.push(fill(msg.vRecommendUnknown, { id: recommend }));
@@ -137112,8 +137315,8 @@ function validateAsk(raw) {
 function validateNotify(raw) {
   const problems = [];
   const o = raw ?? {};
-  const title = str(o.title);
-  const body = str(o.body);
+  const title = str2(o.title);
+  const body = str2(o.body);
   if (!title) problems.push(msg.vTitleRequired);
   else if (title.length > LIMITS.title) problems.push(fill(msg.vTitleTooLong, { max: LIMITS.title, n: title.length }));
   else if (title.includes("\n")) problems.push(msg.vTitleNewline);
@@ -137142,73 +137345,6 @@ var init_validate = __esm({
         super(problems.join("\n"));
         this.problems = problems;
         this.name = "ValidationError";
-      }
-    };
-  }
-});
-
-// src/bindings.ts
-import { readFileSync as readFileSync3, renameSync as renameSync3, writeFileSync as writeFileSync3 } from "node:fs";
-var BindingStore;
-var init_bindings = __esm({
-  "src/bindings.ts"() {
-    "use strict";
-    init_paths();
-    BindingStore = class {
-      map = /* @__PURE__ */ new Map();
-      constructor() {
-        this.load();
-      }
-      load() {
-        try {
-          const raw = JSON.parse(readFileSync3(bindingsPath(), "utf8"));
-          for (const b of raw.bindings ?? []) {
-            if (!b || typeof b.root !== "string" || typeof b.chatId !== "string") continue;
-            this.map.set(b.root, b);
-          }
-        } catch {
-        }
-      }
-      persist() {
-        ensureHomeDir();
-        const file = bindingsPath();
-        const tmp = `${file}.tmp`;
-        const data = { bindings: [...this.map.values()] };
-        writeFileSync3(tmp, `${JSON.stringify(data, null, 2)}
-`, { mode: 384 });
-        renameSync3(tmp, file);
-      }
-      get(root) {
-        return this.map.get(root);
-      }
-      byChat(chatId) {
-        for (const b of this.map.values()) if (b.chatId === chatId) return b;
-        return void 0;
-      }
-      all() {
-        return [...this.map.values()];
-      }
-      chatIds() {
-        return [...this.map.values()].map((b) => b.chatId);
-      }
-      set(b) {
-        this.map.set(b.root, b);
-        this.persist();
-      }
-      /** Refresh the fields a live call carries, without disturbing the binding. */
-      touch(root, patch) {
-        const b = this.map.get(root);
-        if (!b) return void 0;
-        if (patch.paneId !== void 0 && patch.paneId !== null) b.paneId = patch.paneId;
-        if (patch.away !== void 0) b.away = patch.away;
-        if (patch.label) b.label = patch.label;
-        this.persist();
-        return b;
-      }
-      remove(root) {
-        const had = this.map.delete(root);
-        if (had) this.persist();
-        return had;
       }
     };
   }
@@ -137373,7 +137509,16 @@ async function runDaemon(deps = {}) {
   if (await isDaemonListening(2e3)) throw new DaemonStartError(3, msg.daemonAlready);
   const herdr = deps.herdr ?? { agentList, promptPane, findPaneForProject };
   const retryMs = deps.connectRetryMs ?? CONNECT_RETRY_MS;
-  const bindings = new BindingStore();
+  let bindings;
+  try {
+    bindings = new BindingStore({
+      onRepaired: (info) => log("bindings.repaired", info),
+      onDropped: (info) => log("bindings.dropped", info)
+    });
+  } catch (err) {
+    if (err instanceof BindingsFileError) throw new DaemonStartError(4, err.message);
+    throw err;
+  }
   const pendings = /* @__PURE__ */ new Map();
   const lastStatus = /* @__PURE__ */ new Map();
   const lastStatusPush = /* @__PURE__ */ new Map();
@@ -137384,14 +137529,14 @@ async function runDaemon(deps = {}) {
     policy: {
       // Only bound groups are listened to, and inside them no @ is needed —
       // the group IS the project, so every message in it is for this agent.
-      groupAllowlist: bindings.chatIds(),
+      groupAllowlist: bindings.activeChatIds(),
       requireMention: false,
       dmMode: creds.ownerOpenId ? "allowlist" : "disabled",
       dmAllowlist: creds.ownerOpenId ? [creds.ownerOpenId] : []
     }
   });
   const refreshPolicy = () => {
-    channel.updatePolicy({ groupAllowlist: bindings.chatIds() });
+    channel.updatePolicy({ groupAllowlist: bindings.activeChatIds() });
   };
   const pendingFor = (root) => {
     for (const p of pendings.values()) if (p.root === root && !p.done) return p;
@@ -137505,7 +137650,7 @@ async function runDaemon(deps = {}) {
   };
   channel.on("message", async (incoming) => {
     if (incoming.senderIsBot) return;
-    const b = bindings.byChat(incoming.chatId);
+    const b = bindings.activeByChat(incoming.chatId);
     if (!b) return;
     const got = await saveResources(incoming);
     let text = incoming.content.replace(/<audio\b[^>]*\/?>/gi, "").trim();
@@ -137539,7 +137684,7 @@ ${list}`;
     if (!value.reqId) return;
     const p = pendings.get(value.reqId);
     if (!p || p.done) {
-      const b = bindings.byChat(evt.chatId);
+      const b = bindings.activeByChat(evt.chatId);
       if (b) {
         const late = value.optionId ?? "";
         await inject(b, late ? fill(msg.lateTapOption, { id: late }) : msg.lateTapNoOption);
@@ -137600,10 +137745,38 @@ ${list}`;
       }
     }
   };
+  const feishuError = (res) => {
+    if (!res || typeof res !== "object") return null;
+    const r = res;
+    if (typeof r.code !== "number" || r.code === 0) return null;
+    return { code: r.code, msg: typeof r.msg === "string" ? r.msg : "" };
+  };
+  const updateChat = async (chatId, data) => {
+    const explain = (e) => {
+      const text = fill(msg.renameFailed, { code: e.code, msg: e.msg });
+      return [232002, 232016, 232011].includes(e.code) ? `${text}
+${msg.renamePermissionHint}` : text;
+    };
+    try {
+      const res = await channel.rawClient.im.v1.chat.update({ path: { chat_id: chatId }, data });
+      const refused = feishuError(res);
+      if (refused) {
+        log("rename.refused", { chatId, code: refused.code });
+        return { ok: false, error: explain(refused) };
+      }
+      return { ok: true };
+    } catch (err) {
+      const body = err?.response?.data;
+      const refused = feishuError(body) ?? feishuError(err);
+      log("rename.failed", { chatId, err: String(err).slice(0, 200) });
+      if (refused) return { ok: false, error: explain(refused) };
+      return { ok: false, error: fill(msg.renameThrew, { error: err instanceof Error ? err.message : String(err) }) };
+    }
+  };
   const notConnected = () => ({ ok: false, code: 3, message: fill(msg.notConnected, { error: lastError ?? msg.connecting }) });
   const agents = herdr.agentList;
   const poll = async () => {
-    const away = bindings.all().filter((b) => b.away && b.paneId);
+    const away = bindings.activeAll().filter((b) => b.away && b.paneId);
     if (!away.length) return;
     const live = await agents();
     for (const b of away) {
@@ -137718,7 +137891,7 @@ ${list}`;
               connected,
               lastError,
               pendingAsks: pendings.size,
-              bindings: bindings.all().length,
+              bindings: bindings.activeAll().length,
               startedAt
             }
           };
@@ -137733,70 +137906,127 @@ ${list}`;
               root: b.root,
               label: b.label,
               chatId: b.chatId,
+              name: b.name,
               paneId: b.paneId,
-              away: b.away
+              away: b.away,
+              releasedAt: b.releasedAt
             }))
           };
         case "bind": {
-          const existing = bindings.get(req.root);
+          const live = bindings.active(req.root);
+          const now = (/* @__PURE__ */ new Date()).toISOString();
+          if (req.name !== void 0) {
+            const problem = taskNameProblem(req.name);
+            if (problem) return { ok: false, code: 1, message: problem };
+          }
+          const marker = `agent-lark \xB7 ${req.root}`;
           if (req.chatId) {
+            const switching = live !== void 0 && live.chatId !== req.chatId;
+            if (switching && pendingFor(req.root)) return { ok: false, code: 4, message: msg.unbindPending };
+            const holder = bindings.byChat(req.chatId);
+            if (holder && holder.releasedAt === null && holder.root !== req.root)
+              return { ok: false, code: 1, message: fill(msg.bindChatTaken, { chatId: req.chatId, root: holder.root }) };
+            if (switching) bindings.release(req.root);
+            let name2 = holder?.name ?? null;
+            if (connected) {
+              try {
+                name2 = (await channel.getChatInfo(req.chatId)).name ?? name2;
+              } catch {
+              }
+            }
             const b = {
               root: req.root,
               label: req.label,
               chatId: req.chatId,
-              paneId: req.paneId ?? existing?.paneId ?? null,
-              away: existing?.away ?? false,
-              boundAt: (/* @__PURE__ */ new Date()).toISOString()
+              name: name2,
+              paneId: req.paneId ?? holder?.paneId ?? live?.paneId ?? null,
+              away: live?.away ?? false,
+              lang: holder?.lang ?? live?.lang ?? null,
+              boundAt: now,
+              releasedAt: null
             };
             bindings.set(b);
             refreshPolicy();
-            log("bind", { root: req.root, chatId: req.chatId, created: false });
-            return { ok: true, kind: "bind", chatId: req.chatId, created: false, name: req.label };
+            log("bind", { root: req.root, chatId: req.chatId, how: "chat" });
+            const wanted = req.name !== void 0 ? groupName(req.name, req.label) : void 0;
+            if (!connected) ctx2.note(msg.bindUpdateSkipped);
+            else {
+              const r = await updateChat(req.chatId, { name: wanted, description: marker });
+              if (r.ok && wanted !== void 0) bindings.touch(req.root, { name: wanted });
+              else if (!r.ok) ctx2.note(fill(msg.bindRenameFailed, { error: r.error }));
+            }
+            const current = bindings.active(req.root);
+            return { ok: true, kind: "bind", chatId: req.chatId, how: "chat", name: current?.name ?? req.chatId };
           }
-          if (existing) {
+          if (live) {
             bindings.touch(req.root, { paneId: req.paneId, label: req.label });
-            return { ok: true, kind: "bind", chatId: existing.chatId, created: false, name: existing.label };
+            if (req.mode !== void 0) ctx2.note(msg.bindModeIgnored);
+            let name2 = live.name ?? live.chatId;
+            if (req.name !== void 0) {
+              const wanted = groupName(req.name, req.label);
+              const r = await updateChat(live.chatId, { name: wanted });
+              if (r.ok) {
+                bindings.touch(req.root, { name: wanted });
+                name2 = wanted;
+              } else ctx2.note(fill(msg.bindRenameFailed, { error: r.error }));
+            }
+            return { ok: true, kind: "bind", chatId: live.chatId, how: "existing", name: name2 };
           }
           if (!connected) return notConnected();
-          const marker = `agent-lark \xB7 ${req.root}`;
-          try {
-            for (const summary of await channel.listChats()) {
-              let info;
-              try {
-                info = await channel.getChatInfo(summary.id);
-              } catch {
-                continue;
+          const candidates = bindings.released(req.root).map((b) => ({ chatId: b.chatId, name: b.name, releasedAt: b.releasedAt }));
+          const known = req.mode === "reuse" && candidates.some((c) => c.chatId === req.reuseChatId);
+          if (req.mode !== "new" && !known) {
+            try {
+              for (const summary of await channel.listChats()) {
+                if (bindings.byChat(summary.id)) continue;
+                let info;
+                try {
+                  info = await channel.getChatInfo(summary.id);
+                } catch {
+                  continue;
+                }
+                if (info.description !== marker) continue;
+                candidates.push({ chatId: summary.id, name: summary.name || info.name || null, releasedAt: null });
               }
-              if (info.description !== marker) continue;
-              const b = {
-                root: req.root,
-                label: req.label,
-                chatId: summary.id,
-                paneId: req.paneId,
-                away: false,
-                boundAt: (/* @__PURE__ */ new Date()).toISOString()
-              };
-              bindings.set(b);
-              refreshPolicy();
-              log("bind.reused", { root: req.root, chatId: summary.id });
-              return { ok: true, kind: "bind", chatId: summary.id, created: false, name: summary.name };
+            } catch (err) {
+              const error = err instanceof Error ? err.message : String(err);
+              log("bind.scan-failed", { root: req.root, err: error });
+              ctx2.note(fill(msg.bindScanFailed, { error }));
             }
-          } catch (err) {
-            log("bind.scan-failed", { root: req.root, err: String(err) });
           }
-          const owner = creds.ownerOpenId;
-          if (!owner) {
-            return {
-              ok: false,
-              code: 4,
-              message: msg.bindNoOwner
+          if (req.mode === "reuse") {
+            const pick = candidates.find((c) => c.chatId === req.reuseChatId);
+            if (!pick) return { ok: false, code: 1, message: fill(msg.bindReuseUnknown, { chatId: req.reuseChatId ?? "?" }) };
+            const earlier = bindings.byChat(pick.chatId);
+            const b = {
+              root: req.root,
+              label: req.label,
+              chatId: pick.chatId,
+              name: pick.name,
+              paneId: req.paneId ?? earlier?.paneId ?? null,
+              away: false,
+              lang: earlier?.lang ?? null,
+              boundAt: now,
+              releasedAt: null
             };
+            bindings.set(b);
+            refreshPolicy();
+            log("bind", { root: req.root, chatId: pick.chatId, how: "reused" });
+            const wanted = groupName(req.name, req.label);
+            const r = await updateChat(pick.chatId, { name: wanted, description: marker });
+            if (r.ok) bindings.touch(req.root, { name: wanted });
+            else ctx2.note(fill(msg.bindRenameFailed, { error: r.error }));
+            return { ok: true, kind: "bind", chatId: pick.chatId, how: "reused", name: r.ok ? wanted : pick.name ?? pick.chatId };
           }
-          const name = req.name?.trim() || `\u{1F916} ${req.label}`;
+          if (candidates.length && req.mode === void 0)
+            return { ok: false, code: 4, message: fill(msg.bindCandidates, { n: candidates.length }), candidates };
+          const owner = creds.ownerOpenId;
+          if (!owner) return { ok: false, code: 4, message: msg.bindNoOwner };
+          const name = groupName(req.name, req.label);
           try {
             const { chatId } = await channel.createChat({
               name,
-              description: `agent-lark \xB7 ${req.root}`,
+              description: marker,
               inviteUserIds: [owner],
               userIdType: "open_id"
             });
@@ -137804,14 +138034,17 @@ ${list}`;
               root: req.root,
               label: req.label,
               chatId,
+              name,
               paneId: req.paneId,
               away: false,
-              boundAt: (/* @__PURE__ */ new Date()).toISOString()
+              lang: null,
+              boundAt: now,
+              releasedAt: null
             };
             bindings.set(b);
             refreshPolicy();
-            log("bind", { root: req.root, chatId, created: true });
-            return { ok: true, kind: "bind", chatId, created: true, name };
+            log("bind", { root: req.root, chatId, how: "created" });
+            return { ok: true, kind: "bind", chatId, how: "created", name };
           } catch (err) {
             const detail = err instanceof Error ? err.message : String(err);
             return {
@@ -137822,17 +138055,31 @@ ${list}`;
           }
         }
         case "unbind": {
-          const b = bindings.get(req.root);
-          if (!b) return { ok: false, code: 1, message: msg.unbindNone };
-          const p = pendingFor(req.root);
-          if (p) return { ok: false, code: 4, message: msg.unbindPending };
-          bindings.remove(req.root);
+          const live = bindings.active(req.root);
+          if (!live) return { ok: false, code: 1, message: msg.unbindNone };
+          if (pendingFor(req.root)) return { ok: false, code: 4, message: msg.unbindPending };
+          bindings.release(req.root);
           refreshPolicy();
-          log("unbind", { root: req.root });
-          return { ok: true, kind: "ack" };
+          lastStatus.delete(req.root);
+          log("unbind", { root: req.root, chatId: live.chatId });
+          return { ok: true, kind: "unbind", chatId: live.chatId, name: live.name ?? live.chatId };
+        }
+        case "rename": {
+          const live = bindings.active(req.root);
+          if (!live) return { ok: false, code: 4, message: msg.renameNotBound };
+          const problem = taskNameProblem(req.name);
+          if (problem) return { ok: false, code: 1, message: problem };
+          if (!connected) return notConnected();
+          const wanted = groupName(req.name, live.label);
+          const r = await updateChat(live.chatId, { name: wanted });
+          if (!r.ok) return { ok: false, code: 3, message: r.error };
+          bindings.touch(req.root, { paneId: req.paneId, name: wanted });
+          log("rename", { root: req.root, chatId: live.chatId });
+          return { ok: true, kind: "rename", name: wanted };
         }
         case "setAway": {
           const b = bindings.touch(req.root, { away: req.away, paneId: req.paneId });
+          if (!b && !req.away) return { ok: true, kind: "ack" };
           if (!b) return { ok: false, code: 4, message: msg.notBound };
           lastStatus.delete(req.root);
           log("away", { root: req.root, away: req.away });
@@ -137849,6 +138096,7 @@ ${list}`;
             if (err instanceof ValidationError) return { ok: false, code: 1, message: err.problems.join("\n") };
             throw err;
           }
+          if (payload.lang) bindings.touch(req.root, { lang: payload.lang });
           try {
             await channel.send(b.chatId, { card: notifyCard(payload, b.label) });
             log("notify.sent", { root: b.root });
@@ -137890,6 +138138,7 @@ ${list}`;
             if (err instanceof ValidationError) return { ok: false, code: 1, message: err.problems.join("\n") };
             throw err;
           }
+          if (payload.lang) bindings.touch(req.root, { lang: payload.lang });
           const reqId = randomUUID2().replace(/-/g, "").slice(0, 16);
           let messageId;
           try {
@@ -137985,6 +138234,7 @@ var import_qrcode = __toESM(require_lib3(), 1);
 init_creds();
 init_creds();
 init_herdr();
+init_bindings();
 init_ipc();
 init_paths();
 init_texts();
@@ -138096,7 +138346,7 @@ async function cmdSetup(args) {
     const where2 = writeCreds({ appId: manualId, appSecret: manualSecret, ownerOpenId }, store);
     bilingual("setupSaved", { where: where2 });
     bilingual("setupNext");
-    process.stdout.write("  agent-lark daemon --detach\n  cd <project> && agent-lark bind\n");
+    process.stdout.write(msg.setupNextLines);
     return;
   }
   if (flagAppId)
@@ -138175,7 +138425,7 @@ ${s}
   process.stdout.write("\n");
   bilingual("setupSavedQr", { where });
   bilingual("setupNext");
-  process.stdout.write("  agent-lark daemon --detach\n  cd <project> && agent-lark bind\n");
+  process.stdout.write(msg.setupNextLines);
 }
 var daemonAlive = () => isDaemonListening(2e3);
 async function startDaemonDetached() {
@@ -138251,33 +138501,65 @@ async function cmdDaemon(args) {
   await daemon.done;
   process.exit(0);
 }
+function bindArgs(args) {
+  const name = opt(args, "name");
+  if (name !== void 0) {
+    const problem = taskNameProblem(name);
+    if (problem) die(1, problem);
+  }
+  const reuse = opt(args, "reuse");
+  if (reuse && flag(args, "new")) die(1, msg.bindModeConflict);
+  return { name, mode: reuse ? "reuse" : flag(args, "new") ? "new" : void 0, reuseChatId: reuse };
+}
+function dieBind(res) {
+  if (res.code === 4 && res.candidates?.length) {
+    process.stderr.write(`${msg.prefix}${res.message}
+`);
+    for (const c of res.candidates)
+      process.stderr.write(
+        `${fill(msg.bindCandidateLine, { name: c.name ?? msg.bindCandidateUnnamed, time: c.releasedAt ?? msg.bindCandidateNever, chatId: c.chatId })}
+`
+      );
+    process.stderr.write(`${msg.bindCandidateHint}
+`);
+    process.exit(4);
+  }
+  die(res.code, res.message);
+}
 async function cmdBind(args) {
-  const { root, label } = ctx();
-  const res = await request({
-    type: "bind",
-    root,
-    label,
-    paneId: currentPaneId(),
-    chatId: opt(args, "chat"),
-    name: opt(args, "name")
-  });
+  const { root, label, paneId } = ctx();
+  const res = await request(
+    { type: "bind", root, label, paneId, chatId: opt(args, "chat"), ...bindArgs(args) },
+    { onNote: (text) => process.stderr.write(`note: ${text}
+`) }
+  );
+  if (!res.ok) dieBind(res);
   finish(res, (r) => {
     if (r.kind !== "bind") return;
-    writeProjectState(root, { chatId: r.chatId, paneId: currentPaneId() }, { create: true });
-    process.stdout.write(
-      `${r.created ? fill(msg.bindCreated, { name: r.name, root }) : fill(msg.bindExisting, { chatId: r.chatId, root })}
-`
-    );
+    writeProjectState(root, { chatId: r.chatId }, { create: true });
+    const line = r.how === "created" ? fill(msg.bindCreated, { name: r.name, root }) : r.how === "reused" ? fill(msg.bindReused, { name: r.name, root }) : r.how === "existing" ? fill(msg.bindKept, { name: r.name, root }) : fill(msg.bindExisting, { chatId: r.chatId, root });
+    process.stdout.write(`${line}
+`);
   });
 }
 async function cmdUnbind() {
   const { root } = ctx();
   const res = await request({ type: "unbind", root });
-  finish(res, () => {
+  finish(res, (r) => {
     writeProjectState(root, { chatId: null, away: false });
-    process.stdout.write(`${msg.unbound}
+    process.stdout.write(`${fill(msg.unbound, { name: r.kind === "unbind" ? r.name : "" })}
 `);
   });
+}
+async function cmdRename(args) {
+  const name = args.find((a) => !a.startsWith("--"));
+  if (!name?.trim()) die(1, msg.renameUsage);
+  const problem = taskNameProblem(name);
+  if (problem) die(1, problem);
+  const { root, paneId } = ctx();
+  const res = await request({ type: "rename", root, paneId, name });
+  finish(res, (r) => process.stdout.write(`${fill(msg.renamed, { name: r.kind === "rename" ? r.name : name })}
+`));
 }
 async function cmdAsk(args) {
   const { root, label, paneId } = ctx();
@@ -138337,13 +138619,27 @@ async function cmdSendFile(args) {
   finish(res, () => process.stdout.write(`${msg.fileSent}
 `));
 }
+var CONNECT_WAIT_MS = 15e3;
+async function waitConnected(ping, deadlineMs, pollMs = 250) {
+  const deadline = Date.now() + deadlineMs;
+  let error = msg.connecting;
+  for (; ; ) {
+    const res = await ping();
+    if (res.ok && res.kind === "pong") {
+      if (res.status.connected) return { connected: true };
+      error = res.status.lastError ?? msg.connecting;
+    } else if (!res.ok) error = res.message;
+    if (Date.now() >= deadline) return { connected: false, error };
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+}
 async function cmdAway(args) {
   const sub = args.find((a) => !a.startsWith("--")) ?? "status";
-  const { root, paneId } = ctx();
+  const { root, label, paneId } = ctx();
   if (sub === "status") {
     const state = readProjectState(root);
     if (flag(args, "json")) {
-      process.stdout.write(`${JSON.stringify(state ?? { away: false, chatId: null, paneId: null, target: root, updated: "" })}
+      process.stdout.write(`${JSON.stringify(state ?? { away: false, chatId: null, target: root, updated: "" })}
 `);
       return;
     }
@@ -138352,37 +138648,38 @@ async function cmdAway(args) {
 `);
       return;
     }
-    process.stdout.write(
-      `${fill(msg.awayStatusLine, { away: state.away ? msg.on : msg.off, chat: state.chatId ?? msg.awayUnbound, pane: state.paneId ?? msg.none })}
-`
-    );
+    process.stdout.write(`${fill(msg.awayStatusLine, { away: state.away ? msg.on : msg.off, chat: state.chatId ?? msg.awayUnbound })}
+`);
     return;
   }
   if (sub !== "on" && sub !== "off") die(1, msg.awayUsage);
   const away = sub === "on";
+  let chatId;
   if (away) {
+    const choice = bindArgs(args);
     if (!resolveCreds()) die(4, msg.awayNoCreds);
     const d = await startDaemonDetached();
     if (!d.ok) die(3, d.message);
     process.stdout.write(`${d.message}
 `);
-    const bindRes = await request({
-      type: "bind",
-      root,
-      label: projectLabel(root),
-      paneId
-    });
-    if (!bindRes.ok) die(bindRes.code, bindRes.message);
+    const link = await waitConnected(() => request({ type: "ping" }, { timeoutMs: 2e3 }), CONNECT_WAIT_MS);
+    if (!link.connected) die(3, fill(msg.awayNotConnected, { error: link.error }));
+    const bindRes = await request({ type: "bind", root, label, paneId, ...choice }, { onNote: (text) => process.stderr.write(`note: ${text}
+`) });
+    if (!bindRes.ok) dieBind(bindRes);
     if (bindRes.kind === "bind") {
-      writeProjectState(root, { chatId: bindRes.chatId, paneId }, { create: true });
-      process.stdout.write(`${fill(bindRes.created ? msg.awayCreated : msg.awayReused, { name: bindRes.name })}
+      chatId = bindRes.chatId;
+      const line = bindRes.how === "created" ? fill(msg.awayCreated, { name: bindRes.name }) : bindRes.how === "reused" ? fill(msg.awayReused, { name: bindRes.name }) : bindRes.how === "existing" ? fill(msg.awayKept, { name: bindRes.name }) : fill(msg.awayBoundChat, { chatId: bindRes.chatId });
+      process.stdout.write(`${line}
 `);
     }
   }
   const res = await request({ type: "setAway", root, away, paneId });
   finish(res, () => {
-    writeProjectState(root, { away, paneId }, { create: true });
+    writeProjectState(root, chatId ? { away, chatId } : { away }, { create: away });
     process.stdout.write(`${away ? msg.awayOn : msg.awayOff}
+`);
+    if (away && !insideHerdr()) process.stdout.write(`${msg.awayOutsideHerdr}
 `);
   });
 }
@@ -138410,15 +138707,27 @@ async function cmdStatus() {
   }
   const list = await request({ type: "list" }, { timeoutMs: 5e3 });
   if (list.ok && list.kind === "list") {
-    if (!list.bindings.length) process.stdout.write(`${msg.statusNoBindings}
+    const live = list.bindings.filter((b) => b.releasedAt === null);
+    const released = list.bindings.filter((b) => b.releasedAt !== null);
+    const here = projectRoot();
+    const mark = (root) => root === here ? "*" : " ";
+    if (!live.length) process.stdout.write(`${msg.statusNoBindings}
 `);
     else {
       process.stdout.write(`${msg.statusBindings}
 `);
-      const here = projectRoot();
-      for (const b of list.bindings)
+      for (const b of live)
         process.stdout.write(
-          `${fill(msg.statusBindingLine, { mark: b.root === here ? "*" : " ", label: b.label, chatId: b.chatId, pane: b.paneId ?? "-", away: b.away ? msg.on : msg.off })}
+          `${fill(msg.statusBindingLine, { mark: mark(b.root), root: b.root, name: b.name ?? msg.bindCandidateUnnamed, chatId: b.chatId, away: String(b.away), pane: b.paneId ?? "-" })}
+`
+        );
+    }
+    if (released.length) {
+      process.stdout.write(`${msg.statusReleased}
+`);
+      for (const b of released)
+        process.stdout.write(
+          `${fill(msg.statusReleasedLine, { mark: mark(b.root), root: b.root, name: b.name ?? msg.bindCandidateUnnamed, chatId: b.chatId, time: b.releasedAt ?? "" })}
 `
         );
     }
@@ -138444,6 +138753,8 @@ async function main() {
       return cmdBind(args);
     case "unbind":
       return cmdUnbind();
+    case "rename":
+      return cmdRename(args);
     case "ask":
       return cmdAsk(args);
     case "notify":
@@ -138473,7 +138784,8 @@ if (isEntry)
     process.exit(3);
   });
 export {
-  describeError
+  describeError,
+  waitConnected
 };
 /*! Bundled license information:
 

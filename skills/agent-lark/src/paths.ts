@@ -62,13 +62,15 @@ export function projectLabel(root: string): string {
 export const projectStateDir = (root: string): string => join(root, '.agent-lark');
 export const projectStatePath = (root: string): string => join(projectStateDir(root), 'state.json');
 
+/**
+ * What a project's `.agent-lark/state.json` holds. The injection target (the
+ * herdr pane) is deliberately not here: the daemon keeps it on the binding.
+ */
 export interface ProjectState {
   /** The human is away and wants decisions on the phone. */
   away: boolean;
-  /** Feishu group this project is bound to; null until `bind`. */
+  /** Feishu group this project is bound to right now; null until bound, and again after `unbind`. */
   chatId: string | null;
-  /** herdr pane the last command ran from; where phone messages are injected. */
-  paneId: string | null;
   target: string;
   updated: string;
 }
@@ -80,7 +82,6 @@ export function readProjectState(root: string): ProjectState | null {
     return {
       away: parsed.away === true,
       chatId: typeof parsed.chatId === 'string' ? parsed.chatId : null,
-      paneId: typeof parsed.paneId === 'string' ? parsed.paneId : null,
       target: typeof parsed.target === 'string' ? parsed.target : root,
       updated: typeof parsed.updated === 'string' ? parsed.updated : '',
     };
@@ -111,7 +112,6 @@ export function writeProjectState(
   const current = readProjectState(root) ?? {
     away: false,
     chatId: null,
-    paneId: null,
     target: root,
     updated: '',
   };

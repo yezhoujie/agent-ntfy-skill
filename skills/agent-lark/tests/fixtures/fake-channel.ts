@@ -12,8 +12,16 @@ export interface FakeChannelOptions {
   getChatInfo?: ChannelLike['getChatInfo'];
   createChat?: ChannelLike['createChat'];
   addReaction?: ChannelLike['addReaction'];
+  /** Answers `rawClient.im.v1.chat.update`; every call is also recorded in `renames`. */
+  chatUpdate?: (req: ChatUpdateRequest) => Promise<ChatUpdateResult>;
   rawClient?: unknown;
 }
+
+export interface ChatUpdateRequest {
+  path: { chat_id: string };
+  data: { name?: string; description?: string };
+}
+export type ChatUpdateResult = { code?: number; msg?: string };
 
 export interface FakeChannel {
   channel: ChannelLike;
@@ -22,6 +30,8 @@ export interface FakeChannel {
   connectCalls: number;
   disconnectCalls: number;
   policy: unknown[];
+  /** Group updates (name / description) issued through rawClient, oldest first. */
+  renames: Array<{ chatId: string; name: string | undefined; description: string | undefined }>;
   /** Deliver a message as if the human typed it in the group. */
   message(partial: Partial<NormalizedMessage> & { chatId: string; content: string }): Promise<void>;
   /** Tap a button on a card. */
@@ -39,6 +49,7 @@ export function createFakeChannel(opts: FakeChannelOptions = {}): FakeChannel {
     connectCalls: 0,
     disconnectCalls: 0,
     policy: [],
+    renames: [],
     channel: undefined as unknown as ChannelLike,
     async message(partial) {
       const evt: NormalizedMessage = {
@@ -63,6 +74,20 @@ export function createFakeChannel(opts: FakeChannelOptions = {}): FakeChannel {
   let connected = false;
   const rawClient =
     opts.rawClient ??
+    (opts.chatUpdate
+      ? {
+          im: {
+            v1: {
+              chat: {
+                update: async (req: ChatUpdateRequest): Promise<ChatUpdateResult> => {
+                  fake.renames.push({ chatId: req.path.chat_id, name: req.data.name, description: req.data.description });
+                  return opts.chatUpdate!(req);
+                },
+              },
+            },
+          },
+        }
+      : undefined) ??
     new Proxy(
       {},
       {

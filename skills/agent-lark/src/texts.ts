@@ -134,12 +134,17 @@ export const msg = {
   setup [--update] [--scopes a,b]  Create or update the Feishu app by QR code; credentials go to the keychain
   setup --app-id cli_xxx [--store]  Use an existing app; the secret is read from the environment / env file, never argv
   daemon [--detach|--status|--stop]  Resident process holding the Feishu connection (--stop is refused while a question is pending, unless --force)
-  bind [--chat <id>] [--name <n>]    Bind the current project to a Feishu group (a new one by default)
-  unbind                             Unbind the current project
+  away on [--name <task>] [--reuse <chat_id> | --new]
+                                     Remote mode on: daemon up, this project bound to a Feishu group named "<task> [<dir>]"
+                                     (exit 4 lists earlier groups to take back; rerun with --reuse or --new)
+  away off | status [--json]         Remote mode off / the project's state ({away, chatId, target, updated})
+  rename "<task>"                    Rename the project's live group to "<task> [<dir>]"
+  unbind                             Let the live group go (it stays in Feishu; the next away on offers it back)
+  bind [--chat <id>] [--name <task>] [--reuse <chat_id> | --new]
+                                     Bind without switching remote mode on; --chat names a group outright
   ask [--timeout <seconds>]          Read JSON from stdin, push a question card, block until answered
   notify                             Read JSON from stdin, push a titled notification card (important things only)
   send-file <path> [--caption <t>]   Send an image or file to the project group
-  away on | off | status [--json]    Remote mode; while on, a card is pushed when the agent is stuck on a prompt
   status                             Daemon and binding overview
 
 Global: --home <dir>  state directory (same as AGENT_LARK_HOME; default ~/.agent-lark)
@@ -155,7 +160,10 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   notifyProblems: 'This notification has {n} problem(s); nothing was sent:',
   timeoutArg: '--timeout must be a positive integer (seconds)',
   sendFileUsage: 'Usage: agent-lark send-file <path> [--caption <text>]',
-  awayUsage: 'Usage: agent-lark away on|off|status',
+  awayUsage: 'Usage: agent-lark away on [--name <task>] [--reuse <chat_id> | --new] | off | status [--json]',
+  renameUsage: 'Usage: agent-lark rename "<task name>"',
+  taskNameTooLong: 'task name: over {max} characters (code points), got {n}',
+  setupNextLines: '  agent-lark daemon --detach\n  cd <project> && agent-lark away on --name "<task>"\n',
   // daemon command
   daemonNotRunning: 'daemon: not running',
   daemonNoAnswer: 'daemon: no answer ({message})',
@@ -176,35 +184,62 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   notConnected: 'not connected to Feishu ({error}); the daemon keeps retrying, try again shortly',
   reconnecting: 'the connection to Feishu dropped, reconnecting',
   connecting: 'still connecting',
-  // bind / unbind
+  // bind / unbind / rename
   bindCreated: '✅ Created Feishu group "{name}" and bound it to {root}\n   Open Feishu to see the group; questions from this project will land there.',
   bindExisting: '✅ Bound to existing group {chatId} ({root})',
-  unbound: 'Unbound. The Feishu group is still there; archive it yourself if you want.',
+  bindKept: '✅ Already bound to Feishu group "{name}" ({root})',
+  bindReused: '✅ Took back Feishu group "{name}" for {root}',
+  bindCandidates: 'this project has no live group, but {n} earlier group(s) could be taken back (renamed) instead of creating another:',
+  bindCandidateLine: '{name}  released {time}  {chatId}',
+  bindCandidateHint: 'ask the user which to reuse (rename) or create new; rerun with --reuse <chatId> or --new',
+  bindCandidateUnnamed: '(unnamed)',
+  bindCandidateNever: '-',
+  bindModeConflict: '--reuse and --new cannot be combined',
+  bindReuseUnknown: '--reuse {chatId}: not one of the groups this project could take back',
+  bindChatTaken: 'group {chatId} is the live group of another project ({root}); unbind it there first',
+  bindScanFailed: 'could not look through the Feishu groups for earlier ones of this project ({error}); only local records were considered',
+  bindRenameFailed: 'bound, but renaming the group failed: {error}',
+  bindingsTwoActive: 'bindings: {root} already has one active group ({chatId})',
+  bindingsFileBad: 'cannot read the bindings file {path}: {error}\nFix or move it; it is left untouched.',
+  bindModeIgnored: 'this project already has a live group; --reuse / --new were ignored (unbind first to pick another group)',
+  bindUpdateSkipped: 'not connected to Feishu; the group\'s name and description were left as they are',
+  unbound: 'Unbound. The Feishu group "{name}" stays in Feishu; the next away on in this directory offers to rename and reuse it.',
+  renameNotBound: 'this project has no live group; run agent-lark away on first',
+  renameFailed: 'renaming the group failed: Feishu error {code} {msg}',
+  renameThrew: 'renaming the group failed: {error}',
+  renamePermissionHint:
+    'The bot may only rename a group it owns, or one whose settings let every member edit group info (232002 / 232016), and must be a member of it (232011).',
+  renamed: 'Renamed the Feishu group to "{name}"',
   // notify / send-file
   notifySent: 'Notification sent (a reply from the phone is injected into this pane as an instruction)',
   fileSent: 'Sent to the project group',
   // away
   awayNeverUsed: 'This project has never used agent-lark (no .agent-lark/state.json)',
-  awayStatusLine: 'remote mode: {away}  group: {chat}  pane: {pane}',
+  awayStatusLine: 'remote mode: {away}  group: {chat}',
+  awayNotConnected: 'daemon is up but not connected to Feishu: {error}',
+  awayOutsideHerdr: 'Not inside herdr: messages sent from the phone are not injected anywhere, and there is no stuck-on-a-prompt alert.',
   on: 'on',
   off: 'off',
-  none: 'none',
   awayUnbound: 'not bound',
   awayNoCreds: 'No Feishu app credentials yet. Run once: agent-lark setup',
   awayCreated: 'Created Feishu group "{name}"',
-  awayReused: 'Connected to Feishu group "{name}"',
+  awayReused: 'Took back Feishu group "{name}"',
+  awayKept: 'Connected to Feishu group "{name}"',
+  awayBoundChat: 'Bound to Feishu group {chatId}',
   awayOff: 'Remote mode is off.',
   awayOn: 'Remote mode is on: decisions, and moments when the agent is stuck on a prompt that needs you, are pushed to this project\'s Feishu group.',
   // status
   statusCredsYes: 'credentials: configured, from {origin}',
   statusCredsNo: 'credentials: not configured; run agent-lark setup first',
-  statusHerdrIn: 'herdr: inside herdr, current pane {pane}',
-  statusHerdrOut: 'herdr: not inside herdr (phone messages have nowhere to be injected)',
+  statusHerdrIn: 'herdr: inside herdr, pane {pane}',
+  statusHerdrOut: 'herdr: not inside herdr',
   statusDaemonDown: 'daemon: not running (agent-lark daemon --detach)',
   statusDaemonLine: 'daemon: pid {pid}, connected {connected}, connection {connection}, pending questions {pending}',
   statusNoBindings: 'bindings: none yet',
   statusBindings: 'bindings:',
-  statusBindingLine: '  {mark} {label}  group {chatId}  pane {pane}  remote {away}',
+  statusBindingLine: '  {mark} {root}  {name}  {chatId}  away={away}  pane={pane}',
+  statusReleased: 'released (take one back with away on --reuse <chat_id>; * marks this project):',
+  statusReleasedLine: '  {mark} {root}  {name}  {chatId}  released {time}',
   // ipc client / server
   ipcDaemonDown: 'daemon is not running. Start it first: agent-lark daemon --detach',
   ipcConnect: 'cannot connect to the daemon: {message}',
@@ -213,14 +248,14 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   ipcBadRequest: 'unparseable request',
   ipcUnknownRequest: 'unknown request',
   // daemon replies
-  notBound: 'this project is not bound yet; run agent-lark bind first',
+  notBound: 'this project is not bound yet; run agent-lark away on first',
   askPending: 'this project already has a question pending on the phone; one at a time',
   askNote: 'sent to the Feishu group, waiting for the answer (up to {seconds} s)',
   askTimedOut: 'no answer after {seconds} s',
   askCancelledStop: 'the daemon is stopping; the question was sent but no answer will arrive this time',
   askClientGone: 'the asking client disconnected',
   sendFailed: 'send failed: {error}',
-  unbindNone: 'this project was not bound',
+  unbindNone: 'this project is not bound',
   unbindPending: 'a question is still pending on the phone; answer it or wait for the timeout',
   bindNoOwner: 'nobody to invite into a new group (the app owner is not recorded). Use --chat <chat_id> to bind a group you created yourself.',
   bindCreateFailed:

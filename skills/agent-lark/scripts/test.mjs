@@ -50,8 +50,12 @@ if (files.length === 0) {
   process.exit(1);
 }
 
-// Anything after `npm test --` (e.g. --test-name-pattern=x) goes to node --test.
-const run = spawnSync(process.execPath, ['--test', ...process.argv.slice(2), ...files], {
+// A test that never settles must not hang the run, and a daemon or timer a
+// failed test leaves behind must not keep the process alive after the last
+// result: cap each test, and exit once all are done. Anything after
+// `npm test --` (e.g. --test-name-pattern=x, or another --test-timeout) goes
+// to node --test after these, so it wins.
+const run = spawnSync(process.execPath, ['--test', '--test-timeout=30000', '--test-force-exit', ...process.argv.slice(2), ...files], {
   cwd: root,
   stdio: 'inherit',
 });

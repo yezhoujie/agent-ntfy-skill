@@ -4,11 +4,11 @@ import { basename, join, sep } from 'node:path';
 import { platform, tmpdir } from 'node:os';
 import type { Server, Socket } from 'node:net';
 import { createLarkChannel, type CardActionEvent, type LarkChannel, type LarkChannelOptions, type NormalizedMessage } from '@larksuite/channel';
-import { BindingStore, type Binding } from './bindings.js';
+import { BindingStore, BindingsFileError, groupName, taskNameProblem, type Binding } from './bindings.js';
 import { askCard, notifyCard, receiptCard, statusCard } from './cards.js';
 import { resolveCreds } from './creds.js';
 import { agentList, findPaneForProject, promptPane } from './herdr.js';
-import { isDaemonListening, serve, type Request, type Response } from './ipc.js';
+import { isDaemonListening, serve, type Candidate, type Request, type Response } from './ipc.js';
 import { ensureHomeDir, homeDir, ipcEndpoint, logPath, pidPath, sockPath } from './paths.js';
 import { fill, msg, t } from './texts.js';
 import { validateAsk, validateNotify, ValidationError, type AskPayload, type Lang } from './validate.js';
@@ -150,7 +150,16 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
   const herdr: HerdrDeps = deps.herdr ?? { agentList, promptPane, findPaneForProject };
   const retryMs = deps.connectRetryMs ?? CONNECT_RETRY_MS;
 
-  const bindings = new BindingStore();
+  let bindings: BindingStore;
+  try {
+    bindings = new BindingStore({
+      onRepaired: (info) => log('bindings.repaired', info),
+      onDropped: (info) => log('bindings.dropped', info),
+    });
+  } catch (err) {
+    if (err instanceof BindingsFileError) throw new DaemonStartError(4, err.message);
+    throw err;
+  }
   const pendings = new Map<string, Pending>();
   const lastStatus = new Map<string, string>();
   const lastStatusPush = new Map<string, number>();
@@ -162,7 +171,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
     policy: {
       // Only bound groups are listened to, and inside them no @ is needed —
       // the group IS the project, so every message in it is for this agent.
-      groupAllowlist: bindings.chatIds(),
+      groupAllowlist: bindings.activeChatIds(),
       requireMention: false,
       dmMode: creds.ownerOpenId ? 'allowlist' : 'disabled',
       dmAllowlist: creds.ownerOpenId ? [creds.ownerOpenId] : [],
@@ -170,7 +179,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
   });
 
   const refreshPolicy = (): void => {
-    channel.updatePolicy({ groupAllowlist: bindings.chatIds() });
+    channel.updatePolicy({ groupAllowlist: bindings.activeChatIds() });
   };
 
   const pendingFor = (root: string): Pending | undefined => {
@@ -325,7 +334,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
 
   channel.on('message', async (incoming: NormalizedMessage) => {
     if (incoming.senderIsBot) return;
-    const b = bindings.byChat(incoming.chatId);
+    const b = bindings.activeByChat(incoming.chatId);
     if (!b) return;
     const got = await saveResources(incoming);
     // A voice message arrives as an `<audio .../>` placeholder in `content`.
@@ -360,7 +369,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
     if (!p || p.done) {
       // A second tap after the question closed: the human is correcting
       // themselves, so it becomes an instruction rather than nothing.
-      const b = bindings.byChat(evt.chatId);
+      const b = bindings.activeByChat(evt.chatId);
       if (b) {
         const late = value.optionId ?? '';
         await inject(b, late ? fill(msg.lateTapOption, { id: late }) : msg.lateTapNoOption);
@@ -432,12 +441,53 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
     }
   };
 
+  /** Feishu answers a refused update with HTTP 200 and a non-zero `code`; the SDK throws only on transport / HTTP errors. */
+  const feishuError = (res: unknown): { code: number; msg: string } | null => {
+    if (!res || typeof res !== 'object') return null;
+    const r = res as { code?: unknown; msg?: unknown };
+    if (typeof r.code !== 'number' || r.code === 0) return null;
+    return { code: r.code, msg: typeof r.msg === 'string' ? r.msg : '' };
+  };
+
+  /**
+   * Update a group's name and / or description. The channel SDK has no
+   * wrapper for `im.v1.chat.update`, so this goes through the raw client.
+   * Only the bot's own groups can be changed freely; a group the human made
+   * allows it only when its settings let every member edit group info.
+   */
+  const updateChat = async (
+    chatId: string,
+    data: { name?: string; description?: string },
+  ): Promise<{ ok: true } | { ok: false; error: string }> => {
+    const explain = (e: { code: number; msg: string }): string => {
+      const text = fill(msg.renameFailed, { code: e.code, msg: e.msg });
+      return [232002, 232016, 232011].includes(e.code) ? `${text}\n${msg.renamePermissionHint}` : text;
+    };
+    try {
+      const res = await (channel.rawClient as unknown as {
+        im: { v1: { chat: { update(req: unknown): Promise<unknown> } } };
+      }).im.v1.chat.update({ path: { chat_id: chatId }, data });
+      const refused = feishuError(res);
+      if (refused) {
+        log('rename.refused', { chatId, code: refused.code });
+        return { ok: false, error: explain(refused) };
+      }
+      return { ok: true };
+    } catch (err) {
+      const body = (err as { response?: { data?: unknown } } | null)?.response?.data;
+      const refused = feishuError(body) ?? feishuError(err);
+      log('rename.failed', { chatId, err: String(err).slice(0, 200) });
+      if (refused) return { ok: false, error: explain(refused) };
+      return { ok: false, error: fill(msg.renameThrew, { error: err instanceof Error ? err.message : String(err) }) };
+    }
+  };
+
   const notConnected = (): Response => ({ ok: false, code: 3, message: fill(msg.notConnected, { error: lastError ?? msg.connecting }) });
   const agents = herdr.agentList;
 
   // ---- agent state pushes -------------------------------------------------
   const poll = async (): Promise<void> => {
-    const away = bindings.all().filter((b) => b.away && b.paneId);
+    const away = bindings.activeAll().filter((b) => b.away && b.paneId);
     if (!away.length) return;
     const live = await agents();
     for (const b of away) {
@@ -565,7 +615,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
               connected,
               lastError,
               pendingAsks: pendings.size,
-              bindings: bindings.all().length,
+              bindings: bindings.activeAll().length,
               startedAt,
             },
           };
@@ -583,116 +633,213 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
               root: b.root,
               label: b.label,
               chatId: b.chatId,
+              name: b.name,
               paneId: b.paneId,
               away: b.away,
+              releasedAt: b.releasedAt,
             })),
           };
 
         case 'bind': {
-          const existing = bindings.get(req.root);
+          const live = bindings.active(req.root);
+          const now = new Date().toISOString();
+
+          // A group named outright: the escape hatch for a group the human made
+          // themselves, or for pointing a project back at a group after a reinstall.
+          if (req.name !== undefined) {
+            const problem = taskNameProblem(req.name);
+            if (problem) return { ok: false, code: 1, message: problem };
+          }
+          const marker = `agent-lark · ${req.root}`;
+
           if (req.chatId) {
+            const switching = live !== undefined && live.chatId !== req.chatId;
+            // Switching groups lets go of the live one, and a question waiting
+            // there would never get its answer — same rule as unbind.
+            if (switching && pendingFor(req.root)) return { ok: false, code: 4, message: msg.unbindPending };
+            const holder = bindings.byChat(req.chatId);
+            if (holder && holder.releasedAt === null && holder.root !== req.root)
+              return { ok: false, code: 1, message: fill(msg.bindChatTaken, { chatId: req.chatId, root: holder.root }) };
+            if (switching) bindings.release(req.root);
+            // The name is only for showing the group back later; not knowing it is fine.
+            let name = holder?.name ?? null;
+            if (connected) {
+              try {
+                name = (await channel.getChatInfo(req.chatId)).name ?? name;
+              } catch {
+                // keep whatever was on record
+              }
+            }
             const b: Binding = {
               root: req.root,
               label: req.label,
               chatId: req.chatId,
-              paneId: req.paneId ?? existing?.paneId ?? null,
-              away: existing?.away ?? false,
-              boundAt: new Date().toISOString(),
+              name,
+              paneId: req.paneId ?? holder?.paneId ?? live?.paneId ?? null,
+              away: live?.away ?? false,
+              lang: holder?.lang ?? live?.lang ?? null,
+              boundAt: now,
+              releasedAt: null,
             };
             bindings.set(b);
             refreshPolicy();
-            log('bind', { root: req.root, chatId: req.chatId, created: false });
-            return { ok: true, kind: 'bind', chatId: req.chatId, created: false, name: req.label };
-          }
-          if (existing) {
-            bindings.touch(req.root, { paneId: req.paneId, label: req.label });
-            return { ok: true, kind: 'bind', chatId: existing.chatId, created: false, name: existing.label };
-          }
-          if (!connected) return notConnected();
-          // No local binding — but the group may already exist from an earlier
-          // install whose bindings.json is gone. Creating a second group for
-          // the same project would split the conversation in two, so look for
-          // one the bot made for exactly this project root before creating.
-          const marker = `agent-lark · ${req.root}`;
-          try {
-            for (const summary of await channel.listChats()) {
-              let info;
-              try {
-                info = await channel.getChatInfo(summary.id);
-              } catch {
-                continue;
-              }
-              if (info.description !== marker) continue;
-              const b: Binding = {
-                root: req.root,
-                label: req.label,
-                chatId: summary.id,
-                paneId: req.paneId,
-                away: false,
-                boundAt: new Date().toISOString(),
-              };
-              bindings.set(b);
-              refreshPolicy();
-              log('bind.reused', { root: req.root, chatId: summary.id });
-              return { ok: true, kind: 'bind', chatId: summary.id, created: false, name: summary.name };
+            log('bind', { root: req.root, chatId: req.chatId, how: 'chat' });
+            // The group now belongs to this project: its description says so
+            // (that is how it is found again without local records), and a
+            // task name given here is applied in the same call.
+            const wanted = req.name !== undefined ? groupName(req.name, req.label) : undefined;
+            if (!connected) ctx.note(msg.bindUpdateSkipped);
+            else {
+              const r = await updateChat(req.chatId, { name: wanted, description: marker });
+              if (r.ok && wanted !== undefined) bindings.touch(req.root, { name: wanted });
+              else if (!r.ok) ctx.note(fill(msg.bindRenameFailed, { error: r.error }));
             }
-          } catch (err) {
-            log('bind.scan-failed', { root: req.root, err: String(err) });
+            const current = bindings.active(req.root);
+            return { ok: true, kind: 'bind', chatId: req.chatId, how: 'chat', name: current?.name ?? req.chatId };
           }
-          const owner = creds.ownerOpenId;
-          if (!owner) {
-            return {
-              ok: false,
-              code: 4,
-              message: msg.bindNoOwner,
+
+          // The live group stays; a task name given now is applied to it.
+          if (live) {
+            bindings.touch(req.root, { paneId: req.paneId, label: req.label });
+            if (req.mode !== undefined) ctx.note(msg.bindModeIgnored);
+            let name = live.name ?? live.chatId;
+            if (req.name !== undefined) {
+              const wanted = groupName(req.name, req.label);
+              const r = await updateChat(live.chatId, { name: wanted });
+              if (r.ok) {
+                bindings.touch(req.root, { name: wanted });
+                name = wanted;
+              } else ctx.note(fill(msg.bindRenameFailed, { error: r.error }));
+            }
+            return { ok: true, kind: 'bind', chatId: live.chatId, how: 'existing', name };
+          }
+
+          // No live group. Taking one back or creating one both go through
+          // Feishu, so nothing below is attempted while disconnected.
+          if (!connected) return notConnected();
+          const candidates: Candidate[] = bindings
+            .released(req.root)
+            .map((b) => ({ chatId: b.chatId, name: b.name, releasedAt: b.releasedAt }));
+          // The group may also exist with no local record at all (bindings.json
+          // gone with a reinstall). Creating a second group for the same
+          // project would split the conversation in two, so the ones the bot
+          // made for exactly this project root are offered back too — unless
+          // the caller already said which group, or asked for a new one.
+          const known = req.mode === 'reuse' && candidates.some((c) => c.chatId === req.reuseChatId);
+          if (req.mode !== 'new' && !known) {
+            try {
+              for (const summary of await channel.listChats()) {
+                if (bindings.byChat(summary.id)) continue;
+                let info;
+                try {
+                  info = await channel.getChatInfo(summary.id);
+                } catch {
+                  continue;
+                }
+                if (info.description !== marker) continue;
+                candidates.push({ chatId: summary.id, name: summary.name || info.name || null, releasedAt: null });
+              }
+            } catch (err) {
+              const error = err instanceof Error ? err.message : String(err);
+              log('bind.scan-failed', { root: req.root, err: error });
+              ctx.note(fill(msg.bindScanFailed, { error }));
+            }
+          }
+
+          if (req.mode === 'reuse') {
+            const pick = candidates.find((c) => c.chatId === req.reuseChatId);
+            if (!pick) return { ok: false, code: 1, message: fill(msg.bindReuseUnknown, { chatId: req.reuseChatId ?? '?' }) };
+            const earlier = bindings.byChat(pick.chatId);
+            const b: Binding = {
+              root: req.root,
+              label: req.label,
+              chatId: pick.chatId,
+              name: pick.name,
+              paneId: req.paneId ?? earlier?.paneId ?? null,
+              away: false,
+              lang: earlier?.lang ?? null,
+              boundAt: now,
+              releasedAt: null,
             };
+            bindings.set(b);
+            refreshPolicy();
+            log('bind', { root: req.root, chatId: pick.chatId, how: 'reused' });
+            // Renamed, and its description pointed at this project again (it
+            // may have been adopted from another root in between).
+            const wanted = groupName(req.name, req.label);
+            const r = await updateChat(pick.chatId, { name: wanted, description: marker });
+            if (r.ok) bindings.touch(req.root, { name: wanted });
+            else ctx.note(fill(msg.bindRenameFailed, { error: r.error }));
+            return { ok: true, kind: 'bind', chatId: pick.chatId, how: 'reused', name: r.ok ? wanted : (pick.name ?? pick.chatId) };
           }
-          const name = req.name?.trim() || `🤖 ${req.label}`;
+
+          if (candidates.length && req.mode === undefined)
+            return { ok: false, code: 4, message: fill(msg.bindCandidates, { n: candidates.length }), candidates };
+
+          const owner = creds.ownerOpenId;
+          if (!owner) return { ok: false, code: 4, message: msg.bindNoOwner };
+          const name = groupName(req.name, req.label);
           try {
             const { chatId } = await channel.createChat({
               name,
-              description: `agent-lark · ${req.root}`,
+              description: marker,
               inviteUserIds: [owner],
               userIdType: 'open_id',
             });
-            // `existing` is undefined here — the bound case returned above.
             const b: Binding = {
               root: req.root,
               label: req.label,
               chatId,
+              name,
               paneId: req.paneId,
               away: false,
-              boundAt: new Date().toISOString(),
+              lang: null,
+              boundAt: now,
+              releasedAt: null,
             };
             bindings.set(b);
             refreshPolicy();
-            log('bind', { root: req.root, chatId, created: true });
-            return { ok: true, kind: 'bind', chatId, created: true, name };
+            log('bind', { root: req.root, chatId, how: 'created' });
+            return { ok: true, kind: 'bind', chatId, how: 'created', name };
           } catch (err) {
             const detail = err instanceof Error ? err.message : String(err);
             return {
               ok: false,
-              code: /permission|99991672|scope/i.test(detail)
-                ? 4
-                : 3,
+              code: /permission|99991672|scope/i.test(detail) ? 4 : 3,
               message: fill(msg.bindCreateFailed, { error: detail }),
             };
           }
         }
 
         case 'unbind': {
-          const b = bindings.get(req.root);
-          if (!b) return { ok: false, code: 1, message: msg.unbindNone };
-          const p = pendingFor(req.root);
-          if (p) return { ok: false, code: 4, message: msg.unbindPending };
-          bindings.remove(req.root);
+          const live = bindings.active(req.root);
+          if (!live) return { ok: false, code: 1, message: msg.unbindNone };
+          if (pendingFor(req.root)) return { ok: false, code: 4, message: msg.unbindPending };
+          bindings.release(req.root);
           refreshPolicy();
-          log('unbind', { root: req.root });
-          return { ok: true, kind: 'ack' };
+          lastStatus.delete(req.root);
+          log('unbind', { root: req.root, chatId: live.chatId });
+          return { ok: true, kind: 'unbind', chatId: live.chatId, name: live.name ?? live.chatId };
+        }
+
+        case 'rename': {
+          const live = bindings.active(req.root);
+          if (!live) return { ok: false, code: 4, message: msg.renameNotBound };
+          const problem = taskNameProblem(req.name);
+          if (problem) return { ok: false, code: 1, message: problem };
+          if (!connected) return notConnected();
+          const wanted = groupName(req.name, live.label);
+          const r = await updateChat(live.chatId, { name: wanted });
+          if (!r.ok) return { ok: false, code: 3, message: r.error };
+          bindings.touch(req.root, { paneId: req.paneId, name: wanted });
+          log('rename', { root: req.root, chatId: live.chatId });
+          return { ok: true, kind: 'rename', name: wanted };
         }
 
         case 'setAway': {
           const b = bindings.touch(req.root, { away: req.away, paneId: req.paneId });
+          // Switching off with nothing bound is nothing to do, not a mistake.
+          if (!b && !req.away) return { ok: true, kind: 'ack' };
           if (!b) return { ok: false, code: 4, message: msg.notBound };
           lastStatus.delete(req.root);
           log('away', { root: req.root, away: req.away });
@@ -710,6 +857,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
             if (err instanceof ValidationError) return { ok: false, code: 1, message: err.problems.join('\n') };
             throw err;
           }
+          if (payload.lang) bindings.touch(req.root, { lang: payload.lang });
           try {
             await channel.send(b.chatId, { card: notifyCard(payload, b.label) });
             log('notify.sent', { root: b.root });
@@ -757,6 +905,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
             if (err instanceof ValidationError) return { ok: false, code: 1, message: err.problems.join('\n') };
             throw err;
           }
+          if (payload.lang) bindings.touch(req.root, { lang: payload.lang });
           const reqId = randomUUID().replace(/-/g, '').slice(0, 16);
           let messageId: string;
           try {

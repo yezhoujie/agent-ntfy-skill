@@ -8,7 +8,8 @@ import QRCode from 'qrcode';
 import { clearCreds, credsReport, defaultStore, resolveCreds, writeCreds, type StoreKind } from './creds.js';
 import { envFile } from './creds.js';
 import { currentPaneId, insideHerdr } from './herdr.js';
-import { isDaemonListening, request, type Response } from './ipc.js';
+import { taskNameProblem } from './bindings.js';
+import { isDaemonListening, request, type Request, type Response } from './ipc.js';
 import { ensureHomeDir, ipcEndpoint, logPath, pidPath, projectLabel, projectRoot, readProjectState, writeProjectState } from './paths.js';
 import { both, en, fill, msg, zh } from './texts.js';
 import { validateAsk, validateNotify, ValidationError } from './validate.js';
@@ -149,7 +150,7 @@ async function cmdSetup(args: string[]): Promise<void> {
     const where = writeCreds({ appId: manualId, appSecret: manualSecret, ownerOpenId }, store);
     bilingual('setupSaved', { where });
     bilingual('setupNext');
-    process.stdout.write('  agent-lark daemon --detach\n  cd <project> && agent-lark bind\n');
+    process.stdout.write(msg.setupNextLines);
     return;
   }
   if (flagAppId)
@@ -229,7 +230,7 @@ async function cmdSetup(args: string[]): Promise<void> {
   process.stdout.write('\n');
   bilingual('setupSavedQr', { where });
   bilingual('setupNext');
-  process.stdout.write('  agent-lark daemon --detach\n  cd <project> && agent-lark bind\n');
+  process.stdout.write(msg.setupNextLines);
 }
 
 // ---------------------------------------------------------------- daemon
@@ -315,34 +316,76 @@ async function cmdDaemon(args: string[]): Promise<void> {
   process.exit(0);
 }
 
-// ---------------------------------------------------------------- bind
+// ---------------------------------------------------------------- bind / unbind / rename
+
+/** The group-choosing flags shared by `bind` and `away on`. */
+function bindArgs(args: string[]): Pick<Request & { type: 'bind' }, 'name' | 'mode' | 'reuseChatId'> {
+  const name = opt(args, 'name');
+  if (name !== undefined) {
+    const problem = taskNameProblem(name);
+    if (problem) die(1, problem);
+  }
+  const reuse = opt(args, 'reuse');
+  if (reuse && flag(args, 'new')) die(1, msg.bindModeConflict);
+  return { name, mode: reuse ? 'reuse' : flag(args, 'new') ? 'new' : undefined, reuseChatId: reuse };
+}
+
+/**
+ * A bind refused with earlier groups on offer: list them, one per line, and
+ * say how to rerun. The choice is the human's — the agent relays it.
+ */
+function dieBind(res: Extract<Response, { ok: false }>): never {
+  if (res.code === 4 && res.candidates?.length) {
+    process.stderr.write(`${msg.prefix}${res.message}\n`);
+    for (const c of res.candidates)
+      process.stderr.write(
+        `${fill(msg.bindCandidateLine, { name: c.name ?? msg.bindCandidateUnnamed, time: c.releasedAt ?? msg.bindCandidateNever, chatId: c.chatId })}\n`,
+      );
+    process.stderr.write(`${msg.bindCandidateHint}\n`);
+    process.exit(4);
+  }
+  die(res.code, res.message);
+}
 
 async function cmdBind(args: string[]): Promise<void> {
-  const { root, label } = ctx();
-  const res = await request({
-    type: 'bind',
-    root,
-    label,
-    paneId: currentPaneId(),
-    chatId: opt(args, 'chat'),
-    name: opt(args, 'name'),
-  });
+  const { root, label, paneId } = ctx();
+  const res = await request(
+    { type: 'bind', root, label, paneId, chatId: opt(args, 'chat'), ...bindArgs(args) },
+    { onNote: (text) => process.stderr.write(`note: ${text}\n`) },
+  );
+  if (!res.ok) dieBind(res);
   finish(res, (r) => {
     if (r.kind !== 'bind') return;
-    writeProjectState(root, { chatId: r.chatId, paneId: currentPaneId() }, { create: true });
-    process.stdout.write(
-      `${r.created ? fill(msg.bindCreated, { name: r.name, root }) : fill(msg.bindExisting, { chatId: r.chatId, root })}\n`,
-    );
+    writeProjectState(root, { chatId: r.chatId }, { create: true });
+    const line =
+      r.how === 'created'
+        ? fill(msg.bindCreated, { name: r.name, root })
+        : r.how === 'reused'
+          ? fill(msg.bindReused, { name: r.name, root })
+          : r.how === 'existing'
+            ? fill(msg.bindKept, { name: r.name, root })
+            : fill(msg.bindExisting, { chatId: r.chatId, root });
+    process.stdout.write(`${line}\n`);
   });
 }
 
 async function cmdUnbind(): Promise<void> {
   const { root } = ctx();
   const res = await request({ type: 'unbind', root });
-  finish(res, () => {
+  finish(res, (r) => {
     writeProjectState(root, { chatId: null, away: false });
-    process.stdout.write(`${msg.unbound}\n`);
+    process.stdout.write(`${fill(msg.unbound, { name: r.kind === 'unbind' ? r.name : '' })}\n`);
   });
+}
+
+async function cmdRename(args: string[]): Promise<void> {
+  const name = args.find((a) => !a.startsWith('--'));
+  if (!name?.trim()) die(1, msg.renameUsage);
+  const problem = taskNameProblem(name);
+  if (problem) die(1, problem);
+  const { root, paneId } = ctx();
+  const res = await request({ type: 'rename', root, paneId, name });
+  finish(res, (r) => process.stdout.write(`${fill(msg.renamed, { name: r.kind === 'rename' ? r.name : name })}\n`));
 }
 
 // ---------------------------------------------------------------- ask / notify
@@ -406,50 +449,83 @@ async function cmdSendFile(args: string[]): Promise<void> {
 
 // ---------------------------------------------------------------- away / status
 
+/** How long `away on` waits for the daemon's Feishu handshake before giving up. */
+const CONNECT_WAIT_MS = 15_000;
+
+/**
+ * Keep pinging until the daemon reports `connected`, or the deadline passes —
+ * then the last connect error it gave is returned. The ping is a parameter so
+ * the give-up path can be exercised without a daemon.
+ */
+export async function waitConnected(
+  ping: () => Promise<Response>,
+  deadlineMs: number,
+  pollMs = 250,
+): Promise<{ connected: true } | { connected: false; error: string }> {
+  const deadline = Date.now() + deadlineMs;
+  let error: string = msg.connecting;
+  for (;;) {
+    const res = await ping();
+    if (res.ok && res.kind === 'pong') {
+      if (res.status.connected) return { connected: true };
+      error = res.status.lastError ?? msg.connecting;
+    } else if (!res.ok) error = res.message;
+    if (Date.now() >= deadline) return { connected: false, error };
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+}
+
 async function cmdAway(args: string[]): Promise<void> {
   const sub = args.find((a) => !a.startsWith('--')) ?? 'status';
-  const { root, paneId } = ctx();
+  const { root, label, paneId } = ctx();
   if (sub === 'status') {
     const state = readProjectState(root);
     if (flag(args, 'json')) {
-      process.stdout.write(`${JSON.stringify(state ?? { away: false, chatId: null, paneId: null, target: root, updated: '' })}\n`);
+      process.stdout.write(`${JSON.stringify(state ?? { away: false, chatId: null, target: root, updated: '' })}\n`);
       return;
     }
     if (!state) {
       process.stdout.write(`${msg.awayNeverUsed}\n`);
       return;
     }
-    process.stdout.write(
-      `${fill(msg.awayStatusLine, { away: state.away ? msg.on : msg.off, chat: state.chatId ?? msg.awayUnbound, pane: state.paneId ?? msg.none })}\n`,
-    );
+    process.stdout.write(`${fill(msg.awayStatusLine, { away: state.away ? msg.on : msg.off, chat: state.chatId ?? msg.awayUnbound })}\n`);
     return;
   }
   if (sub !== 'on' && sub !== 'off') die(1, msg.awayUsage);
   const away = sub === 'on';
+  let chatId: string | undefined;
   if (away) {
     // Everything the channel needs, in one command: credentials, a live
-    // daemon, and a group for this project. Asking the user to run three
-    // commands in order is how a channel ends up switched half-on.
+    // daemon that reached Feishu, and a group for this project. Asking the
+    // user to run three commands in order is how a channel ends up switched
+    // half-on.
+    const choice = bindArgs(args);
     if (!resolveCreds()) die(4, msg.awayNoCreds);
     const d = await startDaemonDetached();
     if (!d.ok) die(3, d.message);
     process.stdout.write(`${d.message}\n`);
-    const bindRes = await request({
-      type: 'bind',
-      root,
-      label: projectLabel(root),
-      paneId,
-    });
-    if (!bindRes.ok) die(bindRes.code, bindRes.message);
+    const link = await waitConnected(() => request({ type: 'ping' }, { timeoutMs: 2000 }), CONNECT_WAIT_MS);
+    if (!link.connected) die(3, fill(msg.awayNotConnected, { error: link.error }));
+    const bindRes = await request({ type: 'bind', root, label, paneId, ...choice }, { onNote: (text) => process.stderr.write(`note: ${text}\n`) });
+    if (!bindRes.ok) dieBind(bindRes);
     if (bindRes.kind === 'bind') {
-      writeProjectState(root, { chatId: bindRes.chatId, paneId }, { create: true });
-      process.stdout.write(`${fill(bindRes.created ? msg.awayCreated : msg.awayReused, { name: bindRes.name })}\n`);
+      chatId = bindRes.chatId;
+      const line =
+        bindRes.how === 'created'
+          ? fill(msg.awayCreated, { name: bindRes.name })
+          : bindRes.how === 'reused'
+            ? fill(msg.awayReused, { name: bindRes.name })
+            : bindRes.how === 'existing'
+              ? fill(msg.awayKept, { name: bindRes.name })
+              : fill(msg.awayBoundChat, { chatId: bindRes.chatId });
+      process.stdout.write(`${line}\n`);
     }
   }
   const res = await request({ type: 'setAway', root, away, paneId });
   finish(res, () => {
-    writeProjectState(root, { away, paneId }, { create: true });
+    writeProjectState(root, chatId ? { away, chatId } : { away }, { create: away });
     process.stdout.write(`${away ? msg.awayOn : msg.awayOff}\n`);
+    if (away && !insideHerdr()) process.stdout.write(`${msg.awayOutsideHerdr}\n`);
   });
 }
 
@@ -471,13 +547,23 @@ async function cmdStatus(): Promise<void> {
   }
   const list = await request({ type: 'list' }, { timeoutMs: 5000 });
   if (list.ok && list.kind === 'list') {
-    if (!list.bindings.length) process.stdout.write(`${msg.statusNoBindings}\n`);
+    const live = list.bindings.filter((b) => b.releasedAt === null);
+    const released = list.bindings.filter((b) => b.releasedAt !== null);
+    const here = projectRoot();
+    const mark = (root: string): string => (root === here ? '*' : ' ');
+    if (!live.length) process.stdout.write(`${msg.statusNoBindings}\n`);
     else {
       process.stdout.write(`${msg.statusBindings}\n`);
-      const here = projectRoot();
-      for (const b of list.bindings)
+      for (const b of live)
         process.stdout.write(
-          `${fill(msg.statusBindingLine, { mark: b.root === here ? '*' : ' ', label: b.label, chatId: b.chatId, pane: b.paneId ?? '-', away: b.away ? msg.on : msg.off })}\n`,
+          `${fill(msg.statusBindingLine, { mark: mark(b.root), root: b.root, name: b.name ?? msg.bindCandidateUnnamed, chatId: b.chatId, away: String(b.away), pane: b.paneId ?? '-' })}\n`,
+        );
+    }
+    if (released.length) {
+      process.stdout.write(`${msg.statusReleased}\n`);
+      for (const b of released)
+        process.stdout.write(
+          `${fill(msg.statusReleasedLine, { mark: mark(b.root), root: b.root, name: b.name ?? msg.bindCandidateUnnamed, chatId: b.chatId, time: b.releasedAt ?? '' })}\n`,
         );
     }
   }
@@ -511,6 +597,8 @@ async function main(): Promise<void> {
       return cmdBind(args);
     case 'unbind':
       return cmdUnbind();
+    case 'rename':
+      return cmdRename(args);
     case 'ask':
       return cmdAsk(args);
     case 'notify':

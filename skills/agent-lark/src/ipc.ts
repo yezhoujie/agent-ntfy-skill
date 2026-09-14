@@ -9,8 +9,14 @@ export type Request =
   | { type: 'ping' }
   | { type: 'stop' }
   | { type: 'list' }
-  | { type: 'bind'; root: string; label: string; paneId: string | null; chatId?: string; name?: string }
+  /**
+   * `chatId` binds that group outright. Otherwise the live group is kept, or
+   * one is picked among the candidates: `mode` says which (`reuse` with
+   * `reuseChatId`, or `new`); without it, candidates are reported back.
+   */
+  | { type: 'bind'; root: string; label: string; paneId: string | null; chatId?: string; name?: string; mode?: 'reuse' | 'new'; reuseChatId?: string }
   | { type: 'unbind'; root: string }
+  | { type: 'rename'; root: string; paneId: string | null; name: string }
   | { type: 'setAway'; root: string; away: boolean; paneId: string | null }
   | { type: 'ask'; root: string; label: string; paneId: string | null; payload: unknown; timeoutMs: number }
   | { type: 'notify'; root: string; label: string; paneId: string | null; payload: unknown }
@@ -32,15 +38,36 @@ export interface DaemonStatus {
 export type Response =
   | { ok: true; kind: 'pong'; status: DaemonStatus }
   | { ok: true; kind: 'ask'; reply: string; via: 'button' | 'text' }
-  | { ok: true; kind: 'bind'; chatId: string; created: boolean; name: string }
-  | { ok: true; kind: 'list'; bindings: Array<{ root: string; label: string; chatId: string; paneId: string | null; away: boolean }> }
+  /** `how`: the live group was kept · a released one was taken back · a new one was created · `chatId` was named outright. */
+  | { ok: true; kind: 'bind'; chatId: string; how: 'existing' | 'reused' | 'created' | 'chat'; name: string }
+  | { ok: true; kind: 'unbind'; chatId: string; name: string }
+  | { ok: true; kind: 'rename'; name: string }
+  | { ok: true; kind: 'list'; bindings: BindingSummary[] }
   | { ok: true; kind: 'ack' }
   /**
    * code maps 1:1 onto the CLI exit code the client should use. `reason` is
    * set by the client library for failures it produced itself, so callers can
-   * branch on it instead of on wording.
+   * branch on it instead of on wording. A `bind` refused with code 4 because
+   * earlier groups could be taken back lists them in `candidates`.
    */
-  | { ok: false; code: 1 | 2 | 3 | 4; message: string; reason?: FailureReason };
+  | { ok: false; code: 1 | 2 | 3 | 4; message: string; reason?: FailureReason; candidates?: Candidate[] };
+
+export interface BindingSummary {
+  root: string;
+  label: string;
+  chatId: string;
+  name: string | null;
+  paneId: string | null;
+  away: boolean;
+  releasedAt: string | null;
+}
+
+/** A group `bind` could take back: one this project released, or one found in Feishu by its marker (then `releasedAt` is null). */
+export interface Candidate {
+  chatId: string;
+  name: string | null;
+  releasedAt: string | null;
+}
 
 /** down: nothing listening · connect: other connect error · closed: dropped before the result · timeout: client-side timeoutMs · parse: the daemon could not parse the request */
 export type FailureReason = 'down' | 'connect' | 'closed' | 'timeout' | 'parse';

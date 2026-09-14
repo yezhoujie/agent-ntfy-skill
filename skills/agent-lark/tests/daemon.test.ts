@@ -1,7 +1,7 @@
 // The daemon in-process, with the Feishu channel and herdr replaced by fakes.
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -51,14 +51,25 @@ async function ping() {
   return res.ok && res.kind === 'pong' ? res.status : null;
 }
 
-async function start(channelOpts: FakeChannelOptions = {}, retryMs = 50) {
-  freshHome();
+async function start(channelOpts: FakeChannelOptions = {}, retryMs = 50, opts: { owner?: string } = {}) {
+  const home = freshHome();
+  // The owner is read from the environment when the daemon starts; each test
+  // says whether one is known.
+  if (opts.owner) process.env.AGENT_LARK_OWNER_OPEN_ID = opts.owner;
+  else delete process.env.AGENT_LARK_OWNER_OPEN_ID;
   const fake = createFakeChannel(channelOpts);
   const herdr = createFakeHerdr();
   const daemon = await runDaemon({ createChannel: () => fake.channel, herdr: herdr.deps, connectRetryMs: retryMs });
   daemons.push(daemon);
-  return { fake, herdr, daemon };
+  return { fake, herdr, daemon, home };
 }
+const connected = async () => waitFor(async () => (await ping())?.connected, 'connected');
+const lastAllowlist = (fake: { policy: unknown[] }): string[] =>
+  (fake.policy.at(-1) as { groupAllowlist?: string[] } | undefined)?.groupAllowlist ?? [];
+async function bindings(home: string): Promise<Array<Record<string, unknown>>> {
+  return (JSON.parse(readFileSync(join(home, 'bindings.json'), 'utf8')) as { bindings: Array<Record<string, unknown>> }).bindings;
+}
+const bindChat = (root: string, chatId: string) => request({ type: 'bind', root, label: 'p', paneId: null, chatId });
 
 const askPayload = {
   title: 't',
@@ -242,4 +253,398 @@ test('a second daemon on the same home is refused with code 3', PER_TEST, async 
     (err: unknown) => err instanceof DaemonStartError && err.code === 3 && err.message === msg.daemonAlready,
   );
   await daemon.stop();
+});
+
+// ---- group lifecycle ------------------------------------------------------
+
+const MARKER = 'agent-lark · /p';
+
+test('bind with a live group keeps it; with a name it renames the group to "<task> [<dir>]"', PER_TEST, async () => {
+  const { daemon, fake } = await start({ chatUpdate: async () => ({ code: 0 }) });
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const again = await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', name: '发版准备' });
+  assert.deepEqual(again, { ok: true, kind: 'bind', chatId: 'oc_x', how: 'existing', name: '发版准备 [p]' });
+  // adopting by --chat wrote the description; keeping the live group only renames
+  assert.deepEqual(fake.renames, [
+    { chatId: 'oc_x', name: undefined, description: MARKER },
+    { chatId: 'oc_x', name: '发版准备 [p]', description: undefined },
+  ]);
+  const list = await request({ type: 'list' });
+  assert.ok(list.ok && list.kind === 'list');
+  assert.deepEqual(list.bindings, [
+    { root: '/p', label: 'p', chatId: 'oc_x', name: '发版准备 [p]', paneId: 'w1:p1', away: false, releasedAt: null },
+  ]);
+  await daemon.stop();
+});
+
+test('bind with a live group: a rename the bot is not allowed to make still binds, with a note carrying the Feishu error', PER_TEST, async () => {
+  const { daemon, fake } = await start({ chatUpdate: async () => ({ code: 232002, msg: 'owner only' }) });
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const notes: string[] = [];
+  const res = await request({ type: 'bind', root: '/p', label: 'p', paneId: null, name: 'new task' }, { onNote: (t) => notes.push(t) });
+  assert.ok(res.ok && res.kind === 'bind');
+  assert.equal(res.how, 'existing');
+  assert.equal(notes.length, 1);
+  assert.match(notes[0]!, /232002/);
+  assert.match(notes[0]!, /owner only/);
+  assert.deepEqual(fake.renames.at(-1), { chatId: 'oc_x', name: 'new task [p]', description: undefined });
+  await daemon.stop();
+});
+
+async function seedReleasedAndRemote(chatUpdate: FakeChannelOptions['chatUpdate'] = async () => ({ code: 0 }), owner?: string) {
+  const infoCalls: string[] = [];
+  const created: unknown[] = [];
+  const ctx = await start(
+    {
+      chatUpdate,
+      listChats: async () => [
+        { id: 'oc_old', name: 'old task [p]' },
+        { id: 'oc_remote', name: 'remote task [p]' },
+        { id: 'oc_other', name: 'someone else' },
+      ],
+      getChatInfo: async (id) => {
+        infoCalls.push(id);
+        return { chatId: id, chatType: 'group', description: id === 'oc_remote' ? MARKER : 'not ours' };
+      },
+      createChat: async (opts) => {
+        created.push(opts);
+        return { chatId: 'oc_new' };
+      },
+    },
+    50,
+    { owner },
+  );
+  await connected();
+  await bindChat('/p', 'oc_old');
+  const gone = await request({ type: 'unbind', root: '/p' });
+  assert.ok(gone.ok, JSON.stringify(gone));
+  infoCalls.length = 0;
+  return { ...ctx, infoCalls, created };
+}
+
+test('no live group, one released locally and one marked group in Feishu: bind without a mode is code 4 with both candidates', PER_TEST, async () => {
+  const { daemon, infoCalls } = await seedReleasedAndRemote();
+  const res = await request({ type: 'bind', root: '/p', label: 'p', paneId: null });
+  assert.equal(res.ok, false);
+  if (res.ok) return;
+  assert.equal(res.code, 4);
+  assert.ok(res.candidates, 'no candidates on the refusal');
+  assert.equal(res.candidates.length, 2);
+  const [local, remote] = res.candidates;
+  assert.equal(local?.chatId, 'oc_old');
+  assert.match(local?.releasedAt ?? '', /^\d{4}-/);
+  assert.deepEqual(remote, { chatId: 'oc_remote', name: 'remote task [p]', releasedAt: null });
+  // groups with a local record are not fetched again; unrelated groups are looked at and dropped
+  assert.deepEqual(infoCalls.sort(), ['oc_other', 'oc_remote']);
+  assert.equal((await ping())?.bindings, 0);
+  await daemon.stop();
+});
+
+test('bind --reuse brings the released entry back live and renames it; a chat id outside the candidates is code 1', PER_TEST, async () => {
+  const { daemon, fake, home } = await seedReleasedAndRemote();
+  const bad = await request({ type: 'bind', root: '/p', label: 'p', paneId: null, mode: 'reuse', reuseChatId: 'oc_other' });
+  assert.equal(bad.ok, false);
+  if (!bad.ok) assert.equal(bad.code, 1);
+  const res = await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p2', mode: 'reuse', reuseChatId: 'oc_old', name: 'second run' });
+  assert.deepEqual(res, { ok: true, kind: 'bind', chatId: 'oc_old', how: 'reused', name: 'second run [p]' });
+  // taking a group back also points its description at this project again
+  assert.deepEqual(fake.renames.at(-1), { chatId: 'oc_old', name: 'second run [p]', description: MARKER });
+  assert.deepEqual(lastAllowlist(fake), ['oc_old']);
+  const live = (await bindings(home)).find((b) => b.chatId === 'oc_old');
+  assert.equal(live?.releasedAt, null);
+  assert.equal(live?.paneId, 'w1:p2');
+  assert.equal(live?.name, 'second run [p]');
+  await daemon.stop();
+});
+
+test('bind --reuse of a group known only to Feishu records it locally as the live entry', PER_TEST, async () => {
+  const { daemon, fake, home } = await seedReleasedAndRemote();
+  const res = await request({ type: 'bind', root: '/p', label: 'p', paneId: null, mode: 'reuse', reuseChatId: 'oc_remote' });
+  assert.deepEqual(res, { ok: true, kind: 'bind', chatId: 'oc_remote', how: 'reused', name: '[p]' });
+  assert.deepEqual(fake.renames.at(-1), { chatId: 'oc_remote', name: '[p]', description: MARKER });
+  const all = await bindings(home);
+  assert.deepEqual(all.map((b) => [b.chatId, b.releasedAt === null]).sort(), [
+    ['oc_old', false],
+    ['oc_remote', true],
+  ]);
+  await daemon.stop();
+});
+
+test('bind --new creates a group carrying the marker even though candidates exist', PER_TEST, async () => {
+  const { daemon, fake, created } = await seedReleasedAndRemote(undefined, 'ou_owner');
+  const updatesBefore = fake.renames.length;
+  const res = await request({ type: 'bind', root: '/p', label: 'p', paneId: null, mode: 'new', name: 'fresh' });
+  assert.deepEqual(res, { ok: true, kind: 'bind', chatId: 'oc_new', how: 'created', name: 'fresh [p]' });
+  assert.deepEqual(created, [{ name: 'fresh [p]', description: MARKER, inviteUserIds: ['ou_owner'], userIdType: 'open_id' }]);
+  assert.deepEqual(lastAllowlist(fake), ['oc_new']);
+  assert.equal(fake.renames.length, updatesBefore, 'a freshly created group needs no update call');
+  await daemon.stop();
+});
+
+test('creating a group with no owner recorded is code 4', PER_TEST, async () => {
+  const { daemon } = await start({ listChats: async () => [] });
+  await connected();
+  const res = await request({ type: 'bind', root: '/p', label: 'p', paneId: null });
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.code, 4);
+  await daemon.stop();
+});
+
+test('bind --chat while another group is live releases the old one; a group live for another project is refused', PER_TEST, async () => {
+  const { daemon, fake, home } = await start({
+    getChatInfo: async (id) => ({ chatId: id, chatType: 'group', name: id === 'oc_2' ? 'their group' : undefined }),
+    chatUpdate: async () => ({ code: 0 }),
+  });
+  await connected();
+  await bindChat('/p', 'oc_1');
+  const res = await bindChat('/p', 'oc_2');
+  assert.deepEqual(res, { ok: true, kind: 'bind', chatId: 'oc_2', how: 'chat', name: 'their group' });
+  // the adopted group's description now points at this project; no name was asked for
+  assert.deepEqual(fake.renames.at(-1), { chatId: 'oc_2', name: undefined, description: MARKER });
+  const all = await bindings(home);
+  const old = all.find((b) => b.chatId === 'oc_1');
+  assert.match(String(old?.releasedAt), /^\d{4}-/);
+  assert.equal(all.find((b) => b.chatId === 'oc_2')?.releasedAt, null);
+  assert.deepEqual(lastAllowlist(fake), ['oc_2']);
+  const taken = await bindChat('/q', 'oc_2');
+  assert.equal(taken.ok, false);
+  if (!taken.ok) assert.equal(taken.code, 1);
+  await daemon.stop();
+});
+
+test('unbind: code 4 while a question is pending; then the group leaves the allowlist, away is off, a second unbind is code 1', PER_TEST, async () => {
+  const { daemon, fake, home } = await start();
+  await connected();
+  await bindChat('/p', 'oc_x');
+  await request({ type: 'setAway', root: '/p', away: true, paneId: 'w1:p1' });
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: null, payload: askPayload, timeoutMs: 5000 });
+  await waitFor(() => fake.sent.length === 1, 'the question card to be sent');
+  const refused = await request({ type: 'unbind', root: '/p' });
+  assert.equal(refused.ok, false);
+  if (!refused.ok) assert.equal(refused.code, 4);
+  await fake.message({ chatId: 'oc_x', content: 'Keep' });
+  await asking;
+  const res = await request({ type: 'unbind', root: '/p' });
+  assert.deepEqual(res, { ok: true, kind: 'unbind', chatId: 'oc_x', name: 'oc_x' });
+  assert.deepEqual(lastAllowlist(fake), []);
+  const entry = (await bindings(home)).find((b) => b.chatId === 'oc_x');
+  assert.equal(entry?.away, false);
+  assert.match(String(entry?.releasedAt), /^\d{4}-/);
+  assert.equal((await ping())?.bindings, 0);
+  const again = await request({ type: 'unbind', root: '/p' });
+  assert.equal(again.ok, false);
+  if (!again.ok) assert.equal(again.code, 1);
+  await daemon.stop();
+});
+
+test('rename: code 4 without a live group, code 3 carrying the Feishu error when refused, otherwise the name sticks', PER_TEST, async () => {
+  let answer: { code?: number; msg?: string } = { code: 232002, msg: 'owner or admin only' };
+  const { daemon, fake } = await start({ chatUpdate: async () => answer });
+  await connected();
+  const none = await request({ type: 'rename', root: '/p', paneId: null, name: 'x' });
+  assert.equal(none.ok, false);
+  if (!none.ok) assert.equal(none.code, 4);
+  await bindChat('/p', 'oc_x');
+  const denied = await request({ type: 'rename', root: '/p', paneId: null, name: 'x' });
+  assert.equal(denied.ok, false);
+  if (!denied.ok) {
+    assert.equal(denied.code, 3);
+    assert.match(denied.message, /232002/);
+    assert.match(denied.message, /owner or admin only/);
+  }
+  const long = await request({ type: 'rename', root: '/p', paneId: null, name: 'x'.repeat(61) });
+  assert.equal(long.ok, false);
+  if (!long.ok) assert.equal(long.code, 1);
+  answer = { code: 0 };
+  const ok = await request({ type: 'rename', root: '/p', paneId: 'w1:p3', name: 'x' });
+  assert.deepEqual(ok, { ok: true, kind: 'rename', name: 'x [p]' });
+  assert.deepEqual(fake.renames.at(-1), { chatId: 'oc_x', name: 'x [p]', description: undefined });
+  const list = await request({ type: 'list' });
+  assert.ok(list.ok && list.kind === 'list');
+  assert.equal(list.bindings[0]?.name, 'x [p]');
+  assert.equal(list.bindings[0]?.paneId, 'w1:p3');
+  await daemon.stop();
+});
+
+test('rename: a thrown SDK error is code 3 with whatever the error says', PER_TEST, async () => {
+  const { daemon } = await start({
+    chatUpdate: async () => {
+      throw Object.assign(new Error('Request failed with status code 400'), { response: { data: { code: 232011, msg: 'bot not in chat' } } });
+    },
+  });
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const res = await request({ type: 'rename', root: '/p', paneId: null, name: 'x' });
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.code, 3);
+    assert.match(res.message, /232011/);
+    assert.match(res.message, /bot not in chat/);
+  }
+  await daemon.stop();
+});
+
+test('before Feishu is connected a bind that has to look at Feishu is code 3; bind --chat goes through', PER_TEST, async () => {
+  const { daemon } = await start({
+    connect: async () => {
+      throw new Error('offline');
+    },
+  });
+  await waitFor(async () => (await ping())?.lastError, 'the failed handshake');
+  const scan = await request({ type: 'bind', root: '/p', label: 'p', paneId: null });
+  assert.equal(scan.ok, false);
+  if (!scan.ok) {
+    assert.equal(scan.code, 3);
+    assert.match(scan.message, /offline/);
+  }
+  const direct = await bindChat('/p', 'oc_x');
+  assert.ok(direct.ok);
+  await daemon.stop();
+});
+
+test('a failed group scan is a note, not a refusal: local candidates still count', PER_TEST, async () => {
+  const { daemon } = await start({
+    listChats: async () => {
+      throw new Error('scope missing');
+    },
+  });
+  await connected();
+  await bindChat('/p', 'oc_old');
+  await request({ type: 'unbind', root: '/p' });
+  const notes: string[] = [];
+  const res = await request({ type: 'bind', root: '/p', label: 'p', paneId: null }, { onNote: (t) => notes.push(t) });
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.code, 4);
+    assert.deepEqual(res.candidates?.map((c) => c.chatId), ['oc_old']);
+  }
+  assert.equal(notes.length, 1);
+  assert.match(notes[0]!, /scope missing/);
+  await daemon.stop();
+});
+
+test('ask and notify remember the payload language on the live binding', PER_TEST, async () => {
+  const { daemon, fake, home } = await start();
+  await connected();
+  await bindChat('/p', 'oc_x');
+  await request({ type: 'notify', root: '/p', label: 'p', paneId: null, payload: { title: 't', body: 'b', lang: 'en' } });
+  assert.equal((await bindings(home))[0]?.lang, 'en');
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: null, payload: { ...askPayload, lang: 'zh' }, timeoutMs: 5000 });
+  await waitFor(() => fake.sent.length === 2, 'the question card');
+  await fake.message({ chatId: 'oc_x', content: 'Keep' });
+  await asking;
+  assert.equal((await bindings(home))[0]?.lang, 'zh');
+  await daemon.stop();
+});
+
+test('a message in a released group is ignored; the stuck-alert poll only watches live away bindings', PER_TEST, async () => {
+  const { daemon, fake, herdr } = await start();
+  await connected();
+  await bindChat('/p', 'oc_old');
+  await request({ type: 'setAway', root: '/p', away: true, paneId: 'w1:p1' });
+  await request({ type: 'unbind', root: '/p' });
+  herdr.agents = [{ agent: 'claude', agent_status: 'blocked', cwd: '/p', pane_id: 'w1:p1', focused: true }];
+  await fake.message({ chatId: 'oc_old', content: 'hello?' });
+  assert.equal(herdr.prompts.length, 0);
+  assert.equal(fake.sent.length, 0);
+  await daemon.stop();
+});
+
+test('a bindings.json with two live entries for one project is repaired at start and the repair is logged', PER_TEST, async () => {
+  const home = freshHome();
+  const entry = (chatId: string, boundAt: string) => ({ root: '/p', label: 'p', chatId, name: null, paneId: null, away: false, lang: null, boundAt, releasedAt: null });
+  writeFileSync(join(home, 'bindings.json'), JSON.stringify({ bindings: [entry('oc_older', '2026-01-01T00:00:00.000Z'), entry('oc_newer', '2026-01-05T00:00:00.000Z')] }));
+  const daemon = await runDaemon({ createChannel: () => createFakeChannel().channel, herdr: createFakeHerdr().deps, connectRetryMs: 50 });
+  daemons.push(daemon);
+  const list = await request({ type: 'list' });
+  assert.ok(list.ok && list.kind === 'list');
+  assert.deepEqual(list.bindings.map((b) => [b.chatId, b.releasedAt === null]).sort(), [
+    ['oc_newer', true],
+    ['oc_older', false],
+  ]);
+  const log = readFileSync(join(home, 'daemon.log'), 'utf8');
+  const line = log.split('\n').find((l) => l.includes('bindings.repaired'));
+  assert.ok(line, 'no bindings.repaired line in the log');
+  assert.match(line, /"chatId":"oc_older"/);
+  assert.match(line, /"root":"\/p"/);
+  await daemon.stop();
+});
+
+test('bind --chat while a question is pending on the live group is refused with code 4', PER_TEST, async () => {
+  const { daemon, fake } = await start({ chatUpdate: async () => ({ code: 0 }) });
+  await connected();
+  await bindChat('/p', 'oc_1');
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: null, payload: askPayload, timeoutMs: 5000 });
+  await waitFor(() => fake.sent.length === 1, 'the question card to be sent');
+  const refused = await bindChat('/p', 'oc_2');
+  assert.equal(refused.ok, false);
+  if (!refused.ok) {
+    assert.equal(refused.code, 4);
+    assert.equal(refused.message, msg.unbindPending);
+  }
+  // re-pointing at the same live group is not a switch and goes through
+  const same = await bindChat('/p', 'oc_1');
+  assert.ok(same.ok);
+  await fake.message({ chatId: 'oc_1', content: 'Keep' });
+  await asking;
+  const after = await bindChat('/p', 'oc_2');
+  assert.ok(after.ok);
+  await daemon.stop();
+});
+
+test('bind --chat --name renames the adopted group in the same update as its description; while disconnected both are skipped with a note', PER_TEST, async () => {
+  let attempt = 0;
+  const { daemon, fake } = await start({
+    chatUpdate: async () => ({ code: 0 }),
+    connect: async () => {
+      attempt += 1;
+      if (attempt <= 2) throw new Error('offline');
+    },
+  });
+  await waitFor(async () => (await ping())?.lastError, 'the failed handshake');
+  const notes: string[] = [];
+  const offline = await request({ type: 'bind', root: '/p', label: 'p', paneId: null, chatId: 'oc_x', name: 'wanted' }, { onNote: (t) => notes.push(t) });
+  assert.deepEqual(offline, { ok: true, kind: 'bind', chatId: 'oc_x', how: 'chat', name: 'oc_x' });
+  assert.equal(fake.renames.length, 0);
+  assert.equal(notes.length, 1);
+  await connected();
+  const online = await request({ type: 'bind', root: '/p', label: 'p', paneId: null, chatId: 'oc_x', name: 'wanted' }, { onNote: (t) => notes.push(t) });
+  assert.deepEqual(online, { ok: true, kind: 'bind', chatId: 'oc_x', how: 'chat', name: 'wanted [p]' });
+  assert.deepEqual(fake.renames, [{ chatId: 'oc_x', name: 'wanted [p]', description: MARKER }]);
+  assert.equal(notes.length, 1);
+  await daemon.stop();
+});
+
+test('with a live group, --reuse / --new are ignored with a note', PER_TEST, async () => {
+  const { daemon } = await start();
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const notes: string[] = [];
+  const res = await request({ type: 'bind', root: '/p', label: 'p', paneId: null, mode: 'new' }, { onNote: (t) => notes.push(t) });
+  assert.ok(res.ok && res.kind === 'bind' && res.how === 'existing');
+  assert.equal(notes.length, 1);
+  assert.match(notes[0]!, /ignored/);
+  await daemon.stop();
+});
+
+test('setAway false with no live group is a no-op ack; setAway true still needs a group', PER_TEST, async () => {
+  const { daemon } = await start();
+  await connected();
+  assert.deepEqual(await request({ type: 'setAway', root: '/p', away: false, paneId: null }), { ok: true, kind: 'ack' });
+  const on = await request({ type: 'setAway', root: '/p', away: true, paneId: null });
+  assert.equal(on.ok, false);
+  if (!on.ok) assert.equal(on.code, 4);
+  await daemon.stop();
+});
+
+test('a damaged bindings.json stops the daemon from starting with code 4 and the file path', PER_TEST, async () => {
+  const home = freshHome();
+  writeFileSync(join(home, 'bindings.json'), '{"bindings": [');
+  await assert.rejects(
+    runDaemon({ createChannel: () => createFakeChannel().channel, herdr: createFakeHerdr().deps }),
+    (err: unknown) => err instanceof DaemonStartError && err.code === 4 && err.message.includes(join(home, 'bindings.json')),
+  );
+  assert.equal(readFileSync(join(home, 'bindings.json'), 'utf8'), '{"bindings": [');
 });
