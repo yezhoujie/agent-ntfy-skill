@@ -258,6 +258,7 @@ class PriorityTest(unittest.TestCase):
         self.reply_when_sent(h, "ok")
         env = {k: v for k, v in HERDR.items()}
         env["AGENT_NTFY_LANG"] = ""  # run() 缺省会塞 zh：这里显式清空，模拟两者都没有
+        env["LC_ALL"] = "C"  # 系统 locale 也不是中文（开发机可能是 zh_CN，会经 locale 回退成 zh）
         code, out, err = run(["--home", str(h.home), "ask", "--timeout", "5"], json.dumps(SAMPLE), env)
         self.assertEqual(code, 0, err)
         self.assertIn("**[Doing]** ", h.client.published[0]["message"])

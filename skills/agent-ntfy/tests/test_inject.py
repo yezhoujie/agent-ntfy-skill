@@ -67,6 +67,7 @@ class FakeHerdr:
         self.keys_result = HerdrResult(rc=0, stdout='{"id":"cli:agent:send-keys","result":{"agent":{},"type":"agent_keys_sent"}}', stderr="")
         self.split_result = HerdrResult(rc=0, stdout=SPLIT_STDOUT, stderr="")
         self.run_result = HerdrResult(rc=0, stdout="", stderr="")  # pane run 成功时 stdout 为空（实测）
+        self.close_result = HerdrResult(rc=0, stdout='{"id":"cli:pane:close","result":{"type":"ok"}}', stderr="")
 
     def __call__(self, argv: list[str]) -> HerdrResult:
         self.calls.append(list(argv))
@@ -81,6 +82,8 @@ class FakeHerdr:
             return self.split_result
         if sub == ("pane", "run"):
             return self.run_result
+        if sub == ("pane", "close"):
+            return self.close_result
         raise AssertionError(f"没预置的 herdr 调用：{argv}")
 
     def subcommands(self) -> list[str]:

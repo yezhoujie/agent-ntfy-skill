@@ -165,10 +165,14 @@ agent-ntfy: test notification sent — tap “Got it” in the phone's notificat
 - `--show-topic`: print the topic name only, no test message; use only when the user asks for it (it lands in your output).
 - `--again`: re-run on an already confirmed slot (new phone). `--timeout <seconds>`: wait for the tap (default 600).
 - Only the button counts. A typed reply during confirmation is logged and answered with a `note:` line; it does not confirm.
-- The panes that `confirm-sub` and `away on` open run the command as `env AGENT_NTFY_LANG=<lang> python …`,
-  where `<lang>` is the language resolved in *your* process (`AGENT_NTFY_LANG`, else `en`): the pane's own
-  shell environment does not decide the wording there. Only a daemon you start by hand in a pane inherits
-  that pane's shell environment.
+- The panes that `confirm-sub` and `away on` open run the command as `python … --lang <lang> --home … <subcommand>`,
+  where `<lang>` is the language resolved in *your* process (`--lang`, else `AGENT_NTFY_LANG`, else the system
+  locale, else `en`); `daemon --detach` passes it the same way. The pane's own shell environment does not decide
+  the wording there. Only a daemon you start by hand in a pane inherits that pane's shell environment.
+- A pane opened by `away on` / a non-TTY `confirm-sub` runs `confirm-sub … --close-pane`: after a successful
+  check it asks `Close this pane? [Y/n]` and closes itself (`herdr pane close`) on Enter or `y`; after a
+  failure or timeout it stays open so the reason can be read. Closing the pane by hand *before* pressing Enter
+  and tapping the button cancels the check (the daemon sees the connection drop).
 
 ## 6. Messages from the phone when no question is pending
 
@@ -191,7 +195,7 @@ Same variables as README §9 (plus `AGENT_NTFY_OFFLINE`), kept here so the agent
 | variable | default | effect |
 |---|---|---|
 | `AGENT_NTFY_HOME` | `~/.agent-ntfy` | state directory (endpoint, pid, log, leases, and the pool file when a file store is used). With the unix transport keep it short: socket paths have a system-dependent length limit |
-| `AGENT_NTFY_LANG` | `en` | language of the fixed wording for everything without an `ask` context, and the fallback when `ask` / `notify` give no `lang`. `zh` / `en` only; any other value exits 1 |
+| `AGENT_NTFY_LANG` | (system locale, else `en`) | language of the fixed wording for everything without an `ask` context, and the fallback when `ask` / `notify` give no `lang`. Resolution order: `--lang` > this variable > system locale (`LC_ALL` / `LC_MESSAGES` / `LANG` starting with `zh`, or a Chinese Windows locale ⇒ `zh`) > `en`. `zh` / `en` only; any other value exits 1 |
 | `AGENT_NTFY_TARGET` | – | overrides the lease holder (normally `proj:<project root>`); the same value reuses the same slot |
 | `AGENT_NTFY_URL` | `https://ntfy.sh` | another ntfy instance (self-hosted). ntfy.sh's free tier allows about 250 messages per day per source IP, shared by all of your questions, notifications, updates and receipts |
 | `AGENT_NTFY_IPC` | `unix` on POSIX, `tcp` on Windows | how clients reach the daemon: `unix` (socket file `daemon.sock`) or `tcp` (loopback port + token in `daemon.port`). Read when the daemon starts and by every client; `unix` on Windows and any other value exit 1 (`AGENT_NTFY_IPC=… is not a valid choice (only unix / tcp)`) |
@@ -231,7 +235,9 @@ written here.
 ## 8. Language of the fixed wording
 
 Resolution, highest first: the `lang` field of the `ask` / `notify` JSON (that card and all its later
-updates) → `AGENT_NTFY_LANG` (receipts, confirmation messages, CLI output, validation reports, `--help`)
-→ `en`. A card keeps the language it was sent in even if the environment changes later. Control markers,
+updates) → `--lang` on the command line → `AGENT_NTFY_LANG` → the system locale (`LC_ALL` / `LC_MESSAGES` /
+`LANG` starting with `zh`, or a Chinese Windows locale, gives `zh`) → `en`. Everything below the JSON field
+(receipts, confirmation messages, CLI output, validation reports, `--help`) is resolved once when the process
+starts; panes and daemons the CLI starts for you receive that value via `--lang`. A card keeps the language it was sent in even if the environment changes later. Control markers,
 the `[tag]` prefix and the `[agent-ntfy remote] ` injection prefix are protocol, not wording, and never
 change.

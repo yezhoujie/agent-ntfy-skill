@@ -3,8 +3,8 @@
 两列 zh / en，key 集合必须完全相同（单测断言）——防止只加了中文忘了英文。
 表里的串不含 topic / 路径等运行时值，一律 {占位} 由调用方填；不带参数取值时不做 format，字面的花括号原样保留。
 
-语言由调用方显式传，本模块不读环境变量。解析只在两处发生：ask 入口（JSON lang → AGENT_NTFY_LANG → en）与
-daemon / CLI 进程入口（AGENT_NTFY_LANG → en），深层模块只认传进来的 lang。
+语言由调用方显式传，本模块不读环境变量。解析只在两处发生：ask 入口（JSON lang 压过进程语言）与
+daemon / CLI 进程入口（--lang → AGENT_NTFY_LANG → 系统 locale → en），深层模块只认传进来的 lang。
 控制标记（__agent-ntfy:…__）与 Title 里的 [<tag>] 是协议，不在表里、不翻译。
 """
 
@@ -127,10 +127,11 @@ TEXTS: dict[str, dict[str, str]] = {
         "cli.connect_failed.not_sent": "连不上 daemon（{path}：{error}）。消息未发送。",
         "cli.no_response": "daemon 没有回应",
         "cli.protocol.not_object": "daemon 回的不是 JSON 对象",
-        "cli.bad_env_lang": "AGENT_NTFY_LANG={value} 不是可选值（只认 zh / en）；改成其中之一，或去掉它（缺省 en）",
+        "cli.bad_env_lang": "AGENT_NTFY_LANG={value} 不是可选值（只认 zh / en）；改成其中之一，或去掉它（不设就按系统 locale，再缺省 en；命令行 --lang 压过它）",
         "cli.bad_env_ipc": "AGENT_NTFY_IPC={value} 不是可选值（只认 unix / tcp）；改成其中之一，或去掉它（按平台缺省）",
         # ---- argparse 的 help / description（--help 输出）
         "help.prog": "经 ntfy.sh 把需要人拍板的事推到手机，并把裁决带回来",
+        "help.lang": "文案语言（zh / en；不给则按 AGENT_NTFY_LANG，再按系统 locale，再缺省 en）",
         "help.home": "状态目录（默认 {home}）",
         "help.ask": "阻塞提问，JSON 从 stdin 读",
         "help.ask.timeout": "等回复的秒数（默认 12 小时）",
@@ -148,6 +149,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "help.confirm.subscribed": "用户已订阅：不显示 topic，直接发测试通知（非终端也能跑）",
         "help.confirm.show_topic": "只打印 topic 名就退出，不发测试通知（会进调用方的输出）",
         "help.confirm.timeout": "等按钮点击的秒数（默认 600）",
+        "help.confirm.close_pane": "确认成功后问一句要不要关掉当前 herdr 窗格（自动开的窗格带这个）",
         "help.add_slot": "新建一个槽位",
         "help.away": "远程交互模式开关：on 一站式（起 daemon、保证有能用的槽位、再在项目根写 .agent-ntfy/state.json 给 agent 读，不含 topic 名）",
         "help.away.action": "on 开 / off 关 / status 看状态",
@@ -205,7 +207,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "cli.confirm.topic": "{slot} 的 topic：{topic}\n订阅地址：{url}",
         "cli.confirm.topic_hint": ("topic 名只在你自己的终端里显示：请在你自己的终端跑  agent-ntfy confirm-sub {slot}\n"
                                    "  用户已经在手机上订阅过就加 --subscribed（不显示 topic，非终端也能跑）；只想看 topic 名用 --show-topic（会进调用方的输出）"),
-        "cli.confirm.guide": "在手机 ntfy app 里订阅上面这个 topic；订阅好后按回车，我会发一条带按钮的测试通知——看到它弹出来、点按钮，确认就完成了。",
+        "cli.confirm.guide": "在手机 ntfy app 里订阅上面这个 topic；订阅好后按回车，我会发一条带按钮的测试通知——看到它弹出来、点按钮，确认就完成了。\n⚠️ 按回车、点按钮之前别关这个窗格 / 终端：关了确认就取消，要重来。",
         "cli.confirm.enter": "订阅好了就按回车…",
         "cli.confirm.already": "{slot} 已经确认过手机收得到通知，不用再做；换了手机要重新确认就加 --again",
         "cli.confirm.protocol": "协议错误：说了 --subscribed 却收到 topic 事件；不打印它。daemon 与 CLI 版本可能不一致",
@@ -217,10 +219,14 @@ TEXTS: dict[str, dict[str, str]] = {
         "cli.confirm.disconnected": "daemon 连接中断，确认未完成",
         "cli.confirm.comm_failed": "与 daemon 通信失败：{error}",
         "cli.confirm.interrupted": "已中断，确认未完成",
+        "cli.confirm.close_pane": "关闭这个窗格？[Y/n] ",
+        "cli.confirm.pane_kept": "窗格保留着，用完可自行关闭。",
+        "cli.confirm.pane_close_failed": "关窗格失败（{why}），请自行关闭。",
         "cli.confirm.pane_opened": ("已在 herdr 窗格 {pane} 里开始 {slot} 的可达性确认。请转告用户：\n"
                                     "  1. 看窗格 {pane}，在手机 ntfy app 里订阅它显示的 topic\n"
                                     "  2. 订阅好后在该窗格按回车，会收到一条带按钮的测试通知\n"
-                                    "  3. 在手机通知栏点按钮——之后用 agent-ntfy slots 或 away status 看它过没过闸"),
+                                    "  3. 在手机通知栏点按钮——之后用 agent-ntfy slots 或 away status 看它过没过闸\n"
+                                    "  ⚠️ 按回车、点按钮之前别关那个窗格（关了确认就取消）；成功后窗格会问要不要关掉"),
         "cli.add_slot.done": "已新建 {slot}（还没确认过手机收得到通知）。下一步：在你自己的终端跑  agent-ntfy confirm-sub {slot}",
         "cli.status.not_running": "daemon：未运行",
         "cli.status.no_socket": "daemon：无应答（pid 文件 {pid} 仍在，可能已死）",
@@ -262,7 +268,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "validate.options.dup_sep": "、",
         "validate.recommend": '"{rec}" 不在 options 的 id 里（现有 id: {ids}）',
         "validate.recommend.none": "无",
-        "validate.lang": '"{value}" 不是可选值（只认 {choices}）；固定文案按它切换语言，不给就按 AGENT_NTFY_LANG，再没有就用 en',
+        "validate.lang": '"{value}" 不是可选值（只认 {choices}）；固定文案按它切换语言，不给就按进程的语言（--lang / AGENT_NTFY_LANG / 系统 locale / en）',
         "validate.body_too_long": "渲染后 {size} 字节，上限 {limit} 字节，超出 {over} 字节。精简 description / consequence / reasoning（不会替你截断）",
         "validate.title_too_long": "{size} 字节，上限 {limit} 字节，超出 {over} 字节。title 是通知栏那一行钩子，写短",
         "validate.title_newline": "含换行。title 是通知栏那一行，只能一行",
@@ -457,9 +463,10 @@ TEXTS: dict[str, dict[str, str]] = {
         "cli.connect_failed.not_sent": "can't connect to the daemon ({path}: {error}). Message NOT sent.",
         "cli.no_response": "no response from the daemon",
         "cli.protocol.not_object": "the daemon replied with something that is not a JSON object",
-        "cli.bad_env_lang": "AGENT_NTFY_LANG={value} is not a valid choice (only zh / en); set one of them or unset it (default en)",
+        "cli.bad_env_lang": "AGENT_NTFY_LANG={value} is not a valid choice (only zh / en); set one of them or unset it (then the system locale, else en; --lang on the command line overrides it)",
         "cli.bad_env_ipc": "AGENT_NTFY_IPC={value} is not a valid choice (only unix / tcp); set one of them or unset it (platform default)",
         "help.prog": "Push decisions that need a human to your phone via ntfy.sh, and bring the verdict back",
+        "help.lang": "wording language (zh / en; default: AGENT_NTFY_LANG, then the system locale, then en)",
         "help.home": "state directory (default {home})",
         "help.ask": "block and ask: reads the question JSON from stdin",
         "help.ask.timeout": "seconds to wait for a reply (default 12 hours)",
@@ -477,6 +484,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "help.confirm.subscribed": "user already subscribed: skip showing the topic and send the test notification right away (works outside a terminal)",
         "help.confirm.show_topic": "only print the topic name and exit, send nothing (it will land in the caller's output)",
         "help.confirm.timeout": "seconds to wait for the button tap (default 600)",
+        "help.confirm.close_pane": "after a successful check, offer to close the current herdr pane (set on auto-opened panes)",
         "help.add_slot": "add a slot",
         "help.away": "remote-mode switch: on is one-stop (starts the daemon, makes sure a usable slot exists, then writes .agent-ntfy/state.json at the project root for the agent to read; no topic name in it)",
         "help.away.action": "on / off / status",
@@ -533,7 +541,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "cli.confirm.topic": "topic for {slot}: {topic}\nsubscribe URL: {url}",
         "cli.confirm.topic_hint": ("The topic name is only shown in your own terminal: run  agent-ntfy confirm-sub {slot}  there yourself.\n"
                                    "  If the user already subscribed on the phone, add --subscribed (no topic shown, works outside a terminal); to only print the topic use --show-topic (it will land in the caller's output)"),
-        "cli.confirm.guide": "Subscribe to the topic above in the ntfy app on your phone. Once subscribed, press Enter and I'll send a test notification with a button — when it pops up, tap the button and the check is done.",
+        "cli.confirm.guide": "Subscribe to the topic above in the ntfy app on your phone. Once subscribed, press Enter and I'll send a test notification with a button — when it pops up, tap the button and the check is done.\n⚠️ Don't close this pane / terminal before pressing Enter and tapping the button: closing it cancels the check and you start over.",
         "cli.confirm.enter": "Press Enter once subscribed…",
         "cli.confirm.already": "{slot} is already confirmed to reach the phone; nothing to do. Changed phones? Add --again to confirm anew",
         "cli.confirm.protocol": "protocol error: got a topic event despite --subscribed; not printing it. daemon and CLI versions may differ",
@@ -545,10 +553,14 @@ TEXTS: dict[str, dict[str, str]] = {
         "cli.confirm.disconnected": "connection to the daemon lost; confirmation not completed",
         "cli.confirm.comm_failed": "talking to the daemon failed: {error}",
         "cli.confirm.interrupted": "interrupted; confirmation not completed",
+        "cli.confirm.close_pane": "Close this pane? [Y/n] ",
+        "cli.confirm.pane_kept": "Pane kept; close it yourself when done.",
+        "cli.confirm.pane_close_failed": "could not close the pane ({why}); please close it yourself.",
         "cli.confirm.pane_opened": ("Started the reachability check for {slot} in herdr pane {pane}. Tell the user:\n"
                                     "  1. look at pane {pane} and subscribe to the topic it shows in the ntfy app\n"
                                     "  2. once subscribed, press Enter in that pane — a test notification with a button arrives\n"
-                                    "  3. tap the button in the notification shade; then check agent-ntfy slots or away status to see whether it is confirmed"),
+                                    "  3. tap the button in the notification shade; then check agent-ntfy slots or away status to see whether it is confirmed\n"
+                                    "  ⚠️ don't close that pane before pressing Enter and tapping the button (closing cancels the check); on success the pane offers to close itself"),
         "cli.add_slot.done": "added {slot} (not yet confirmed to reach the phone). Next: run  agent-ntfy confirm-sub {slot}  in your own terminal",
         "cli.status.not_running": "daemon: not running",
         "cli.status.no_socket": "daemon: no answer (pid file {pid} still there; it may have died)",
@@ -589,7 +601,7 @@ TEXTS: dict[str, dict[str, str]] = {
         "validate.options.dup_sep": ", ",
         "validate.recommend": '"{rec}" is not one of the option ids (existing ids: {ids})',
         "validate.recommend.none": "none",
-        "validate.lang": '"{value}" is not a valid choice (only {choices}); it selects the language of the fixed wording — omit it to fall back to AGENT_NTFY_LANG, then en',
+        "validate.lang": '"{value}" is not a valid choice (only {choices}); it selects the language of the fixed wording — omit it to fall back to the process language (--lang / AGENT_NTFY_LANG / system locale / en)',
         "validate.body_too_long": "renders to {size} bytes, limit {limit}, {over} bytes over. Trim description / consequence / reasoning (nothing is truncated for you)",
         "validate.title_too_long": "{size} bytes, limit {limit}, {over} bytes over. title is the one-line hook in the notification shade — keep it short",
         "validate.title_newline": "contains a line break. title is a single notification line",

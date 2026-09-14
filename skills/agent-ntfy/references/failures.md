@@ -64,7 +64,7 @@ and knows two fields: `title      : an empty string. Required: the one-line hook
 `body       : an empty string. Required: the notification body; Markdown allowed (bold / lists / rules)`;
 an over-long body reads `body       : renders to N bytes, limit 4096, M bytes over. Trim body (nothing is truncated for you)`.
 
-The report is in the language selected by the JSON `lang` (if valid), else `AGENT_NTFY_LANG`, else English.
+The report is in the language selected by the JSON `lang` (if valid), else the process language (`--lang`, else `AGENT_NTFY_LANG`, else the system locale, else English).
 
 ## 3. rc 2: timeout
 

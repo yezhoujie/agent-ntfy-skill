@@ -15,7 +15,7 @@ you never need to explain the tool to it.
 ## Contents
 
 1. How it works
-2. Requirements (2.1 platform support)
+2. Requirements (2.1 platform support · 2.2 iPhone: use the web app)
 3. Install
 4. Your two manual steps
 5. First question, end to end
@@ -49,7 +49,7 @@ agent ──ask (JSON on stdin)──▶ agent-ntfy ──local socket──▶ 
 ## 2. Requirements
 
 - Python 3.10 or newer — standard library only, nothing to `pip install`
-- The [ntfy app](https://ntfy.sh) on your phone; no ntfy.sh account needed. Tested on Android (MIUI); ntfy also ships an iOS app, untested here
+- The [ntfy app](https://ntfy.sh) on your phone; no ntfy.sh account needed. Tested on Android (MIUI). **iOS users: see §2.2** — the iOS app receives notifications but has no reply box, so use the web app for replying
 - Outbound HTTPS to `ntfy.sh` (or your own instance). The daemon does **not** read `http_proxy` / `https_proxy` or the system proxy; a TUN-style VPN that is transparent to processes is fine
 - A POSIX shell for the examples in this file and in SKILL.md (`$(...)`, heredocs, `alias`). On Windows that means Git Bash or WSL; the daemon and the CLI themselves run natively (the interpreter is usually `python` there, not `python3`)
 - [herdr](https://herdr.dev), recommended — see below
@@ -77,6 +77,22 @@ agent ──ask (JSON on stdin)──▶ agent-ntfy ──local socket──▶ 
 Such a message is never dropped silently. The daemon answers on the phone with a receipt titled `[slotN] Message not delivered` whose body is `The lease on slot slotN has no target pane registered (the session that ran the command was not inside herdr). Run ask, notify, slots, release (no argument), away on or away status for this project from a herdr pane to register one, or release the slot.` followed by `What you just sent did not reach any agent.`, with `Release slot` / `Ignore` buttons.
 
 Why herdr and nothing else: injecting means writing a line of text into the target agent's terminal (its PTY), and `herdr agent prompt` is the one generic way to do that for any agent CLI; this skill has no fallback mechanism.
+
+### 2.2 iPhone: use the ntfy web app, not the App Store app
+
+The ntfy iOS app receives notifications, but it has **no reply box**: you cannot type a message in a topic,
+so you can neither answer a question with anything but the button nor send the agent an instruction. Use the
+web app as a home-screen app instead (reported by an iPhone user of this skill; not tested by the author):
+
+1. Open `https://ntfy.sh/app` in **Safari** on the iPhone.
+2. Tap the **Share** button at the bottom and choose **Add to Home Screen**.
+3. From now on open ntfy **from that home-screen icon**, not from a Safari tab.
+4. On first launch iOS asks for notification permission — tap **Allow**.
+5. Subscribe to the topic there (the same topic the confirmation pane shows) and do the reachability check
+   (§4) from this app. Questions arrive as notifications with the button; the reply box at the bottom of the
+   topic sends free-text replies and instructions.
+
+Android users keep the regular ntfy app; it has the reply box.
 
 ## 3. Install
 
@@ -116,7 +132,7 @@ agent-ntfy daemon                 # inside herdr: run it in a spare pane instead
 agent-ntfy daemon --status        # daemon: pid 12345  subscription: connected  pending questions: 0  confirming: 0  slots: 5  transport: unix
 ```
 
-Paths are shown with `~` here; the CLI prints them expanded. If `--detach` reports `daemon (pid 12345) not ready within 5 s, still starting; check later with agent-ntfy daemon --status, log …`, look at the log — one possible cause on macOS is a keychain dialog on screen on first run (the pool is read through the `security` command): answer it, then check `--status`. Want Chinese wording? Set `AGENT_NTFY_LANG=zh` in the shell you start it from: the daemon keeps the language of the environment that started it (when `away on` starts it for you, it passes the caller's language along). Never start the daemon as a background job of the agent's own shell: it would die with the agent. You do not have to do this step by hand: `away on` (§9.1) starts the daemon when none answers.
+Paths are shown with `~` here; the CLI prints them expanded. If `--detach` reports `daemon (pid 12345) not ready within 5 s, still starting; check later with agent-ntfy daemon --status, log …`, look at the log — one possible cause on macOS is a keychain dialog on screen on first run (the pool is read through the `security` command): answer it, then check `--status`. Want Chinese wording? Pass `--lang zh` (or set `AGENT_NTFY_LANG=zh`, or just have a Chinese shell locale): the daemon keeps the language it was started with (when `away on` starts it for you, it passes the caller's language along). Never start the daemon as a background job of the agent's own shell: it would die with the agent. You do not have to do this step by hand: `away on` (§9.1) starts the daemon when none answers.
 
 **Step 2 — confirm that your phone gets notifications for slot 1.** Run this in your own terminal (not through the agent: it prints the topic name, which is the password):
 
@@ -125,12 +141,13 @@ $ agent-ntfy confirm-sub slot1
 topic for slot1: agent-ntfy-xxxxxxxxxxxxxxxxxxxx
 subscribe URL: https://ntfy.sh/agent-ntfy-xxxxxxxxxxxxxxxxxxxx
 Subscribe to the topic above in the ntfy app on your phone. Once subscribed, press Enter and I'll send a test notification with a button — when it pops up, tap the button and the check is done.
+⚠️ Don't close this pane / terminal before pressing Enter and tapping the button: closing it cancels the check and you start over.
 Press Enter once subscribed…
 agent-ntfy: test notification sent — tap “Got it” in the phone's notification shade (within 600 s)…
 ✅ slot1 confirmed: the phone gets notifications; the agent can use it for questions from now on
 ```
 
-Only the tap counts, and it must be the notification that popped up — tapping inside the app proves nothing about notifications (see §6). If nothing pops up within 10 minutes the command exits 2; fix the phone and run it again. When the agent itself runs `confirm-sub` inside herdr, it opens a new pane for you with exactly this dialogue and tells you which pane to look at; the topic name never enters the agent's output.
+Only the tap counts, and it must be the notification that popped up — tapping inside the app proves nothing about notifications (see §6). If nothing pops up within 10 minutes the command exits 2; fix the phone and run it again. When the agent itself runs `confirm-sub` inside herdr, it opens a new pane for you with exactly this dialogue and tells you which pane to look at; the topic name never enters the agent's output. Do not close that pane until you have pressed Enter and tapped the button — closing it cancels the check. After `✅ … confirmed` the pane asks `Close this pane? [Y/n]`: Enter closes it, `n` keeps it.
 
 **Step 3 — ask yourself a question**, to see the round trip:
 
@@ -222,7 +239,7 @@ Tested on real sessions: **claude** (asking and injection, including replay afte
 | variable | default | effect |
 |---|---|---|
 | `AGENT_NTFY_HOME` | `~/.agent-ntfy` | state directory (dir 0700, files 0600 where the platform has such bits): `daemon.sock` or `daemon.port` (see `AGENT_NTFY_IPC`), `daemon.pid`, `daemon.log`, `leases.json`, and the topic pool file where one is used (`topics.json` / `topics.dpapi`, see `AGENT_NTFY_STORE`). With the Unix-socket transport keep the path short: the socket path has a system-dependent length limit; too deep and the daemon refuses to start with `cannot listen for IPC: … Unix socket paths have a length limit (system-dependent); pick a shorter AGENT_NTFY_HOME` |
-| `AGENT_NTFY_LANG` | `en` | language of all fixed wording (card labels, button, receipts, CLI output, `--help`): `zh` or `en`. Any other value is an error, not a fallback. The agent can override it per question with the `lang` field. When the CLI itself opens a herdr pane (`away on` starting the daemon, `confirm-sub` opening the check for you), the command it types there carries `env AGENT_NTFY_LANG=<the caller's language>`, so the pane's own shell does not decide the wording; only a daemon or command you start by hand in a pane inherits that pane's environment |
+| `AGENT_NTFY_LANG` | (system locale, else `en`) | language of all fixed wording (card labels, button, receipts, CLI output, `--help`): `zh` or `en`. Resolution order: `--lang zh\|en` on the command line (a top-level option, before the subcommand) > this variable > the system locale (`LC_ALL` / `LC_MESSAGES` / `LANG` starting with `zh`, or a Chinese Windows locale, means `zh`) > `en`. Any other value is an error, not a fallback (unless `--lang` is given, which then wins and the variable is ignored). The agent can override it per question with the `lang` field. When the CLI itself opens a herdr pane (`away on` starting the daemon, `confirm-sub` opening the check for you) or detaches a daemon, it passes the resolved language along with `--lang`, so the pane's own shell does not decide the wording; only a daemon or command you start by hand in a pane inherits that pane's environment |
 | `AGENT_NTFY_TARGET` | `proj:<project root>` | the identity that leases a slot (this is what `slots` shows as the holder). Set it to share one slot across projects or to keep one apart; the same value always reuses the same slot |
 | `AGENT_NTFY_URL` | `https://ntfy.sh` | another ntfy instance, e.g. self-hosted |
 | `AGENT_NTFY_IPC` | `unix` on macOS / Linux, `tcp` on Windows | transport between the CLI and the daemon. `unix`: a Unix socket `daemon.sock`, protected by file permissions. `tcp`: a loopback TCP port; `daemon.port` holds two lines — the port and a random token — and every request's first line carries the token (any local process could otherwise connect). A leftover endpoint file is treated as stale unless a connection to it succeeds ("port accepts a connection ⇒ an instance is already running"); if an unrelated process happens to hold that port, delete `daemon.port` and start the daemon again. `unix` is rejected on Windows; any other value is an error |
@@ -281,7 +298,7 @@ Observed on a real phone; none is a bug.
 Output of `AGENT_NTFY_LANG=en python3 scripts/agent_ntfy.py --help` and `<subcommand> --help` (`slots` and `add-slot` take no options), with the home directory shown as `~`:
 
 ```
-usage: agent-ntfy [-h] [--home HOME]
+usage: agent-ntfy [-h] [--lang {zh,en}] [--home HOME]
                   {ask,notify,daemon,slots,release,confirm-sub,add-slot,away} ...
 
 Push decisions that need a human to your phone via ntfy.sh, and bring the
@@ -307,6 +324,8 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
+  --lang {zh,en}        wording language (zh / en; default: AGENT_NTFY_LANG,
+                        then the system locale, then en)
   --home HOME           state directory (default ~/.agent-ntfy)
 
 usage: agent-ntfy ask [-h] [--timeout TIMEOUT]
@@ -338,7 +357,7 @@ options:
   -h, --help  show this help message and exit
 
 usage: agent-ntfy confirm-sub [-h] [--again] [--subscribed] [--show-topic]
-                              [--timeout TIMEOUT]
+                              [--close-pane] [--timeout TIMEOUT]
                               slot
 
 positional arguments:
@@ -353,6 +372,8 @@ options:
                      terminal)
   --show-topic       only print the topic name and exit, send nothing (it will
                      land in the caller's output)
+  --close-pane       after a successful check, offer to close the current
+                     herdr pane (set on auto-opened panes)
   --timeout TIMEOUT  seconds to wait for the button tap (default 600)
 
 usage: agent-ntfy away [-h] [--json] {on,off,status}

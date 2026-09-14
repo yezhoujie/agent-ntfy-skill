@@ -465,11 +465,13 @@ class ConfirmSubTest(unittest.TestCase):
             h.client.message(h.topic(slot), inject.control_mark("confirmed", slot))
         threading.Thread(target=go, daemon=True).start()
 
-    def run_on_tty(self, argv, stdin_text="\n", stdin=None):
-        """stdout 当成终端：isatty() 为真（替身，不开伪终端）。返回 (退出码, 终端上打印的文本, stderr)。stdin 给了对象就用它（可做门控）。"""
+    def run_on_tty(self, argv, stdin_text="\n", stdin=None, env=None):
+        """stdout 当成终端：isatty() 为真（替身，不开伪终端）。返回 (退出码, 终端上打印的文本, stderr)。stdin 给了对象就用它（可做门控）；
+        env 里给的键覆盖（HERDR_* 缺省被滤掉，要模拟在窗格里就从这里给）。"""
         tty_out, errbuf = io.StringIO(), io.StringIO()
         environ = {k: v for k, v in os.environ.items() if not k.startswith("HERDR_") and k != "AGENT_NTFY_LANG"}
         environ["AGENT_NTFY_LANG"] = "zh"
+        environ.update(env or {})
         with mock.patch.dict(os.environ, environ, clear=True), mock.patch("sys.stdin", stdin or io.StringIO(stdin_text)), \
                 mock.patch("sys.stdout", tty_out), mock.patch.object(tty_out, "isatty", return_value=True), contextlib.redirect_stderr(errbuf):
             code = agent_ntfy.main(argv)
@@ -486,6 +488,70 @@ class ConfirmSubTest(unittest.TestCase):
             self.assertNotIn(t, err)
         self.assertEqual(h.client.published, [])
         self.assertEqual(h.request(cmd="status")[0]["confirming"], 0)
+
+    # 自动开的窗格带 --close-pane：确认成功后问一句「关闭这个窗格？[Y/n]」——回车 / y 关（herdr pane close 当前窗格），n 保留；
+    # 失败 / 超时不问；不带旗标不问；不在 herdr 窗格里不问
+    def _confirm_on_tty(self, h, argv, stdin_text, *, env=None):
+        fake = FakeHerdr()
+        with mock.patch("agent_ntfy.herdr_run", fake):
+            code, out, err = self.run_on_tty(argv, stdin_text=stdin_text, env={**HERDR, **(env or {})})
+        return code, out, err, fake
+
+    def test_close_pane_flag_closes_pane_on_enter_after_success(self):
+        h = Harness(self, subscribed=())
+        self.click_when_sent(h, "slot4")
+        code, out, err, fake = self._confirm_on_tty(h, ["--home", str(h.home), "confirm-sub", "slot4", "--timeout", "5", "--close-pane"], "\n\n")
+        self.assertEqual(code, 0, err)
+        self.assertIn(Z("cli.confirm.close_pane").strip(), out)
+        self.assertEqual([c[1:] for c in fake.calls], [["pane", "close", "wD:p1"]])  # 关的是自己所在的窗格
+
+    def test_close_pane_flag_keeps_pane_on_n(self):
+        h = Harness(self, subscribed=())
+        self.click_when_sent(h, "slot4")
+        code, out, err, fake = self._confirm_on_tty(h, ["--home", str(h.home), "confirm-sub", "slot4", "--timeout", "5", "--close-pane"], "\nn\n")
+        self.assertEqual(code, 0, err)
+        self.assertIn(Z("cli.confirm.pane_kept"), out)
+        self.assertEqual(fake.calls, [])
+
+    def test_close_pane_flag_does_not_ask_after_failure(self):
+        h = Harness(self, subscribed=())
+        code, out, err, fake = self._confirm_on_tty(h, ["--home", str(h.home), "confirm-sub", "slot4", "--timeout", "0.5", "--close-pane"], "\n\n")
+        self.assertEqual(code, 2, err)  # 没人点按钮 ⇒ 超时
+        self.assertNotIn(Z("cli.confirm.close_pane").strip(), out)
+        self.assertEqual(fake.calls, [])
+
+    def test_without_close_pane_flag_never_asks(self):
+        h = Harness(self, subscribed=())
+        self.click_when_sent(h, "slot4")
+        code, out, err, fake = self._confirm_on_tty(h, ["--home", str(h.home), "confirm-sub", "slot4", "--timeout", "5"], "\n\n")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn(Z("cli.confirm.close_pane").strip(), out)
+        self.assertEqual(fake.calls, [])
+
+    def test_close_pane_flag_on_non_tty_never_prompts(self):
+        # agent 自己（stdout 被捕获）在 herdr 里跑 confirm-sub --close-pane：走「已确认过」/「开窗格」两条非 TTY 路径都退 0，
+        # 但此时 HERDR_PANE_ID 是 agent 自己的窗格——绝不能问、更不能关
+        fake = FakeHerdr()
+        with mock.patch("agent_ntfy.herdr_run", fake):
+            h = Harness(self)  # slot1 已过闸
+            code, out, err = run(["--home", str(h.home), "confirm-sub", "slot1", "--close-pane"], "\n", env=HERDR)
+            self.assertEqual(code, 0, err)
+            h2 = Harness(self, subscribed=())
+            code2, out2, err2 = run(["--home", str(h2.home), "confirm-sub", "slot4", "--close-pane"], "\n", env=HERDR)
+            self.assertEqual(code2, 0, err2)
+        self.assertNotIn(Z("cli.confirm.close_pane").strip(), out + out2)
+        self.assertNotIn(Z("cli.confirm.pane_kept"), out + out2)
+        self.assertNotIn(["pane", "close"], [c[1:3] for c in fake.calls])
+
+    def test_close_pane_flag_outside_herdr_does_nothing(self):
+        h = Harness(self, subscribed=())
+        self.click_when_sent(h, "slot4")
+        fake = FakeHerdr()
+        with mock.patch("agent_ntfy.herdr_run", fake):
+            code, out, err = self.run_on_tty(["--home", str(h.home), "confirm-sub", "slot4", "--timeout", "5", "--close-pane"], stdin_text="\n\n")
+        self.assertEqual(code, 0, err)
+        self.assertNotIn(Z("cli.confirm.close_pane").strip(), out)
+        self.assertEqual(fake.calls, [])
 
     def test_default_on_tty_prints_topic_waits_for_enter_then_confirms(self):
         h = Harness(self, subscribed=())
@@ -886,6 +952,60 @@ class HerdrHelpersTest(unittest.TestCase):
         self.assertIn("daemon 没有回应", errbuf.getvalue())
         self.assertIn("消息未发送", errbuf.getvalue())
 
+    # 语言四级解析：--lang > AGENT_NTFY_LANG > 系统 locale（中文 ⇒ zh）> en；只在进程入口解析一次
+    def test_lang_flag_beats_env(self):
+        h = Harness(self)
+        code, out, err = run(["--lang", "en", "--home", str(h.home), "daemon", "--status"], env={"AGENT_NTFY_LANG": "zh"})
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.startswith("daemon: pid"), out)
+
+    def test_lang_flag_equals_form_and_help(self):
+        h = Harness(self)
+        code, out, err = run(["--lang=zh", "--home", str(h.home), "daemon", "--status"], env={"AGENT_NTFY_LANG": "en"})
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.startswith("daemon：pid"), out)
+        help_out = io.StringIO()
+        with self.assertRaises(SystemExit) as cm, contextlib.redirect_stdout(help_out):
+            agent_ntfy.main(["--lang", "zh", "--help"])
+        self.assertEqual(cm.exception.code, 0)
+        self.assertIn("文案语言", help_out.getvalue())  # 预扫的 --lang 决定 --help 的语言
+        with self.assertRaises(SystemExit) as cm:
+            run(["--home", str(h.home), "daemon", "--status", "--lang", "zh"])  # 顶层选项放在子命令后面：argparse 不认
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_lang_flag_rejects_unknown_value(self):
+        with self.assertRaises(SystemExit) as cm:
+            run(["--lang", "fr", "slots"])
+        self.assertEqual(cm.exception.code, 2)  # argparse 的 choices 拦下
+
+    def test_locale_zh_is_used_when_env_unset(self):
+        h = Harness(self)
+        for var in ("LC_ALL", "LC_MESSAGES", "LANG"):
+            with self.subTest(var=var):
+                env = {"AGENT_NTFY_LANG": "", "LC_ALL": "", "LC_MESSAGES": "", "LANG": "", var: "zh_CN.UTF-8"}
+                code, out, err = run(["--home", str(h.home), "daemon", "--status"], env=env)
+                self.assertEqual(code, 0, err)
+                self.assertTrue(out.startswith("daemon：pid"), (var, out))
+
+    def test_locale_non_zh_falls_back_to_english(self):
+        h = Harness(self)
+        env = {"AGENT_NTFY_LANG": "", "LC_ALL": "en_US.UTF-8", "LC_MESSAGES": "zh_CN.UTF-8", "LANG": "zh_CN.UTF-8"}  # LC_ALL 优先
+        code, out, err = run(["--home", str(h.home), "daemon", "--status"], env=env)
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.startswith("daemon: pid"), out)
+        with mock.patch.dict(os.environ, {"AGENT_NTFY_LANG": "", "LC_ALL": "", "LC_MESSAGES": "", "LANG": ""}), \
+                mock.patch("locale.getlocale", return_value=("Chinese (Simplified)_China", "936")):
+            self.assertEqual(agent_ntfy.resolve_lang(), "zh")  # Windows 常没有那三个变量：看 locale.getlocale()
+        with mock.patch.dict(os.environ, {"AGENT_NTFY_LANG": "", "LC_ALL": "", "LC_MESSAGES": "", "LANG": ""}), \
+                mock.patch("locale.getlocale", return_value=(None, None)):
+            self.assertEqual(agent_ntfy.resolve_lang(), "en")
+
+    def test_env_lang_beats_locale(self):
+        h = Harness(self)
+        code, out, err = run(["--home", str(h.home), "daemon", "--status"], env={"AGENT_NTFY_LANG": "en", "LC_ALL": "zh_CN.UTF-8"})
+        self.assertEqual(code, 0, err)
+        self.assertTrue(out.startswith("daemon: pid"), out)
+
     def test_probe_returns_status_event(self):
         h = Harness(self)
         ev = agent_ntfy.probe(h.home)
@@ -910,10 +1030,9 @@ class ConfirmSubPaneTest(unittest.TestCase):
         self.assertEqual(split[3:5], ["--pane", "wD:p1"])  # 在当前窗格下方开
         self.assertEqual(split[split.index("--cwd") + 1], os.getcwd())
         self.assertEqual(ran[3], "wD:p7")
-        self.assertTrue(ran[4].startswith("env AGENT_NTFY_LANG=zh "), ran[4])  # 新窗格是新 shell，不继承调用方的语言：显式带上
-        argv = ti.split_pane_command(ran[4])[2:]
-        self.assertEqual(argv[:2], [sys.executable, os.path.abspath(agent_ntfy.__file__)])
-        self.assertEqual(argv[2:], ["--home", str(h.home), "confirm-sub", "slot4", "--again"])  # --home 在子命令前；--again 原样转进去
+        argv = ti.split_pane_command(ran[4])
+        self.assertEqual(argv[:4], [sys.executable, os.path.abspath(agent_ntfy.__file__), "--lang", "zh"])  # 新窗格是新 shell，不继承调用方的语言：--lang 显式带上
+        self.assertEqual(argv[4:], ["--home", str(h.home), "confirm-sub", "slot4", "--close-pane", "--again"])  # --home 在子命令前；自动开的窗格带 --close-pane；--again 原样转进去
         # 本进程不碰 daemon：没发测试通知、没进确认中；topic 名不进本进程的输出
         self.assertEqual(h.client.published, [])
         self.assertEqual(h.request(cmd="status")[0]["confirming"], 0)
@@ -942,7 +1061,7 @@ class ConfirmSubPaneTest(unittest.TestCase):
             code, out, err = run(["--home", str(h.home), "confirm-sub", "slot2", "--again", "--timeout", "45"], env=HERDR)
             self.assertEqual(code, 0, err)
             self.assertIn("wD:p7", out)
-        self.assertEqual(ti.split_pane_command(fake.calls[-1][4])[-5:], ["confirm-sub", "slot2", "--again", "--timeout", "45"])  # 两个旗标都原样转进去
+        self.assertEqual(ti.split_pane_command(fake.calls[-1][4])[-6:], ["confirm-sub", "slot2", "--close-pane", "--again", "--timeout", "45"])  # 两个旗标都原样转进去
 
     # daemon 没跑 ⇒ 退 3（同现状），不开窗格
     def test_non_tty_without_daemon_exits_3(self):
@@ -960,7 +1079,7 @@ class ConfirmSubPaneTest(unittest.TestCase):
         with mock.patch("agent_ntfy.herdr_run", fake):
             code, out, err = run(["--home", str(h.home), "confirm-sub", "slot4"], env={**HERDR, "AGENT_NTFY_LANG": "en"})
         self.assertEqual(code, 0, err)
-        self.assertTrue(fake.calls[-1][4].startswith("env AGENT_NTFY_LANG=en "), fake.calls[-1][4])
+        self.assertEqual(ti.split_pane_command(fake.calls[-1][4])[2:4], ["--lang", "en"], fake.calls[-1][4])
         self.assertIn("Tell the user", out)
 
     def test_non_tty_in_herdr_but_cli_broken_still_exits_4(self):
@@ -1054,8 +1173,8 @@ class AwayOnTest(unittest.TestCase):
         self.assertEqual(out.splitlines()[0], Z("cli.away.confirm_pane", slot="slot1", pane="wD:p7").splitlines()[0])
         self.assertIn("wD:p7", out)
         self.assertEqual([c[1:3] for c in self.fake.calls], [["pane", "list"], ["pane", "split"], ["pane", "run"]])
-        self.assertEqual(self.pane_commands()[0][:2], ["env", "AGENT_NTFY_LANG=zh"])  # 确认窗格里的文案与调用方同语言
-        self.assertEqual(self.pane_commands()[0][4:], ["--home", str(h.home), "confirm-sub", "slot1"])
+        self.assertEqual(self.pane_commands()[0][2:4], ["--lang", "zh"])  # 确认窗格里的文案与调用方同语言
+        self.assertEqual(self.pane_commands()[0][4:], ["--home", str(h.home), "confirm-sub", "slot1", "--close-pane"])
         self.assertTrue(self.state()["away"])
 
     # 同样情形但不在 herdr 里：退 4 指路 confirm-sub，什么都不写、不建目录
@@ -1076,7 +1195,7 @@ class AwayOnTest(unittest.TestCase):
         self.assertEqual((code, err), (0, ""))
         self.assertIn("slot2", out.splitlines()[0])
         self.assertIn("wD:p7", out)
-        self.assertEqual(self.pane_commands()[0][-2:], ["confirm-sub", "slot2"])
+        self.assertEqual(self.pane_commands()[0][-3:], ["confirm-sub", "slot2", "--close-pane"])
         self.assertTrue(self.state()["away"])
         self.assertIsNone(h.state.slots()["slot2"]["leased_by"])  # 不替用户租：确认过之后首次提问才租
 
@@ -1115,7 +1234,7 @@ class AwayOnTest(unittest.TestCase):
         self.assertEqual((code, out), (3, ""))
         self.assertIn(Z("cli.away.daemon_failed", seconds="0.3", log=home / "daemon.log"), err)
         self.assertEqual([c[1:3] for c in self.fake.calls], [["pane", "list"], ["pane", "split"], ["pane", "run"]])
-        self.assertEqual(self.pane_commands()[0], ["env", "AGENT_NTFY_LANG=zh", sys.executable, os.path.abspath(agent_ntfy.__file__), "--home", str(home), "daemon"])
+        self.assertEqual(self.pane_commands()[0], [sys.executable, os.path.abspath(agent_ntfy.__file__), "--lang", "zh", "--home", str(home), "daemon"])
         self.assertFalse((self.root / projstate.DIR_NAME).exists())
 
     # 在 herdr 里但窗格开不出来：立刻退 3，不傻等探活超时
@@ -1182,10 +1301,10 @@ class AwayOnTest(unittest.TestCase):
             return None if len(probes) == 1 else real_probe(home, **kw)
 
         spawned = []
-        with mock.patch("agent_ntfy.probe", probe_none_first), mock.patch("agent_ntfy._spawn_daemon", lambda home: spawned.append(home) or mock.Mock(poll=lambda: None)):
+        with mock.patch("agent_ntfy.probe", probe_none_first), mock.patch("agent_ntfy._spawn_daemon", lambda home, lang: spawned.append((home, lang)) or mock.Mock(poll=lambda: None)):
             code, out, err = self.away_on(h.home, env={})
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(spawned, [h.home])
+        self.assertEqual(spawned, [(h.home, "zh")])  # 脱离会话起的 daemon 也显式带语言
         self.assertEqual(out.splitlines()[0], Z("cli.away.ready.lazy"))
         self.assertTrue(self.state()["away"])
         self.assertEqual(self.fake.calls, [])

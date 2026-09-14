@@ -37,14 +37,15 @@ notify 的退出码同 ask 的 0 / 1 / 3 / 4（0 = 已发出），没有 2——
 
 环境变量: AGENT_NTFY_HOME（默认 ~/.agent-ntfy）· HERDR_PANE_ID / HERDR_ENV（在 herdr 里时自动带上窗格标识）
           AGENT_NTFY_TARGET（覆盖租约主体「我是谁」，同一个值复用同一个槽位；herdr 内外都生效）
-          AGENT_NTFY_LANG（固定文案的语言 zh / en；ask 的 JSON 里给了 lang 以它为准；都没有就 en）
+          AGENT_NTFY_LANG（固定文案的语言 zh / en；--lang 压过它；ask 的 JSON 里给了 lang 以它为准；都没有就看系统 locale，再缺省 en）
 
-固定文案的语言只在这里解析一次（ask：JSON lang → AGENT_NTFY_LANG → en；其余子命令：AGENT_NTFY_LANG → en），
-随请求交给 daemon；深层模块不读环境变量。
+固定文案的语言只在这里解析一次（ask：JSON lang → --lang → AGENT_NTFY_LANG → 系统 locale → en；其余子命令从 --lang 起同一条链），
+随请求交给 daemon、开窗格 / detach 时用 --lang 带给子进程；深层模块不读环境变量。
 """
 
 import argparse
 import json
+import locale
 import os
 import select
 import socket
@@ -94,12 +95,41 @@ class BadEnvLang(ValueError):
     """AGENT_NTFY_LANG 给了却不是 zh / en。响亮失败，不静默回退——语言错了整个进程的文案都会错。"""
 
 
-def env_lang() -> str:
-    """进程入口解析一次：AGENT_NTFY_LANG → en。ask 再拿 JSON 里的 lang 压过它。空串当没给；给了非法值抛 BadEnvLang。"""
+def _locale_lang() -> str | None:
+    """系统 locale 是不是中文：LC_ALL / LC_MESSAGES / LANG 里第一个非空值以 zh 开头 ⇒ zh；三个都没有（Windows 常见）再看
+    locale.getlocale()。不是中文 ⇒ None（交给缺省 en）。只在进程入口调一次。"""
+    for var in ("LC_ALL", "LC_MESSAGES", "LANG"):
+        value = os.environ.get(var)
+        if value:
+            return "zh" if value.lower().startswith("zh") else None
+    try:
+        name = (locale.getlocale()[0] or "").lower()
+    except ValueError:
+        name = ""
+    return "zh" if name.startswith("zh") or "chinese" in name else None
+
+
+def resolve_lang(explicit: str | None = None) -> str:
+    """进程入口解析一次：--lang > AGENT_NTFY_LANG > 系统 locale（中文 ⇒ zh）> en。ask / notify 再拿 JSON 里的 lang 压过它。
+    环境变量空串当没给；给了非法值抛 BadEnvLang（--lang 的非法值由 argparse 拦）。"""
+    if texts.is_lang(explicit):
+        return str(explicit)
     value = os.environ.get(texts.ENV_VAR)
     if value and not texts.is_lang(value):
         raise BadEnvLang(value)
-    return texts.resolve(None, value)
+    if value:
+        return value
+    return _locale_lang() or texts.DEFAULT_LANG
+
+
+def _prescan_lang(argv: list[str]) -> str | None:
+    """在 argparse 之前把 --lang 挑出来：--help 的文案也要按它取。非法值这里不拦，留给 argparse 的 choices 报。"""
+    for i, a in enumerate(argv):
+        if a == "--lang" and i + 1 < len(argv):
+            return argv[i + 1]
+        if a.startswith("--lang="):
+            return a.split("=", 1)[1]
+    return None
 
 
 def describe(e: BaseException, lang: str) -> str:
@@ -129,14 +159,14 @@ def run_self_in_new_pane(home: Path, lang: str, *subcommand: str) -> str | None:
     """在当前窗格下方开一个新窗格，在里面跑本程序的一个子命令（同一解释器、同一脚本、同一 --home、同一语言），返回新窗格 id，
     不等结果。开不出窗格 / 命令敲不进去就 None（后者会留下一个空窗格，herdr 没有从这里关它的办法）。
 
-    新窗格是一个新 shell，不继承调用方的环境：语言要显式用 `env AGENT_NTFY_LANG=<lang>` 带过去，否则窗格里的文案 / daemon 的
-    缺省语言会退回 en（实测）。`env` 是 POSIX 工具，Windows 未做端到端。
+    新窗格是一个新 shell，不继承调用方的环境：语言用 --lang 显式带过去，否则窗格里的文案 / daemon 的缺省语言会按那个 shell
+    自己的环境重新解析（实测过退回 en）。
     """
     new_pane = inject.split_pane(os.getcwd(), os.environ.get("HERDR_PANE_ID") or "", run=herdr_run)
     if new_pane is None:
         return None
-    # --home 是顶层选项，必须放在子命令前面
-    argv = ["env", f"{texts.ENV_VAR}={lang}", sys.executable, os.path.abspath(__file__), "--home", str(home), *subcommand]
+    # --lang / --home 是顶层选项，必须放在子命令前面
+    argv = [sys.executable, os.path.abspath(__file__), "--lang", lang, "--home", str(home), *subcommand]
     return new_pane if inject.run_in_pane(new_pane, argv, run=herdr_run) else None
 
 
@@ -144,7 +174,7 @@ def open_confirm_pane(home: Path, slot: str, lang: str, *, again: bool = False, 
     """在新窗格里跑默认形态的 confirm-sub（显示 topic → 等回车 → 发测试通知 → 等按钮），返回窗格 id，不等结果。
     topic 只出现在那个窗格里，不进本进程的输出。--again / --timeout 原样转进去（缺省的 timeout 不必带）。"""
     flags = (["--again"] if again else []) + (["--timeout", f"{timeout:g}"] if timeout != CONFIRM_TIMEOUT else [])
-    return run_self_in_new_pane(home, lang, "confirm-sub", slot, *flags)
+    return run_self_in_new_pane(home, lang, "confirm-sub", slot, "--close-pane", *flags)  # 自动开的窗格：确认成功后问一句要不要关掉
 
 
 # ---------------------------------------------------------------- socket 协议（客户端侧）
@@ -225,7 +255,7 @@ def project_root_or_none(lang: str, *, not_sent: bool = False) -> Path | None:
 def cmd_ask(args) -> int:
     home = Path(args.home)
     text = sys.stdin.read()
-    payload, problems, lang = validate.check_json(text, env_lang())  # 报错与这张卡片都用同一个语言：JSON lang → 环境 → en
+    payload, problems, lang = validate.check_json(text, args.lang)  # 报错与这张卡片都用同一个语言：JSON lang → 进程入口解析的语言
     if problems:
         sys.stderr.write(validate.format_problems(problems, lang))
         return EXIT_INVALID
@@ -288,7 +318,7 @@ def report_send_error(ev: dict, lang: str, leased_by: str, *, sent: bool) -> int
 def cmd_notify(args) -> int:
     """单向通知：校验 → 身份 → 一问一答。发出即返回 0；不等回复，所以没有超时一说。"""
     home = Path(args.home)
-    payload, problems, lang = validate.check_notify_json(sys.stdin.read(), env_lang())
+    payload, problems, lang = validate.check_notify_json(sys.stdin.read(), args.lang)
     if problems:
         sys.stderr.write(validate.format_problems(problems, lang, command="notify"))
         return EXIT_INVALID
@@ -330,7 +360,7 @@ def request(home: Path, req: dict, lang: str, *, not_sent: bool = False) -> dict
 
 
 def cmd_slots(args) -> int:
-    lang = env_lang()
+    lang = args.lang
     root = project_root_or_none(lang)
     if root is None:
         return EXIT_CHANNEL
@@ -352,7 +382,7 @@ def cmd_slots(args) -> int:
 
 
 def cmd_release(args) -> int:
-    lang = env_lang()
+    lang = args.lang
     if args.slot:
         req = {"cmd": "release", "slot": args.slot}
     else:
@@ -372,14 +402,42 @@ def cmd_release(args) -> int:
     return 0
 
 
+def offer_close_pane(lang: str) -> None:
+    """自动开的确认窗格里、确认成功之后：问一句要不要关掉这个窗格（回车 / y 关，其余保留），让屏幕不被用完的窗格占着。
+    只在 herdr 窗格里有意义；不在窗格里（手动跑的却带了 --close-pane）就什么都不做。
+    关的是 HERDR_PANE_ID 指的窗格：herdr 给每个窗格的 shell 各自设这个变量，pane run 敲进新窗格的命令读到的是新窗格自己的 id
+    （herdr 0.9.0 实测：split 出 wG:pH 后在里面 echo 得 wG:pH），不会误关开它的那个窗格。"""
+    pane = os.environ.get("HERDR_PANE_ID") if os.environ.get("HERDR_ENV") else None
+    if not pane:
+        return
+    try:
+        answer = input(texts.t("cli.confirm.close_pane", lang)).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        answer = "n"
+    if answer in ("", "y", "yes"):
+        r = herdr_run([inject.HERDR, "pane", "close", pane])
+        if not r.ok:
+            err(texts.t("cli.confirm.pane_close_failed", lang, why=r.summary(lang)))
+    else:
+        print(texts.t("cli.confirm.pane_kept", lang))
+
+
 def cmd_confirm_sub(args) -> int:
+    rc = _confirm_sub(args)
+    if rc == 0 and args.close_pane and not args.show_topic and sys.stdout.isatty():
+        # 只在交互式（自动开的窗格里 stdout 就是终端）才问：agent 自己非 TTY 跑到这里时 HERDR_PANE_ID 是它自己的窗格，问了就是关它自己
+        offer_close_pane(args.lang)
+    return rc
+
+
+def _confirm_sub(args) -> int:
     """可达性确认闸。默认两段：先显示 topic 让用户订阅、按回车后才发测试通知，等用户在通知栏点按钮。
 
     topic 名就是密码：默认只在 stdout 是终端时才显示。agent 代跑（stdout 被捕获）时：在 herdr 里就开一个新窗格让用户在那里
     走这两段、本进程打印窗格 id 退 0；不在 herdr 里或开不出窗格才退 4 让它转告用户。
     用户已订阅过时 agent 可以带 --subscribed 代跑（不经过显示 topic 那段）。
     """
-    home, slot, lang = Path(args.home), args.slot, env_lang()
+    home, slot, lang = Path(args.home), args.slot, args.lang
     if args.show_topic:
         ev = request(home, {"cmd": "confirm-sub", "slot": slot, "show_topic": True}, lang)
         if ev is None:
@@ -481,7 +539,7 @@ def cmd_confirm_sub(args) -> int:
 
 
 def cmd_add_slot(args) -> int:
-    lang = env_lang()
+    lang = args.lang
     ev = request(Path(args.home), {"cmd": "add-slot"}, lang)
     if ev is None:
         return EXIT_CHANNEL
@@ -501,7 +559,7 @@ def cmd_away(args) -> int:
     status 以 daemon 为准校对：经 slots 反查本项目真实租着哪个槽位，与文件不一致就改写并提示；daemon 没跑就照旧读文件、标「未校对」。
     没启用过的项目不探活也不校对——校对会写文件，而没启用的项目不该被建目录。
     """
-    lang = env_lang()
+    lang = args.lang
     try:
         root = projstate.project_root()
         if args.action == "on":
@@ -572,7 +630,7 @@ def _ensure_daemon(home: Path, lang: str) -> bool:
             err(texts.t("cli.away.pane_failed", lang))
             return False
     else:
-        proc = _spawn_daemon(home)
+        proc = _spawn_daemon(home, lang)
     while (remaining := deadline - time.monotonic()) > 0:
         time.sleep(0.1)
         if proc is not None and proc.poll() is not None:  # 子进程已经退了：再等也不会有应答，报它的退出码
@@ -650,7 +708,7 @@ def away_on(home: Path, root: Path, lang: str) -> int:
 def cmd_daemon(args) -> int:
     import daemon  # 只有这一支需要它（连带钥匙串与租约文件）
 
-    home, lang = Path(args.home), env_lang()
+    home, lang = Path(args.home), args.lang
     if args.status:
         return daemon_status(home, lang)
     if args.stop:
@@ -718,10 +776,10 @@ def probe(home: Path, *, timeout: float | None = None) -> dict | None:
     return ipc.probe(home, timeout=PROBE_TIMEOUT if timeout is None else timeout)
 
 
-def _spawn_daemon(home: Path) -> subprocess.Popen:
-    """脱离会话 / 控制台起 daemon（怎么脱离由平台层定），stdio 全接空设备。子进程继承环境，语言由它自己再解析。
-    --home 是顶层选项，必须放在子命令前面。"""
-    return platform_.spawn_detached([sys.executable, os.path.abspath(__file__), "--home", str(home), "daemon"])
+def _spawn_daemon(home: Path, lang: str) -> subprocess.Popen:
+    """脱离会话 / 控制台起 daemon（怎么脱离由平台层定），stdio 全接空设备。语言用 --lang 显式带过去（调用方已解析过，
+    子进程不必再看环境 / locale）。--lang 与 --home 都是顶层选项，必须放在子命令前面。"""
+    return platform_.spawn_detached([sys.executable, os.path.abspath(__file__), "--lang", lang, "--home", str(home), "daemon"])
 
 
 def daemon_detach(home: Path, lang: str) -> int:
@@ -729,7 +787,7 @@ def daemon_detach(home: Path, lang: str) -> int:
     if probe(home) is not None:
         err(texts.t("cli.detach.already", lang))
         return EXIT_CHANNEL
-    proc = _spawn_daemon(home)
+    proc = _spawn_daemon(home, lang)
     for _ in range(50):
         time.sleep(0.1)
         if proc.poll() is not None:
@@ -764,6 +822,7 @@ def build_parser(lang: str) -> argparse.ArgumentParser:
         return texts.t(f"help.{key}", lang, **fmt)
 
     p = argparse.ArgumentParser(prog=PROG, description=h("prog"))
+    p.add_argument("--lang", choices=list(texts.LANGS), default=lang, help=h("lang"))
     p.add_argument("--home", default=str(HOME), help=h("home", home=HOME))
     sub = p.add_subparsers(dest="cmd", required=True)
     a = sub.add_parser("ask", help=h("ask"))
@@ -785,6 +844,7 @@ def build_parser(lang: str) -> argparse.ArgumentParser:
     c.add_argument("--again", action="store_true", help=h("confirm.again"))
     c.add_argument("--subscribed", action="store_true", help=h("confirm.subscribed"))
     c.add_argument("--show-topic", action="store_true", help=h("confirm.show_topic"))
+    c.add_argument("--close-pane", action="store_true", help=h("confirm.close_pane"))
     c.add_argument("--timeout", type=positive_seconds_in(lang), default=CONFIRM_TIMEOUT, help=h("confirm.timeout"))
     c.set_defaults(fn=cmd_confirm_sub)
     sub.add_parser("add-slot", help=h("add_slot")).set_defaults(fn=cmd_add_slot)
@@ -797,12 +857,14 @@ def build_parser(lang: str) -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     platform_.utf8_stdio()  # Windows 的管道 stdio 缺省是 ANSI 代码页：JSON 与回复里的非 ASCII 会炸
+    raw_argv = sys.argv[1:] if argv is None else argv
     try:
-        lang = env_lang()  # 先于一切：语言错了连 --help 都会错
+        lang = resolve_lang(_prescan_lang(raw_argv))  # 先于一切：语言错了连 --help 都会错
     except BadEnvLang as e:
         err(texts.t("cli.bad_env_lang", texts.DEFAULT_LANG, value=str(e)))
         return EXIT_INVALID
-    args = build_parser(lang).parse_args(argv)
+    args = build_parser(lang).parse_args(raw_argv)
+    args.lang = lang  # --lang 的非法值到不了这里（argparse 的 choices 已拦）；合法值与预扫一致
     try:
         ipc.transport(Path(args.home))  # 同 lang：传输选错了每条命令都会错，入口就拦
     except ipc.BadTransport as e:

@@ -66,6 +66,11 @@ rc=$?
 | `lang` | Optional, `zh` or `en`: the language of the fixed wording (section labels, button, hints). **Pass the language you are configured to reply to the user in: `zh` if you reply in Chinese, otherwise `en`.** Invalid values are rejected, never silently defaulted |
 
 The content fields are written in whatever language you work in; only `lang` controls the wrapper.
+For every other command (`away`, `confirm-sub`, `slots`, `daemon`, …) the wording language is resolved once at
+process start: `--lang zh|en` (a top-level option, before the subcommand) > `AGENT_NTFY_LANG` > the system
+locale (a Chinese `LC_ALL` / `LC_MESSAGES` / `LANG`, or a Chinese Windows locale, gives `zh`) > `en`. Panes and
+daemons the CLI starts for you get that resolved language passed along, so pass `--lang` (or set the
+variable) once if the user's shell locale is not what they read in.
 Missing or empty fields, a wrong option count, a `recommend` that matches no id, or a rendered body
 over 3584 bytes all fail validation at once, before anything is sent. Never put secrets in the payload:
 the text travels in clear through a public server.
@@ -203,7 +208,9 @@ to the user**; the outcomes are:
   nothing to do.
 - `… slot slotN still needs its reachability check: started it in herdr pane <id>. Tell the user: 1. … 2. … 3. …` —
   the topic is shown only in that pane; the user subscribes there, presses Enter, taps the button on the
-  phone. Check `slots` or `away status` later to see it confirmed.
+  phone. Tell them **not to close that pane before pressing Enter and tapping the button** (closing cancels
+  the check); on success the pane asks `Close this pane? [Y/n]` and closes itself on Enter. Check `slots`
+  or `away status` later to see it confirmed.
 - `… slot slotN is being confirmed right now (a confirmation pane is already open): …` — a pane from an
   earlier run is still open; the user finishes there.
 - rc 3 (daemon did not come up, or no herdr pane could be opened) or rc 4 (outside herdr and the slot is
