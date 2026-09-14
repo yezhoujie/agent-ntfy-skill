@@ -451,15 +451,10 @@ class State:
         return leases
 
     def _save_leases(self, leases):
-        """先写临时文件再 rename，避免写到一半崩溃留下半截 JSON。文件 0600：里面是谁在用哪个槽位。"""
-        self.leases_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        tmp = self.leases_path.with_name(self.leases_path.name + ".tmp")
+        """0600 原子写（与 topic 池文件同一条路径 _write_private）：里面是谁在用哪个槽位。"""
+        data = (json.dumps(leases, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         try:
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                json.dump(leases, fh, ensure_ascii=False, indent=2)
-                fh.write("\n")
-            os.replace(tmp, self.leases_path)
+            _write_private(self.leases_path, data)
         except OSError as e:
             raise StateError("leases.write_failed", path=self.leases_path, error=e) from e
 
