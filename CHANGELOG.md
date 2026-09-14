@@ -21,6 +21,9 @@ version is only a tag you can pin (`npx skills add 'yezhoujie/agent-ntfy-skill#v
   after a failure, and never when stdout is not a terminal).
 - README §2.2: iPhone users use the ntfy web app added to the home screen — the iOS App Store app receives
   notifications but has no reply box.
+- `examples/remote-mode-rule.md` / `remote-mode-rule.zh-CN.md`: a ready-made standing rule for the agent
+  (session start, the human leaving, decisions via `ask`, `notify` only for answers and major events, the
+  human returning, teams of sessions), and README §13 on how to keep the skill in force for the whole session.
 
 ### Changed
 
