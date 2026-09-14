@@ -160,7 +160,10 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   daemonNotRunning: 'daemon: not running',
   daemonNoAnswer: 'daemon: no answer ({message})',
   daemonWeird: 'daemon: unrecognized reply',
-  daemonStatusLine: 'daemon: pid {pid}  connection {connection}  pending questions {pending}  bound projects {bindings}  started {startedAt}',
+  daemonStatusLine:
+    'daemon: pid {pid}  connected {connected}  connection {connection}  pending questions {pending}  bound projects {bindings}  started {startedAt}',
+  daemonLastError: '  last error: {error}',
+  daemonStopStuck: 'daemon: still answering 10 s after the stop request; see the log: {log}',
   daemonWasNotRunning: 'daemon: was not running',
   daemonStopRefused:
     '{n} question(s) still pending on the phone. Stopping the daemon now turns those cards into "⚠️ Cancelled" — a dead card for the human.\nWait for the answer, or do it anyway: agent-lark daemon --stop --force',
@@ -169,7 +172,10 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   daemonStarted: 'daemon: started in the background, pid {pid} (log {log})',
   daemonNoReply: 'daemon started but did not answer within 10 s; see the log: {log}',
   daemonNoCreds: 'no Feishu app credentials found. Run agent-lark setup first (or set AGENT_LARK_APP_ID / AGENT_LARK_APP_SECRET)',
-  daemonReady: 'agent-lark daemon: pid {pid}, connected to Feishu, socket {sock}',
+  daemonReady: 'agent-lark daemon: pid {pid}, listening at {sock}, connecting to Feishu in the background',
+  notConnected: 'not connected to Feishu ({error}); the daemon keeps retrying, try again shortly',
+  reconnecting: 'the connection to Feishu dropped, reconnecting',
+  connecting: 'still connecting',
   // bind / unbind
   bindCreated: '✅ Created Feishu group "{name}" and bound it to {root}\n   Open Feishu to see the group; questions from this project will land there.',
   bindExisting: '✅ Bound to existing group {chatId} ({root})',
@@ -195,7 +201,7 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   statusHerdrIn: 'herdr: inside herdr, current pane {pane}',
   statusHerdrOut: 'herdr: not inside herdr (phone messages have nowhere to be injected)',
   statusDaemonDown: 'daemon: not running (agent-lark daemon --detach)',
-  statusDaemonLine: 'daemon: pid {pid}, connection {connection}, pending questions {pending}',
+  statusDaemonLine: 'daemon: pid {pid}, connected {connected}, connection {connection}, pending questions {pending}',
   statusNoBindings: 'bindings: none yet',
   statusBindings: 'bindings:',
   statusBindingLine: '  {mark} {label}  group {chatId}  pane {pane}  remote {away}',

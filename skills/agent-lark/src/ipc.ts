@@ -1,6 +1,7 @@
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
-import { existsSync, unlinkSync } from 'node:fs';
-import { ensureHomeDir, sockPath } from './paths.js';
+import { unlinkSync } from 'node:fs';
+import { platform } from 'node:os';
+import { ensureHomeDir, ipcEndpoint, sockPath } from './paths.js';
 import { fill, msg } from './texts.js';
 
 /** Every request a thin client can make of the daemon. */
@@ -17,7 +18,12 @@ export type Request =
 
 export interface DaemonStatus {
   pid: number;
+  /** The SDK's own WebSocket state; 'connecting' until the first handshake succeeds. */
   connection: string;
+  /** True once Feishu is reachable; requests that need Feishu are refused (code 3) until then. */
+  connected: boolean;
+  /** Why the last connect attempt failed, null once connected. */
+  lastError: string | null;
   pendingAsks: number;
   bindings: number;
   startedAt: string;
@@ -29,8 +35,15 @@ export type Response =
   | { ok: true; kind: 'bind'; chatId: string; created: boolean; name: string }
   | { ok: true; kind: 'list'; bindings: Array<{ root: string; label: string; chatId: string; paneId: string | null; away: boolean }> }
   | { ok: true; kind: 'ack' }
-  /** code maps 1:1 onto the CLI exit code the client should use. */
-  | { ok: false; code: 1 | 2 | 3 | 4; message: string };
+  /**
+   * code maps 1:1 onto the CLI exit code the client should use. `reason` is
+   * set by the client library for failures it produced itself, so callers can
+   * branch on it instead of on wording.
+   */
+  | { ok: false; code: 1 | 2 | 3 | 4; message: string; reason?: FailureReason };
+
+/** down: nothing listening · connect: other connect error · closed: dropped before the result · timeout: client-side timeoutMs · parse: the daemon could not parse the request */
+export type FailureReason = 'down' | 'connect' | 'closed' | 'timeout' | 'parse';
 
 /**
  * Frames the daemon may push before the final one. The wrapper uses `frame`,
@@ -39,8 +52,10 @@ export type Response =
  */
 export type Frame = { frame: 'note'; text: string } | { frame: 'result'; body: Response };
 
-export function isDaemonListening(): boolean {
-  return existsSync(sockPath());
+/** Is a daemon answering on this state dir's endpoint? Decided by a ping, never by a file: a socket file can outlive its process, a pipe cannot be probed any other way. */
+export async function isDaemonListening(timeoutMs = 1000): Promise<boolean> {
+  const res = await request({ type: 'ping' }, { timeoutMs });
+  return res.ok && res.kind === 'pong';
 }
 
 /**
@@ -65,7 +80,7 @@ export function request(
       resolve(r);
     };
 
-    const sock = createConnection(sockPath());
+    const sock = createConnection(ipcEndpoint());
     let buf = '';
 
     sock.on('connect', () => {
@@ -92,18 +107,20 @@ export function request(
       }
     });
     sock.on('error', (err: NodeJS.ErrnoException) => {
-      const hint =
-        err.code === 'ENOENT' || err.code === 'ECONNREFUSED'
-          ? msg.ipcDaemonDown
-          : fill(msg.ipcConnect, { message: err.message });
-      done({ ok: false, code: 3, message: hint });
+      const down = err.code === 'ENOENT' || err.code === 'ECONNREFUSED';
+      done({
+        ok: false,
+        code: 3,
+        message: down ? msg.ipcDaemonDown : fill(msg.ipcConnect, { message: err.message }),
+        reason: down ? 'down' : 'connect',
+      });
     });
     sock.on('close', () => {
-      done({ ok: false, code: 3, message: msg.ipcClosed });
+      done({ ok: false, code: 3, message: msg.ipcClosed, reason: 'closed' });
     });
     if (opts.timeoutMs) {
       sock.setTimeout(opts.timeoutMs, () => {
-        done({ ok: false, code: 3, message: msg.ipcTimeout });
+        done({ ok: false, code: 3, message: msg.ipcTimeout, reason: 'timeout' });
       });
     }
   });
@@ -116,13 +133,13 @@ export interface ServeHandlers {
 
 export function serve(handlers: ServeHandlers): Promise<Server> {
   ensureHomeDir();
-  const path = sockPath();
-  // A socket file nobody answers on is a crash leftover: replace it.
-  if (existsSync(path)) {
+  // A socket file nobody answers on is a crash leftover: replace it. Only a
+  // thing on Unix — a Windows pipe name disappears with its process.
+  if (platform() !== 'win32') {
     try {
-      unlinkSync(path);
+      unlinkSync(sockPath());
     } catch {
-      // fall through; listen() will report the real problem
+      // nothing there, or not ours to remove; listen() will report the real problem
     }
   }
   return new Promise((resolve, reject) => {
@@ -145,7 +162,7 @@ export function serve(handlers: ServeHandlers): Promise<Server> {
         try {
           req = JSON.parse(line) as Request;
         } catch {
-          sock.write(`${JSON.stringify({ frame: 'result', body: { ok: false, code: 1, message: msg.ipcBadRequest } })}\n`);
+          sock.write(`${JSON.stringify({ frame: 'result', body: { ok: false, code: 1, message: msg.ipcBadRequest, reason: 'parse' } })}\n`);
           sock.end();
           return;
         }
@@ -168,6 +185,6 @@ export function serve(handlers: ServeHandlers): Promise<Server> {
       });
     });
     server.on('error', reject);
-    server.listen(path, () => resolve(server));
+    server.listen(ipcEndpoint(), () => resolve(server));
   });
 }

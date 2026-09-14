@@ -13468,14 +13468,14 @@ var require_axios = __commonJS({
       navigator: _navigator,
       origin
     });
-    var platform2 = {
+    var platform5 = {
       ...utils,
       ...platform$1
     };
     function toURLEncodedForm(data, options) {
-      return toFormData(data, new platform2.classes.URLSearchParams(), {
+      return toFormData(data, new platform5.classes.URLSearchParams(), {
         visitor: function(value, key, path3, helpers) {
-          if (platform2.isNode && utils$1.isBuffer(value)) {
+          if (platform5.isNode && utils$1.isBuffer(value)) {
             this.append(key, value.toString("base64"));
             return false;
           }
@@ -13639,8 +13639,8 @@ var require_axios = __commonJS({
       maxContentLength: -1,
       maxBodyLength: -1,
       env: {
-        FormData: platform2.classes.FormData,
-        Blob: platform2.classes.Blob
+        FormData: platform5.classes.FormData,
+        Blob: platform5.classes.Blob
       },
       validateStatus: function validateStatus(status) {
         return status >= 200 && status < 300;
@@ -13828,7 +13828,7 @@ var require_axios = __commonJS({
     }
     var DATA_URL_PATTERN = /^([^,;/]+\/[^,;/]+)?((?:;[^,;=]+=[^,;]+)*)(;base64)?,([\s\S]*)$/;
     function fromDataURI(uri, asBlob, options) {
-      const _Blob = options && options.Blob || platform2.classes.Blob;
+      const _Blob = options && options.Blob || platform5.classes.Blob;
       const protocol = parseProtocol(uri);
       if (asBlob === void 0 && _Blob) {
         asBlob = true;
@@ -13999,7 +13999,7 @@ var require_axios = __commonJS({
         yield blob;
       }
     };
-    var BOUNDARY_ALPHABET = platform2.ALPHABET.ALPHA_DIGIT + "-_";
+    var BOUNDARY_ALPHABET = platform5.ALPHABET.ALPHA_DIGIT + "-_";
     var textEncoder = typeof TextEncoder === "function" ? new TextEncoder() : new util.TextEncoder();
     var CRLF = "\r\n";
     var CRLF_BYTES = textEncoder.encode(CRLF);
@@ -14047,7 +14047,7 @@ var require_axios = __commonJS({
       const {
         tag = "form-data-boundary",
         size = 25,
-        boundary = tag + "-" + platform2.generateString(size, BOUNDARY_ALPHABET)
+        boundary = tag + "-" + platform5.generateString(size, BOUNDARY_ALPHABET)
       } = options || {};
       if (!utils$1.isFormData(form)) {
         throw new TypeError("FormData instance required");
@@ -14803,7 +14803,7 @@ var require_axios = __commonJS({
       cache.set(key, agent);
       return agent;
     }
-    var supportedProtocols = platform2.protocols.map((protocol) => {
+    var supportedProtocols = platform5.protocols.map((protocol) => {
       return protocol + ":";
     });
     var decodeURIComponentSafe$1 = (value) => {
@@ -15150,7 +15150,7 @@ var require_axios = __commonJS({
           }
         });
         const fullPath = buildFullPath(own2("baseURL"), own2("url"), own2("allowAbsoluteUrls"), config);
-        const urlBase = socketPath ? "http://localhost" : platform2.hasBrowserEnv ? platform2.origin : void 0;
+        const urlBase = socketPath ? "http://localhost" : platform5.hasBrowserEnv ? platform5.origin : void 0;
         const parsed = new URL(fullPath, urlBase);
         const protocol = parsed.protocol || supportedProtocols[0];
         if (protocol === "data:") {
@@ -15613,11 +15613,11 @@ var require_axios = __commonJS({
         }
       });
     };
-    var isURLSameOrigin = platform2.hasStandardBrowserEnv ? /* @__PURE__ */ ((origin2, isMSIE) => (url2) => {
-      url2 = new URL(url2, platform2.origin);
+    var isURLSameOrigin = platform5.hasStandardBrowserEnv ? /* @__PURE__ */ ((origin2, isMSIE) => (url2) => {
+      url2 = new URL(url2, platform5.origin);
       return origin2.protocol === url2.protocol && origin2.host === url2.host && (isMSIE || origin2.port === url2.port);
-    })(new URL(platform2.origin), platform2.navigator && /(msie|trident)/i.test(platform2.navigator.userAgent)) : () => true;
-    var cookies = platform2.hasStandardBrowserEnv ? (
+    })(new URL(platform5.origin), platform5.navigator && /(msie|trident)/i.test(platform5.navigator.userAgent)) : () => true;
+    var cookies = platform5.hasStandardBrowserEnv ? (
       // Standard browser envs support document.cookie
       {
         write(name, value, expires, path3, domain, secure, sameSite) {
@@ -15827,13 +15827,13 @@ var require_axios = __commonJS({
       }
       if (utils$1.isFormData(data)) {
         const getHeaders = utils$1.getSafeProp(data, "getHeaders");
-        if (platform2.hasStandardBrowserEnv || platform2.hasStandardBrowserWebWorkerEnv || utils$1.isReactNative(data)) {
+        if (platform5.hasStandardBrowserEnv || platform5.hasStandardBrowserWebWorkerEnv || utils$1.isReactNative(data)) {
           headers.setContentType(void 0);
         } else if (utils$1.isFunction(getHeaders)) {
           setFormDataHeaders(headers, getHeaders.call(data), own2("formDataHeaderPolicy"));
         }
       }
-      if (platform2.hasStandardBrowserEnv) {
+      if (platform5.hasStandardBrowserEnv) {
         if (utils$1.isFunction(withXSRFToken)) {
           withXSRFToken = withXSRFToken(newConfig);
         }
@@ -15874,7 +15874,7 @@ var require_axios = __commonJS({
           if (!request2) {
             return;
           }
-          if (request2.status === 0 && (parseProtocol(normalizeURLForProtocolCheck(_config.url)) || parseProtocol(platform2.origin)) !== "file" && !(request2.responseURL && request2.responseURL.startsWith("file:"))) {
+          if (request2.status === 0 && (parseProtocol(normalizeURLForProtocolCheck(_config.url)) || parseProtocol(platform5.origin)) !== "file" && !(request2.responseURL && request2.responseURL.startsWith("file:"))) {
             reject(new AxiosError("Request aborted", AxiosError.ECONNABORTED, config, request2));
             done();
             request2 = null;
@@ -15989,7 +15989,7 @@ var require_axios = __commonJS({
           }
         }
         const protocol = parseProtocol(_config.url);
-        if (protocol && !platform2.protocols.includes(protocol)) {
+        if (protocol && !platform5.protocols.includes(protocol)) {
           reject(new AxiosError("Unsupported protocol " + protocol + ":", AxiosError.ERR_BAD_REQUEST, config));
           done();
           return;
@@ -16194,7 +16194,7 @@ var require_axios = __commonJS({
       const encodeText = isFetchSupported && (typeof TextEncoder2 === "function" ? /* @__PURE__ */ ((encoder) => (str2) => encoder.encode(str2))(new TextEncoder2()) : async (str2) => new Uint8Array(await new Request(str2).arrayBuffer()));
       const supportsRequestStream = isRequestSupported && isReadableStreamSupported && test(() => {
         let duplexAccessed = false;
-        const request2 = new Request(platform2.origin, {
+        const request2 = new Request(platform5.origin, {
           body: new ReadableStream2(),
           method: "POST",
           get duplex() {
@@ -16231,7 +16231,7 @@ var require_axios = __commonJS({
           return body.size;
         }
         if (utils$1.isSpecCompliantForm(body)) {
-          const _request = new Request(platform2.origin, {
+          const _request = new Request(platform5.origin, {
             method: "POST",
             body
           });
@@ -16294,7 +16294,7 @@ var require_axios = __commonJS({
             };
           }
           if (maybeWithAuthCredentials(url2)) {
-            const parsedURL = new URL(url2, platform2.origin);
+            const parsedURL = new URL(url2, platform5.origin);
             if (!auth && (parsedURL.username || parsedURL.password)) {
               const urlUsername = decodeURIComponentSafe(parsedURL.username);
               const urlPassword = decodeURIComponentSafe(parsedURL.password);
@@ -22753,7 +22753,7 @@ var require_websocket = __commonJS({
     var http3 = __require("http");
     var net3 = __require("net");
     var tls2 = __require("tls");
-    var { randomBytes, createHash: createHash3 } = __require("crypto");
+    var { randomBytes, createHash: createHash4 } = __require("crypto");
     var { Duplex, Readable } = __require("stream");
     var { URL: URL3 } = __require("url");
     var PerMessageDeflate = require_permessage_deflate();
@@ -23421,7 +23421,7 @@ var require_websocket = __commonJS({
           abortHandshake(websocket, socket, "Invalid Upgrade header");
           return;
         }
-        const digest = createHash3("sha1").update(key + GUID).digest("base64");
+        const digest = createHash4("sha1").update(key + GUID).digest("base64");
         if (res.headers["sec-websocket-accept"] !== digest) {
           abortHandshake(websocket, socket, "Invalid Sec-WebSocket-Accept header");
           return;
@@ -23790,7 +23790,7 @@ var require_websocket_server = __commonJS({
     var EventEmitter = __require("events");
     var http3 = __require("http");
     var { Duplex } = __require("stream");
-    var { createHash: createHash3 } = __require("crypto");
+    var { createHash: createHash4 } = __require("crypto");
     var extension = require_extension();
     var PerMessageDeflate = require_permessage_deflate();
     var subprotocol = require_subprotocol();
@@ -24097,7 +24097,7 @@ var require_websocket_server = __commonJS({
           );
         }
         if (this._state > RUNNING) return abortHandshake(socket, 503);
-        const digest = createHash3("sha1").update(key + GUID).digest("base64");
+        const digest = createHash4("sha1").update(key + GUID).digest("base64");
         const headers = [
           "HTTP/1.1 101 Switching Protocols",
           "Upgrade: websocket",
@@ -136414,7 +136414,9 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       daemonNotRunning: "daemon: not running",
       daemonNoAnswer: "daemon: no answer ({message})",
       daemonWeird: "daemon: unrecognized reply",
-      daemonStatusLine: "daemon: pid {pid}  connection {connection}  pending questions {pending}  bound projects {bindings}  started {startedAt}",
+      daemonStatusLine: "daemon: pid {pid}  connected {connected}  connection {connection}  pending questions {pending}  bound projects {bindings}  started {startedAt}",
+      daemonLastError: "  last error: {error}",
+      daemonStopStuck: "daemon: still answering 10 s after the stop request; see the log: {log}",
       daemonWasNotRunning: "daemon: was not running",
       daemonStopRefused: '{n} question(s) still pending on the phone. Stopping the daemon now turns those cards into "\u26A0\uFE0F Cancelled" \u2014 a dead card for the human.\nWait for the answer, or do it anyway: agent-lark daemon --stop --force',
       daemonStopped: "daemon: stopped",
@@ -136422,7 +136424,10 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       daemonStarted: "daemon: started in the background, pid {pid} (log {log})",
       daemonNoReply: "daemon started but did not answer within 10 s; see the log: {log}",
       daemonNoCreds: "no Feishu app credentials found. Run agent-lark setup first (or set AGENT_LARK_APP_ID / AGENT_LARK_APP_SECRET)",
-      daemonReady: "agent-lark daemon: pid {pid}, connected to Feishu, socket {sock}",
+      daemonReady: "agent-lark daemon: pid {pid}, listening at {sock}, connecting to Feishu in the background",
+      notConnected: "not connected to Feishu ({error}); the daemon keeps retrying, try again shortly",
+      reconnecting: "the connection to Feishu dropped, reconnecting",
+      connecting: "still connecting",
       // bind / unbind
       bindCreated: '\u2705 Created Feishu group "{name}" and bound it to {root}\n   Open Feishu to see the group; questions from this project will land there.',
       bindExisting: "\u2705 Bound to existing group {chatId} ({root})",
@@ -136448,7 +136453,7 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       statusHerdrIn: "herdr: inside herdr, current pane {pane}",
       statusHerdrOut: "herdr: not inside herdr (phone messages have nowhere to be injected)",
       statusDaemonDown: "daemon: not running (agent-lark daemon --detach)",
-      statusDaemonLine: "daemon: pid {pid}, connection {connection}, pending questions {pending}",
+      statusDaemonLine: "daemon: pid {pid}, connected {connected}, connection {connection}, pending questions {pending}",
       statusNoBindings: "bindings: none yet",
       statusBindings: "bindings:",
       statusBindingLine: "  {mark} {label}  group {chatId}  pane {pane}  remote {away}",
@@ -136809,8 +136814,9 @@ var init_herdr = __esm({
 
 // src/paths.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
+import { createHash as createHash2 } from "node:crypto";
 import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync as readFileSync2, renameSync as renameSync2, writeFileSync as writeFileSync2 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
+import { homedir as homedir2, platform as platform2 } from "node:os";
 import { basename, join as join2, resolve } from "node:path";
 function homeDir() {
   const override = process.env.AGENT_LARK_HOME?.trim();
@@ -136820,6 +136826,10 @@ function ensureHomeDir() {
   const dir = homeDir();
   mkdirSync2(dir, { recursive: true, mode: 448 });
   return dir;
+}
+function ipcEndpoint() {
+  if (platform2() === "win32") return `\\\\.\\pipe\\agent-lark-${createHash2("sha1").update(homeDir()).digest("hex").slice(0, 12)}`;
+  return sockPath();
 }
 function projectRoot(cwd = process.cwd()) {
   try {
@@ -136892,16 +136902,12 @@ var init_paths = __esm({
 });
 
 // src/ipc.ts
-var ipc_exports = {};
-__export(ipc_exports, {
-  isDaemonListening: () => isDaemonListening,
-  request: () => request,
-  serve: () => serve
-});
 import { createConnection, createServer } from "node:net";
-import { existsSync as existsSync3, unlinkSync as unlinkSync2 } from "node:fs";
-function isDaemonListening() {
-  return existsSync3(sockPath());
+import { unlinkSync as unlinkSync2 } from "node:fs";
+import { platform as platform3 } from "node:os";
+async function isDaemonListening(timeoutMs = 1e3) {
+  const res = await request({ type: "ping" }, { timeoutMs });
+  return res.ok && res.kind === "pong";
 }
 function request(req, opts = {}) {
   return new Promise((resolve3) => {
@@ -136915,7 +136921,7 @@ function request(req, opts = {}) {
       }
       resolve3(r);
     };
-    const sock = createConnection(sockPath());
+    const sock = createConnection(ipcEndpoint());
     let buf = "";
     sock.on("connect", () => {
       sock.write(`${JSON.stringify(req)}
@@ -136942,25 +136948,29 @@ function request(req, opts = {}) {
       }
     });
     sock.on("error", (err) => {
-      const hint = err.code === "ENOENT" || err.code === "ECONNREFUSED" ? msg.ipcDaemonDown : fill(msg.ipcConnect, { message: err.message });
-      done({ ok: false, code: 3, message: hint });
+      const down = err.code === "ENOENT" || err.code === "ECONNREFUSED";
+      done({
+        ok: false,
+        code: 3,
+        message: down ? msg.ipcDaemonDown : fill(msg.ipcConnect, { message: err.message }),
+        reason: down ? "down" : "connect"
+      });
     });
     sock.on("close", () => {
-      done({ ok: false, code: 3, message: msg.ipcClosed });
+      done({ ok: false, code: 3, message: msg.ipcClosed, reason: "closed" });
     });
     if (opts.timeoutMs) {
       sock.setTimeout(opts.timeoutMs, () => {
-        done({ ok: false, code: 3, message: msg.ipcTimeout });
+        done({ ok: false, code: 3, message: msg.ipcTimeout, reason: "timeout" });
       });
     }
   });
 }
 function serve(handlers) {
   ensureHomeDir();
-  const path2 = sockPath();
-  if (existsSync3(path2)) {
+  if (platform3() !== "win32") {
     try {
-      unlinkSync2(path2);
+      unlinkSync2(sockPath());
     } catch {
     }
   }
@@ -136983,7 +136993,7 @@ function serve(handlers) {
         try {
           req = JSON.parse(line);
         } catch {
-          sock.write(`${JSON.stringify({ frame: "result", body: { ok: false, code: 1, message: msg.ipcBadRequest } })}
+          sock.write(`${JSON.stringify({ frame: "result", body: { ok: false, code: 1, message: msg.ipcBadRequest, reason: "parse" } })}
 `);
           sock.end();
           return;
@@ -137009,7 +137019,7 @@ function serve(handlers) {
       });
     });
     server.on("error", reject);
-    server.listen(path2, () => resolve3(server));
+    server.listen(ipcEndpoint(), () => resolve3(server));
   });
 }
 var init_ipc = __esm({
@@ -137312,12 +137322,13 @@ var init_cards = __esm({
 // src/daemon.ts
 var daemon_exports = {};
 __export(daemon_exports, {
+  DaemonStartError: () => DaemonStartError,
   runDaemon: () => runDaemon
 });
-import { appendFileSync, mkdirSync as mkdirSync3, readFileSync as readFileSync4, realpathSync, statSync as statSync2, writeFileSync as writeFileSync4, unlinkSync as unlinkSync3, existsSync as existsSync4 } from "node:fs";
-import { createHash as createHash2, randomUUID as randomUUID2 } from "node:crypto";
+import { appendFileSync, mkdirSync as mkdirSync3, readFileSync as readFileSync4, realpathSync, statSync as statSync2, writeFileSync as writeFileSync4, unlinkSync as unlinkSync3, existsSync as existsSync3 } from "node:fs";
+import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
 import { basename as basename2, join as join3, sep } from "node:path";
-import { tmpdir } from "node:os";
+import { platform as platform4, tmpdir } from "node:os";
 function log(event, detail = {}) {
   const line = `${(/* @__PURE__ */ new Date()).toISOString()} ${event} ${JSON.stringify(detail)}
 `;
@@ -137331,7 +137342,7 @@ function within(child, parent) {
   return child.startsWith(parent.endsWith(sep) ? parent : parent + sep);
 }
 function resolveSendable(path2, root) {
-  if (!existsSync4(path2)) return { error: fill(msg.fileMissing, { path: path2 }) };
+  if (!existsSync3(path2)) return { error: fill(msg.fileMissing, { path: path2 }) };
   let real;
   try {
     real = realpathSync(path2);
@@ -137355,29 +137366,19 @@ function resolveSendable(path2, root) {
     return { error: fill(msg.fileTooBig, { size: (st.size / 1024 / 1024).toFixed(1), cap: cap / 1024 / 1024 }) };
   return { real, bytes: readFileSync4(real) };
 }
-async function runDaemon() {
+async function runDaemon(deps = {}) {
   const creds = resolveCreds();
-  if (!creds) {
-    process.stderr.write(`${msg.prefix}${msg.daemonNoCreds}
-`);
-    process.exit(4);
-  }
+  if (!creds) throw new DaemonStartError(4, msg.daemonNoCreds);
   ensureHomeDir();
-  if (existsSync4(sockPath())) {
-    const { request: request2 } = await Promise.resolve().then(() => (init_ipc(), ipc_exports));
-    const probe = await request2({ type: "ping" }, { timeoutMs: 2e3 });
-    if (probe.ok) {
-      process.stderr.write(`${msg.prefix}${msg.daemonAlready}
-`);
-      process.exit(3);
-    }
-  }
+  if (await isDaemonListening(2e3)) throw new DaemonStartError(3, msg.daemonAlready);
+  const herdr = deps.herdr ?? { agentList, promptPane, findPaneForProject };
+  const retryMs = deps.connectRetryMs ?? CONNECT_RETRY_MS;
   const bindings = new BindingStore();
   const pendings = /* @__PURE__ */ new Map();
   const lastStatus = /* @__PURE__ */ new Map();
   const lastStatusPush = /* @__PURE__ */ new Map();
   const startedAt = (/* @__PURE__ */ new Date()).toISOString();
-  const channel = createLarkChannel({
+  const channel = (deps.createChannel ?? createLarkChannel)({
     appId: creds.appId,
     appSecret: creds.appSecret,
     policy: {
@@ -137451,12 +137452,12 @@ async function runDaemon() {
   };
   const inject = async (b, text) => {
     let paneId = b.paneId;
-    if (!paneId) paneId = findPaneForProject(await agentList(), b.root);
+    if (!paneId) paneId = herdr.findPaneForProject(await herdr.agentList(), b.root);
     if (!paneId) {
       await receipt(b, t("zh").receiptNoPane);
       return;
     }
-    const outcome = await promptPane(paneId, `${INJECT_PREFIX}${text}`);
+    const outcome = await herdr.promptPane(paneId, `${INJECT_PREFIX}${text}`);
     log("inject", { root: b.root, paneId, ok: outcome.ok, code: outcome.code });
     if (!outcome.ok) await receipt(b, explainPromptFailure(outcome.code, outcome.message));
   };
@@ -137466,7 +137467,7 @@ async function runDaemon() {
       const res = await channel.rawClient.speech_to_text.speech.fileRecognize({
         data: {
           speech: { speech: b64 },
-          config: { file_id: createHash2("sha1").update(audioPath).digest("hex").slice(0, 16), format: "opus", engine_type: "16k_auto" }
+          config: { file_id: createHash3("sha1").update(audioPath).digest("hex").slice(0, 16), format: "opus", engine_type: "16k_auto" }
         }
       });
       const text = res.data?.recognition_text?.trim();
@@ -137479,7 +137480,7 @@ async function runDaemon() {
   const saveResources = async (incoming) => {
     const out = { files: [], spoken: [], unheard: 0 };
     if (!incoming.resources.length) return out;
-    const dir = join3(homeDir(), "media", createHash2("sha1").update(incoming.chatId).digest("hex").slice(0, 12));
+    const dir = join3(homeDir(), "media", createHash3("sha1").update(incoming.chatId).digest("hex").slice(0, 12));
     mkdirSync3(dir, { recursive: true, mode: 448 });
     for (const res of incoming.resources) {
       const kind = res.type === "image" ? "image" : "file";
@@ -137561,18 +137562,53 @@ ${list}`;
       card: { type: "raw", data: closed }
     };
   });
+  let connected = false;
+  let lastError = null;
+  let stopping = false;
+  let retryTimer;
+  let wakeRetry;
   channel.on("error", (err) => log("channel.error", { code: err.code, message: err.message }));
-  channel.on("reconnecting", () => log("channel.reconnecting"));
-  channel.on("reconnected", () => log("channel.reconnected"));
-  await channel.connect();
-  log("daemon.connected", { bindings: bindings.all().length, credSource: creds.source });
+  channel.on("reconnecting", () => {
+    connected = false;
+    lastError = msg.reconnecting;
+    log("channel.reconnecting");
+  });
+  channel.on("reconnected", () => {
+    connected = true;
+    lastError = null;
+    log("channel.reconnected");
+  });
+  const connectLoop = async () => {
+    let delay = retryMs;
+    while (!stopping) {
+      try {
+        await channel.connect();
+        if (stopping) return;
+        connected = true;
+        lastError = null;
+        log("daemon.connected", { bindings: bindings.all().length, credSource: creds.source });
+        return;
+      } catch (err) {
+        if (stopping) return;
+        lastError = err instanceof Error ? err.message : String(err);
+        log("channel.connect-failed", { message: lastError, retryMs: delay });
+        await new Promise((resolve3) => {
+          wakeRetry = resolve3;
+          retryTimer = setTimeout(resolve3, delay);
+        });
+        delay = Math.min(delay * 2, CONNECT_RETRY_MAX_MS);
+      }
+    }
+  };
+  const notConnected = () => ({ ok: false, code: 3, message: fill(msg.notConnected, { error: lastError ?? msg.connecting }) });
+  const agents = herdr.agentList;
   const poll = async () => {
     const away = bindings.all().filter((b) => b.away && b.paneId);
     if (!away.length) return;
-    const agents = await agentList();
+    const live = await agents();
     for (const b of away) {
       if (pendingFor(b.root)) continue;
-      const a = agents.find((x) => x.pane_id === b.paneId);
+      const a = live.find((x) => x.pane_id === b.paneId);
       if (!a) continue;
       const prev = lastStatus.get(b.root);
       lastStatus.set(b.root, a.agent_status);
@@ -137594,28 +137630,80 @@ ${list}`;
   const pollTimer = setInterval(() => void poll(), POLL_MS);
   pollTimer.unref();
   let server;
-  const shutdown = async (why) => {
-    log("daemon.stopping", { why });
-    clearInterval(pollTimer);
-    for (const p of [...pendings.values()]) {
-      await closeWithout(p, "cancelled", {
-        ok: false,
-        code: 3,
-        message: msg.askCancelledStop
+  const sockets = /* @__PURE__ */ new Set();
+  let resolveDone;
+  const done = new Promise((resolve3) => {
+    resolveDone = resolve3;
+  });
+  const signals = ["SIGINT", "SIGTERM", "SIGHUP"];
+  const onSignal = {
+    SIGINT: () => void stop("SIGINT"),
+    SIGTERM: () => void stop("SIGTERM"),
+    SIGHUP: () => void stop("SIGHUP")
+  };
+  const closeServer = async () => {
+    if (!server) return;
+    const srv = server;
+    await new Promise((resolve3) => {
+      const grace = setTimeout(() => {
+        for (const s of sockets) s.destroy();
+        log("daemon.close-forced", { sockets: sockets.size });
+      }, CLOSE_GRACE_MS);
+      srv.close(() => {
+        clearTimeout(grace);
+        resolve3();
       });
+    });
+  };
+  const stop = async (why) => {
+    if (stopping) return done;
+    stopping = true;
+    log("daemon.stopping", { why });
+    for (const sig of signals) process.off(sig, onSignal[sig]);
+    clearInterval(pollTimer);
+    if (retryTimer) clearTimeout(retryTimer);
+    wakeRetry?.();
+    const cancelled = [...pendings.values()];
+    for (const p of cancelled) {
+      p.done = true;
+      clearTimeout(p.timer);
+      pendings.delete(p.reqId);
+      p.settle({ ok: false, code: 3, message: msg.askCancelledStop });
+      log("ask.cancelled", { reqId: p.reqId, root: p.root });
     }
+    await Promise.all(
+      cancelled.map(async (p) => {
+        let bound;
+        const timeout = new Promise((resolve3) => {
+          bound = setTimeout(() => resolve3("timeout"), CANCEL_CARD_MS);
+        });
+        try {
+          const outcome = await Promise.race([
+            channel.updateCard(p.messageId, askCard({ payload: p.payload, projectLabel: p.label, reqId: p.reqId, state: "cancelled" })),
+            timeout
+          ]);
+          if (outcome === "timeout") log("ask.update-timeout", { reqId: p.reqId });
+        } catch (err) {
+          log("ask.update-failed", { reqId: p.reqId, err: String(err) });
+        } finally {
+          clearTimeout(bound);
+        }
+      })
+    );
     try {
       await channel.disconnect();
     } catch {
     }
-    server?.close();
-    for (const f of [sockPath(), pidPath()]) {
+    await closeServer();
+    const leftovers = platform4() === "win32" ? [pidPath()] : [sockPath(), pidPath()];
+    for (const f of leftovers) {
       try {
-        if (existsSync4(f)) unlinkSync3(f);
+        unlinkSync3(f);
       } catch {
       }
     }
-    process.exit(0);
+    log("daemon.stopped", { why });
+    resolveDone();
   };
   server = await serve({
     handle: async (req, ctx2) => {
@@ -137626,14 +137714,16 @@ ${list}`;
             kind: "pong",
             status: {
               pid: process.pid,
-              connection: channel.getConnectionStatus()?.state ?? "unknown",
+              connection: channel.getConnectionStatus()?.state ?? "connecting",
+              connected,
+              lastError,
               pendingAsks: pendings.size,
               bindings: bindings.all().length,
               startedAt
             }
           };
         case "stop":
-          setTimeout(() => void shutdown("stop requested"), 50);
+          setTimeout(() => void stop("stop requested"), 50);
           return { ok: true, kind: "ack" };
         case "list":
           return {
@@ -137667,6 +137757,7 @@ ${list}`;
             bindings.touch(req.root, { paneId: req.paneId, label: req.label });
             return { ok: true, kind: "bind", chatId: existing.chatId, created: false, name: existing.label };
           }
+          if (!connected) return notConnected();
           const marker = `agent-lark \xB7 ${req.root}`;
           try {
             for (const summary of await channel.listChats()) {
@@ -137750,6 +137841,7 @@ ${list}`;
         case "notify": {
           const b = bindings.touch(req.root, { paneId: req.paneId, label: req.label });
           if (!b) return { ok: false, code: 4, message: msg.notBound };
+          if (!connected) return notConnected();
           let payload;
           try {
             payload = validateNotify(req.payload);
@@ -137768,6 +137860,7 @@ ${list}`;
         case "sendFile": {
           const b = bindings.touch(req.root, { paneId: req.paneId, label: req.label });
           if (!b) return { ok: false, code: 4, message: msg.notBound };
+          if (!connected) return notConnected();
           const checked = resolveSendable(req.path, b.root);
           if ("error" in checked) return { ok: false, code: 1, message: checked.error };
           const { real, bytes } = checked;
@@ -137789,6 +137882,7 @@ ${list}`;
           const b = bindings.touch(req.root, { paneId: req.paneId, label: req.label });
           if (!b) return { ok: false, code: 4, message: msg.notBound };
           if (pendingFor(req.root)) return { ok: false, code: 4, message: msg.askPending };
+          if (!connected) return notConnected();
           let payload;
           try {
             payload = validateAsk(req.payload);
@@ -137842,16 +137936,18 @@ ${list}`;
       }
     }
   });
+  server.on("connection", (s) => {
+    sockets.add(s);
+    s.on("close", () => sockets.delete(s));
+  });
   writeFileSync4(pidPath(), `${process.pid}
 `, { mode: 384 });
-  log("daemon.started", { pid: process.pid });
-  process.stdout.write(`${fill(msg.daemonReady, { pid: process.pid, sock: sockPath() })}
-`);
-  for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-    process.on(sig, () => void shutdown(sig));
-  }
+  log("daemon.started", { pid: process.pid, endpoint: ipcEndpoint() });
+  for (const sig of signals) process.on(sig, onSignal[sig]);
+  void connectLoop();
+  return { stop: () => stop("stop()"), done };
 }
-var INJECT_PREFIX, POLL_MS, STATUS_COOLDOWN_MS, MAX_IMAGE_BYTES, MAX_FILE_BYTES;
+var INJECT_PREFIX, POLL_MS, STATUS_COOLDOWN_MS, CONNECT_RETRY_MS, CONNECT_RETRY_MAX_MS, CLOSE_GRACE_MS, CANCEL_CARD_MS, DaemonStartError, MAX_IMAGE_BYTES, MAX_FILE_BYTES;
 var init_daemon = __esm({
   "src/daemon.ts"() {
     "use strict";
@@ -137867,6 +137963,17 @@ var init_daemon = __esm({
     INJECT_PREFIX = "[agent-lark remote] ";
     POLL_MS = 5e3;
     STATUS_COOLDOWN_MS = 6e4;
+    CONNECT_RETRY_MS = 5e3;
+    CONNECT_RETRY_MAX_MS = 6e4;
+    CLOSE_GRACE_MS = 2e3;
+    CANCEL_CARD_MS = 3e3;
+    DaemonStartError = class extends Error {
+      constructor(code, message) {
+        super(message);
+        this.code = code;
+        this.name = "DaemonStartError";
+      }
+    };
     MAX_IMAGE_BYTES = 10 * 1024 * 1024;
     MAX_FILE_BYTES = 30 * 1024 * 1024;
   }
@@ -137883,7 +137990,7 @@ init_paths();
 init_texts();
 init_validate();
 import { spawn } from "node:child_process";
-import { existsSync as existsSync5, openSync, realpathSync as realpathSync2, unlinkSync as unlinkSync4 } from "node:fs";
+import { existsSync as existsSync4, openSync, realpathSync as realpathSync2, unlinkSync as unlinkSync4 } from "node:fs";
 import { resolve as resolve2 } from "node:path";
 import { fileURLToPath } from "node:url";
 for (const stream of [process.stdout, process.stderr]) {
@@ -138070,11 +138177,7 @@ ${s}
   bilingual("setupNext");
   process.stdout.write("  agent-lark daemon --detach\n  cd <project> && agent-lark bind\n");
 }
-async function daemonAlive() {
-  if (!isDaemonListening()) return false;
-  const probe = await request({ type: "ping" }, { timeoutMs: 2e3 });
-  return probe.ok;
-}
+var daemonAlive = () => isDaemonListening(2e3);
 async function startDaemonDetached() {
   if (await daemonAlive()) return { ok: true, message: msg.daemonAlready };
   ensureHomeDir();
@@ -138082,28 +138185,30 @@ async function startDaemonDetached() {
   const self2 = fileURLToPath(import.meta.url);
   const child = spawn(process.execPath, [self2, "daemon"], { detached: true, stdio: ["ignore", out, out] });
   child.unref();
-  for (let i = 0; i < 20; i++) {
-    await new Promise((r) => setTimeout(r, 500));
-    if (await daemonAlive()) return { ok: true, message: fill(msg.daemonStarted, { pid: child.pid ?? "?", log: logPath() }) };
+  const deadline = Date.now() + 1e4;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 250));
+    if (await isDaemonListening(1e3)) return { ok: true, message: fill(msg.daemonStarted, { pid: child.pid ?? "?", log: logPath() }) };
   }
   return { ok: false, message: fill(msg.daemonNoReply, { log: logPath() }) };
 }
 async function cmdDaemon(args) {
   if (flag(args, "status")) {
-    if (!isDaemonListening()) die(1, msg.daemonNotRunning);
     const res = await request({ type: "ping" }, { timeoutMs: 5e3 });
-    if (!res.ok) die(1, fill(msg.daemonNoAnswer, { message: res.message }));
+    if (!res.ok) die(1, res.reason === "down" ? msg.daemonNotRunning : fill(msg.daemonNoAnswer, { message: res.message }));
     if (res.kind !== "pong") die(1, msg.daemonWeird);
     const s = res.status;
     process.stdout.write(
-      `${fill(msg.daemonStatusLine, { pid: s.pid, connection: s.connection, pending: s.pendingAsks, bindings: s.bindings, startedAt: s.startedAt })}
+      `${fill(msg.daemonStatusLine, { pid: s.pid, connected: String(s.connected), connection: s.connection, pending: s.pendingAsks, bindings: s.bindings, startedAt: s.startedAt })}
 `
     );
+    if (s.lastError) process.stdout.write(`${fill(msg.daemonLastError, { error: s.lastError })}
+`);
     return;
   }
   if (flag(args, "stop")) {
-    if (!isDaemonListening()) {
-      if (existsSync5(pidPath())) unlinkSync4(pidPath());
+    if (!await daemonAlive()) {
+      if (existsSync4(pidPath())) unlinkSync4(pidPath());
       process.stdout.write(`${msg.daemonWasNotRunning}
 `);
       return;
@@ -138115,13 +138220,16 @@ async function cmdDaemon(args) {
     }
     const res = await request({ type: "stop" }, { timeoutMs: 5e3 });
     if (!res.ok) die(3, res.message);
-    for (let i = 0; i < 60; i++) {
-      if (!existsSync5(sockPath())) break;
-      await new Promise((r) => setTimeout(r, 500));
-    }
-    process.stdout.write(`${msg.daemonStopped}
+    const deadline = Date.now() + 1e4;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 250));
+      if (!await isDaemonListening(1e3)) {
+        process.stdout.write(`${msg.daemonStopped}
 `);
-    return;
+        return;
+      }
+    }
+    die(3, fill(msg.daemonStopStuck, { log: logPath() }));
   }
   if (flag(args, "detach")) {
     const r = await startDaemonDetached();
@@ -138130,8 +138238,18 @@ async function cmdDaemon(args) {
 `);
     return;
   }
-  const { runDaemon: runDaemon2 } = await Promise.resolve().then(() => (init_daemon(), daemon_exports));
-  await runDaemon2();
+  const { runDaemon: runDaemon2, DaemonStartError: DaemonStartError2 } = await Promise.resolve().then(() => (init_daemon(), daemon_exports));
+  let daemon;
+  try {
+    daemon = await runDaemon2();
+  } catch (err) {
+    if (err instanceof DaemonStartError2) die(err.code, err.message);
+    throw err;
+  }
+  process.stdout.write(`${fill(msg.daemonReady, { pid: process.pid, sock: ipcEndpoint() })}
+`);
+  await daemon.done;
+  process.exit(0);
 }
 async function cmdBind(args) {
   const { root, label } = ctx();
@@ -138276,15 +138394,20 @@ async function cmdStatus() {
 `);
   process.stdout.write(`${insideHerdr() ? fill(msg.statusHerdrIn, { pane: currentPaneId() ?? "?" }) : msg.statusHerdrOut}
 `);
-  if (!isDaemonListening()) {
+  const ping = await request({ type: "ping" }, { timeoutMs: 5e3 });
+  if (!ping.ok) {
     process.stdout.write(`${msg.statusDaemonDown}
 `);
     return;
   }
-  const ping = await request({ type: "ping" }, { timeoutMs: 5e3 });
-  if (ping.ok && ping.kind === "pong")
-    process.stdout.write(`${fill(msg.statusDaemonLine, { pid: ping.status.pid, connection: ping.status.connection, pending: ping.status.pendingAsks })}
+  if (ping.kind === "pong") {
+    process.stdout.write(
+      `${fill(msg.statusDaemonLine, { pid: ping.status.pid, connected: String(ping.status.connected), connection: ping.status.connection, pending: ping.status.pendingAsks })}
+`
+    );
+    if (ping.status.lastError) process.stdout.write(`${fill(msg.daemonLastError, { error: ping.status.lastError })}
 `);
+  }
   const list = await request({ type: "list" }, { timeoutMs: 5e3 });
   if (list.ok && list.kind === "list") {
     if (!list.bindings.length) process.stdout.write(`${msg.statusNoBindings}

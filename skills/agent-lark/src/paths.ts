@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, platform } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 
 /** Daemon-side state directory. Everything the daemon owns lives here. */
@@ -15,7 +16,20 @@ export function ensureHomeDir(): string {
   return dir;
 }
 
+/** Unix socket file; only meaningful off Windows (see ipcEndpoint). */
 export const sockPath = (): string => join(homeDir(), 'daemon.sock');
+
+/**
+ * Where the CLI meets the daemon. Unix: the socket file in the state dir.
+ * Windows: a named pipe in the `\\.\pipe\` namespace — there is no file,
+ * and the name vanishes with the process, so one pipe per state dir is
+ * derived from the dir's path.
+ */
+export function ipcEndpoint(): string {
+  if (platform() === 'win32') return `\\\\.\\pipe\\agent-lark-${createHash('sha1').update(homeDir()).digest('hex').slice(0, 12)}`;
+  return sockPath();
+}
+
 export const pidPath = (): string => join(homeDir(), 'daemon.pid');
 export const logPath = (): string => join(homeDir(), 'daemon.log');
 export const bindingsPath = (): string => join(homeDir(), 'bindings.json');

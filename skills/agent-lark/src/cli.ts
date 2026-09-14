@@ -9,7 +9,7 @@ import { clearCreds, credsReport, defaultStore, resolveCreds, writeCreds, type S
 import { envFile } from './creds.js';
 import { currentPaneId, insideHerdr } from './herdr.js';
 import { isDaemonListening, request, type Response } from './ipc.js';
-import { ensureHomeDir, logPath, pidPath, projectLabel, projectRoot, readProjectState, sockPath, writeProjectState } from './paths.js';
+import { ensureHomeDir, ipcEndpoint, logPath, pidPath, projectLabel, projectRoot, readProjectState, writeProjectState } from './paths.js';
 import { both, en, fill, msg, zh } from './texts.js';
 import { validateAsk, validateNotify, ValidationError } from './validate.js';
 
@@ -234,12 +234,8 @@ async function cmdSetup(args: string[]): Promise<void> {
 
 // ---------------------------------------------------------------- daemon
 
-/** Is a daemon already answering on the socket? */
-async function daemonAlive(): Promise<boolean> {
-  if (!isDaemonListening()) return false;
-  const probe = await request({ type: 'ping' }, { timeoutMs: 2000 });
-  return probe.ok;
-}
+/** Is a daemon already answering on this state dir's endpoint? */
+const daemonAlive = (): Promise<boolean> => isDaemonListening(2000);
 
 /**
  * Start the daemon in its own session. It must outlive the caller: started as
@@ -253,9 +249,10 @@ async function startDaemonDetached(): Promise<{ ok: boolean; message: string }> 
   const self = fileURLToPath(import.meta.url);
   const child = spawn(process.execPath, [self, 'daemon'], { detached: true, stdio: ['ignore', out, out] });
   child.unref();
-  for (let i = 0; i < 20; i++) {
-    await new Promise((r) => setTimeout(r, 500));
-    if (await daemonAlive()) return { ok: true, message: fill(msg.daemonStarted, { pid: child.pid ?? '?', log: logPath() }) };
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 250));
+    if (await isDaemonListening(1000)) return { ok: true, message: fill(msg.daemonStarted, { pid: child.pid ?? '?', log: logPath() }) };
   }
   return { ok: false, message: fill(msg.daemonNoReply, { log: logPath() }) };
 }
@@ -263,18 +260,18 @@ async function startDaemonDetached(): Promise<{ ok: boolean; message: string }> 
 
 async function cmdDaemon(args: string[]): Promise<void> {
   if (flag(args, 'status')) {
-    if (!isDaemonListening()) die(1, msg.daemonNotRunning);
     const res = await request({ type: 'ping' }, { timeoutMs: 5000 });
-    if (!res.ok) die(1, fill(msg.daemonNoAnswer, { message: res.message }));
+    if (!res.ok) die(1, res.reason === 'down' ? msg.daemonNotRunning : fill(msg.daemonNoAnswer, { message: res.message }));
     if (res.kind !== 'pong') die(1, msg.daemonWeird);
     const s = res.status;
     process.stdout.write(
-      `${fill(msg.daemonStatusLine, { pid: s.pid, connection: s.connection, pending: s.pendingAsks, bindings: s.bindings, startedAt: s.startedAt })}\n`,
+      `${fill(msg.daemonStatusLine, { pid: s.pid, connected: String(s.connected), connection: s.connection, pending: s.pendingAsks, bindings: s.bindings, startedAt: s.startedAt })}\n`,
     );
+    if (s.lastError) process.stdout.write(`${fill(msg.daemonLastError, { error: s.lastError })}\n`);
     return;
   }
   if (flag(args, 'stop')) {
-    if (!isDaemonListening()) {
+    if (!(await daemonAlive())) {
       if (existsSync(pidPath())) unlinkSync(pidPath());
       process.stdout.write(`${msg.daemonWasNotRunning}\n`);
       return;
@@ -288,12 +285,16 @@ async function cmdDaemon(args: string[]): Promise<void> {
     }
     const res = await request({ type: 'stop' }, { timeoutMs: 5000 });
     if (!res.ok) die(3, res.message);
-    for (let i = 0; i < 60; i++) {
-      if (!existsSync(sockPath())) break;
-      await new Promise((r) => setTimeout(r, 500));
+    // Gone means it stopped answering, not that some file disappeared.
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 250));
+      if (!(await isDaemonListening(1000))) {
+        process.stdout.write(`${msg.daemonStopped}\n`);
+        return;
+      }
     }
-    process.stdout.write(`${msg.daemonStopped}\n`);
-    return;
+    die(3, fill(msg.daemonStopStuck, { log: logPath() }));
   }
   if (flag(args, 'detach')) {
     const r = await startDaemonDetached();
@@ -301,8 +302,17 @@ async function cmdDaemon(args: string[]): Promise<void> {
     process.stdout.write(`${r.message}\n`);
     return;
   }
-  const { runDaemon } = await import('./daemon.js');
-  await runDaemon();
+  const { runDaemon, DaemonStartError } = await import('./daemon.js');
+  let daemon;
+  try {
+    daemon = await runDaemon();
+  } catch (err) {
+    if (err instanceof DaemonStartError) die(err.code, err.message);
+    throw err;
+  }
+  process.stdout.write(`${fill(msg.daemonReady, { pid: process.pid, sock: ipcEndpoint() })}\n`);
+  await daemon.done;
+  process.exit(0);
 }
 
 // ---------------------------------------------------------------- bind
@@ -448,13 +458,17 @@ async function cmdStatus(): Promise<void> {
   process.stdout.write(`${creds ? fill(msg.statusCredsYes, { origin: creds.origin }) : msg.statusCredsNo}\n`);
   for (const line of credsReport()) process.stdout.write(`  ${line}\n`);
   process.stdout.write(`${insideHerdr() ? fill(msg.statusHerdrIn, { pane: currentPaneId() ?? '?' }) : msg.statusHerdrOut}\n`);
-  if (!isDaemonListening()) {
+  const ping = await request({ type: 'ping' }, { timeoutMs: 5000 });
+  if (!ping.ok) {
     process.stdout.write(`${msg.statusDaemonDown}\n`);
     return;
   }
-  const ping = await request({ type: 'ping' }, { timeoutMs: 5000 });
-  if (ping.ok && ping.kind === 'pong')
-    process.stdout.write(`${fill(msg.statusDaemonLine, { pid: ping.status.pid, connection: ping.status.connection, pending: ping.status.pendingAsks })}\n`);
+  if (ping.kind === 'pong') {
+    process.stdout.write(
+      `${fill(msg.statusDaemonLine, { pid: ping.status.pid, connected: String(ping.status.connected), connection: ping.status.connection, pending: ping.status.pendingAsks })}\n`,
+    );
+    if (ping.status.lastError) process.stdout.write(`${fill(msg.daemonLastError, { error: ping.status.lastError })}\n`);
+  }
   const list = await request({ type: 'list' }, { timeoutMs: 5000 });
   if (list.ok && list.kind === 'list') {
     if (!list.bindings.length) process.stdout.write(`${msg.statusNoBindings}\n`);

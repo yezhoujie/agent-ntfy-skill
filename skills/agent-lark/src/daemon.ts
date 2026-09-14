@@ -1,21 +1,77 @@
 import { appendFileSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, join, sep } from 'node:path';
-import { tmpdir } from 'node:os';
-import type { Server } from 'node:net';
-import { createLarkChannel, type CardActionEvent, type LarkChannel, type NormalizedMessage } from '@larksuite/channel';
+import { platform, tmpdir } from 'node:os';
+import type { Server, Socket } from 'node:net';
+import { createLarkChannel, type CardActionEvent, type LarkChannel, type LarkChannelOptions, type NormalizedMessage } from '@larksuite/channel';
 import { BindingStore, type Binding } from './bindings.js';
 import { askCard, notifyCard, receiptCard, statusCard } from './cards.js';
 import { resolveCreds } from './creds.js';
 import { agentList, findPaneForProject, promptPane } from './herdr.js';
-import { serve, type Request, type Response } from './ipc.js';
-import { ensureHomeDir, homeDir, logPath, pidPath, sockPath } from './paths.js';
+import { isDaemonListening, serve, type Request, type Response } from './ipc.js';
+import { ensureHomeDir, homeDir, ipcEndpoint, logPath, pidPath, sockPath } from './paths.js';
 import { fill, msg, t } from './texts.js';
 import { validateAsk, validateNotify, ValidationError, type AskPayload, type Lang } from './validate.js';
 
 const INJECT_PREFIX = '[agent-lark remote] ';
 const POLL_MS = 5_000;
 const STATUS_COOLDOWN_MS = 60_000;
+const CONNECT_RETRY_MS = 5_000;
+const CONNECT_RETRY_MAX_MS = 60_000;
+/** How long stop() lets open IPC connections drain before destroying them. */
+const CLOSE_GRACE_MS = 2_000;
+/** How long stop() waits for Feishu to accept a cancelled card before moving on. */
+const CANCEL_CARD_MS = 3_000;
+
+/** The slice of the Feishu channel the daemon actually uses; a test double implements just this. */
+export type ChannelLike = Pick<
+  LarkChannel,
+  | 'on'
+  | 'connect'
+  | 'disconnect'
+  | 'updatePolicy'
+  | 'getConnectionStatus'
+  | 'send'
+  | 'updateCard'
+  | 'listChats'
+  | 'getChatInfo'
+  | 'createChat'
+  | 'addReaction'
+  | 'downloadResourceToFile'
+  | 'rawClient'
+>;
+
+/** The slice of the herdr adapter the daemon uses. */
+export interface HerdrDeps {
+  agentList: typeof agentList;
+  promptPane: typeof promptPane;
+  findPaneForProject: typeof findPaneForProject;
+}
+
+export interface DaemonDeps {
+  createChannel?: (opts: LarkChannelOptions) => ChannelLike;
+  herdr?: HerdrDeps;
+  /** First retry interval after a failed Feishu connect; doubles up to a minute. */
+  connectRetryMs?: number;
+}
+
+export interface DaemonHandle {
+  /** Cancel pending questions, drop Feishu, close IPC, remove pid / socket files. Never exits the process. */
+  stop(): Promise<void>;
+  /** Resolves once the daemon has fully stopped, whoever asked (stop(), an IPC stop request, a signal). */
+  done: Promise<void>;
+}
+
+/** The daemon could not start; `code` is the exit code the CLI should use. */
+export class DaemonStartError extends Error {
+  constructor(
+    readonly code: 3 | 4,
+    message: string,
+  ) {
+    super(message);
+    this.name = 'DaemonStartError';
+  }
+}
 
 /** The log records ids and state transitions only — never message bodies. */
 function log(event: string, detail: Record<string, unknown> = {}): void {
@@ -85,23 +141,14 @@ interface Pending {
   done: boolean;
 }
 
-export async function runDaemon(): Promise<void> {
+export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
   const creds = resolveCreds();
-  if (!creds) {
-    process.stderr.write(`${msg.prefix}${msg.daemonNoCreds}\n`);
-    process.exit(4);
-  }
+  if (!creds) throw new DaemonStartError(4, msg.daemonNoCreds);
   ensureHomeDir();
-  if (existsSync(sockPath())) {
-    // Something may still be answering there; the IPC layer replaces a dead
-    // socket file, but a live daemon must not be duplicated.
-    const { request } = await import('./ipc.js');
-    const probe = await request({ type: 'ping' }, { timeoutMs: 2000 });
-    if (probe.ok) {
-      process.stderr.write(`${msg.prefix}${msg.daemonAlready}\n`);
-      process.exit(3);
-    }
-  }
+  // A live daemon must not be duplicated; a dead socket file is not a daemon.
+  if (await isDaemonListening(2000)) throw new DaemonStartError(3, msg.daemonAlready);
+  const herdr: HerdrDeps = deps.herdr ?? { agentList, promptPane, findPaneForProject };
+  const retryMs = deps.connectRetryMs ?? CONNECT_RETRY_MS;
 
   const bindings = new BindingStore();
   const pendings = new Map<string, Pending>();
@@ -109,7 +156,7 @@ export async function runDaemon(): Promise<void> {
   const lastStatusPush = new Map<string, number>();
   const startedAt = new Date().toISOString();
 
-  const channel: LarkChannel = createLarkChannel({
+  const channel: ChannelLike = (deps.createChannel ?? createLarkChannel)({
     appId: creds.appId,
     appSecret: creds.appSecret,
     policy: {
@@ -206,12 +253,12 @@ export async function runDaemon(): Promise<void> {
   /** Deliver a free-standing phone message into the project's pane. */
   const inject = async (b: Binding, text: string): Promise<void> => {
     let paneId = b.paneId;
-    if (!paneId) paneId = findPaneForProject(await agentList(), b.root);
+    if (!paneId) paneId = herdr.findPaneForProject(await herdr.agentList(), b.root);
     if (!paneId) {
       await receipt(b, t('zh').receiptNoPane);
       return;
     }
-    const outcome = await promptPane(paneId, `${INJECT_PREFIX}${text}`);
+    const outcome = await herdr.promptPane(paneId, `${INJECT_PREFIX}${text}`);
     log('inject', { root: b.root, paneId, ok: outcome.ok, code: outcome.code });
     if (!outcome.ok) await receipt(b, explainPromptFailure(outcome.code, outcome.message));
   };
@@ -340,21 +387,62 @@ export async function runDaemon(): Promise<void> {
     };
   });
 
-  channel.on('error', (err) => log('channel.error', { code: err.code, message: err.message }));
-  channel.on('reconnecting', () => log('channel.reconnecting'));
-  channel.on('reconnected', () => log('channel.reconnected'));
+  // ---- Feishu connection: IPC comes up first, the handshake runs behind it ----
+  // A machine that is offline at boot, or a Feishu outage, must not turn the
+  // daemon into a crash loop: commands keep answering (with code 3 for the
+  // ones that need Feishu) while the connect is retried with backoff.
+  let connected = false;
+  let lastError: string | null = null;
+  let stopping = false;
+  let retryTimer: NodeJS.Timeout | undefined;
+  let wakeRetry: (() => void) | undefined;
 
-  await channel.connect();
-  log('daemon.connected', { bindings: bindings.all().length, credSource: creds.source });
+  channel.on('error', (err) => log('channel.error', { code: err.code, message: err.message }));
+  channel.on('reconnecting', () => {
+    connected = false;
+    lastError = msg.reconnecting;
+    log('channel.reconnecting');
+  });
+  channel.on('reconnected', () => {
+    connected = true;
+    lastError = null;
+    log('channel.reconnected');
+  });
+
+  const connectLoop = async (): Promise<void> => {
+    let delay = retryMs;
+    while (!stopping) {
+      try {
+        await channel.connect();
+        if (stopping) return;
+        connected = true;
+        lastError = null;
+        log('daemon.connected', { bindings: bindings.all().length, credSource: creds.source });
+        return; // from here on the SDK's own reconnect takes over
+      } catch (err) {
+        if (stopping) return;
+        lastError = err instanceof Error ? err.message : String(err);
+        log('channel.connect-failed', { message: lastError, retryMs: delay });
+        await new Promise<void>((resolve) => {
+          wakeRetry = resolve;
+          retryTimer = setTimeout(resolve, delay);
+        });
+        delay = Math.min(delay * 2, CONNECT_RETRY_MAX_MS);
+      }
+    }
+  };
+
+  const notConnected = (): Response => ({ ok: false, code: 3, message: fill(msg.notConnected, { error: lastError ?? msg.connecting }) });
+  const agents = herdr.agentList;
 
   // ---- agent state pushes -------------------------------------------------
   const poll = async (): Promise<void> => {
     const away = bindings.all().filter((b) => b.away && b.paneId);
     if (!away.length) return;
-    const agents = await agentList();
+    const live = await agents();
     for (const b of away) {
       if (pendingFor(b.root)) continue;
-      const a = agents.find((x) => x.pane_id === b.paneId);
+      const a = live.find((x) => x.pane_id === b.paneId);
       if (!a) continue;
       const prev = lastStatus.get(b.root);
       lastStatus.set(b.root, a.agent_status);
@@ -380,30 +468,88 @@ export async function runDaemon(): Promise<void> {
 
   // ---- IPC ----------------------------------------------------------------
   let server: Server | undefined;
-  const shutdown = async (why: string): Promise<void> => {
-    log('daemon.stopping', { why });
-    clearInterval(pollTimer);
-    for (const p of [...pendings.values()]) {
-      await closeWithout(p, 'cancelled', {
-        ok: false,
-        code: 3,
-        message: msg.askCancelledStop,
+  const sockets = new Set<Socket>();
+  let resolveDone!: () => void;
+  const done = new Promise<void>((resolve) => {
+    resolveDone = resolve;
+  });
+  const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const;
+  const onSignal: Record<(typeof signals)[number], () => void> = {
+    SIGINT: () => void stop('SIGINT'),
+    SIGTERM: () => void stop('SIGTERM'),
+    SIGHUP: () => void stop('SIGHUP'),
+  };
+
+  const closeServer = async (): Promise<void> => {
+    if (!server) return;
+    const srv = server;
+    // close() waits for open connections; an `ask` connection ends when its
+    // question is cancelled above, but nothing may hang the shutdown forever.
+    await new Promise<void>((resolve) => {
+      const grace = setTimeout(() => {
+        for (const s of sockets) s.destroy();
+        log('daemon.close-forced', { sockets: sockets.size });
+      }, CLOSE_GRACE_MS);
+      srv.close(() => {
+        clearTimeout(grace);
+        resolve();
       });
+    });
+  };
+
+  const stop = async (why: string): Promise<void> => {
+    if (stopping) return done;
+    stopping = true;
+    log('daemon.stopping', { why });
+    for (const sig of signals) process.off(sig, onSignal[sig]);
+    clearInterval(pollTimer);
+    if (retryTimer) clearTimeout(retryTimer);
+    wakeRetry?.();
+    // Release every waiting client first; the card rewrites go out after, each
+    // bounded, so a stalled Feishu call cannot hold the shutdown (SIGTERM included).
+    const cancelled = [...pendings.values()];
+    for (const p of cancelled) {
+      p.done = true;
+      clearTimeout(p.timer);
+      pendings.delete(p.reqId);
+      p.settle({ ok: false, code: 3, message: msg.askCancelledStop });
+      log('ask.cancelled', { reqId: p.reqId, root: p.root });
     }
+    await Promise.all(
+      cancelled.map(async (p) => {
+        let bound: NodeJS.Timeout | undefined;
+        const timeout = new Promise<'timeout'>((resolve) => {
+          bound = setTimeout(() => resolve('timeout'), CANCEL_CARD_MS);
+        });
+        try {
+          const outcome = await Promise.race([
+            channel.updateCard(p.messageId, askCard({ payload: p.payload, projectLabel: p.label, reqId: p.reqId, state: 'cancelled' })),
+            timeout,
+          ]);
+          if (outcome === 'timeout') log('ask.update-timeout', { reqId: p.reqId });
+        } catch (err) {
+          log('ask.update-failed', { reqId: p.reqId, err: String(err) });
+        } finally {
+          clearTimeout(bound);
+        }
+      }),
+    );
     try {
       await channel.disconnect();
     } catch {
       // going down anyway
     }
-    server?.close();
-    for (const f of [sockPath(), pidPath()]) {
+    await closeServer();
+    const leftovers = platform() === 'win32' ? [pidPath()] : [sockPath(), pidPath()];
+    for (const f of leftovers) {
       try {
-        if (existsSync(f)) unlinkSync(f);
+        unlinkSync(f);
       } catch {
-        // best effort
+        // already gone
       }
     }
-    process.exit(0);
+    log('daemon.stopped', { why });
+    resolveDone();
   };
 
   server = await serve({
@@ -415,7 +561,9 @@ export async function runDaemon(): Promise<void> {
             kind: 'pong',
             status: {
               pid: process.pid,
-              connection: channel.getConnectionStatus()?.state ?? 'unknown',
+              connection: channel.getConnectionStatus()?.state ?? 'connecting',
+              connected,
+              lastError,
               pendingAsks: pendings.size,
               bindings: bindings.all().length,
               startedAt,
@@ -423,7 +571,8 @@ export async function runDaemon(): Promise<void> {
           };
 
         case 'stop':
-          setTimeout(() => void shutdown('stop requested'), 50);
+          // The ack goes out on this connection first; the wind-down starts a tick later.
+          setTimeout(() => void stop('stop requested'), 50);
           return { ok: true, kind: 'ack' };
 
         case 'list':
@@ -459,6 +608,7 @@ export async function runDaemon(): Promise<void> {
             bindings.touch(req.root, { paneId: req.paneId, label: req.label });
             return { ok: true, kind: 'bind', chatId: existing.chatId, created: false, name: existing.label };
           }
+          if (!connected) return notConnected();
           // No local binding — but the group may already exist from an earlier
           // install whose bindings.json is gone. Creating a second group for
           // the same project would split the conversation in two, so look for
@@ -552,6 +702,7 @@ export async function runDaemon(): Promise<void> {
         case 'notify': {
           const b = bindings.touch(req.root, { paneId: req.paneId, label: req.label });
           if (!b) return { ok: false, code: 4, message: msg.notBound };
+          if (!connected) return notConnected();
           let payload;
           try {
             payload = validateNotify(req.payload);
@@ -571,6 +722,7 @@ export async function runDaemon(): Promise<void> {
         case 'sendFile': {
           const b = bindings.touch(req.root, { paneId: req.paneId, label: req.label });
           if (!b) return { ok: false, code: 4, message: msg.notBound };
+          if (!connected) return notConnected();
           const checked = resolveSendable(req.path, b.root);
           if ('error' in checked) return { ok: false, code: 1, message: checked.error };
           const { real, bytes } = checked;
@@ -597,6 +749,7 @@ export async function runDaemon(): Promise<void> {
           const b = bindings.touch(req.root, { paneId: req.paneId, label: req.label });
           if (!b) return { ok: false, code: 4, message: msg.notBound };
           if (pendingFor(req.root)) return { ok: false, code: 4, message: msg.askPending };
+          if (!connected) return notConnected();
           let payload: AskPayload;
           try {
             payload = validateAsk(req.payload);
@@ -655,11 +808,15 @@ export async function runDaemon(): Promise<void> {
     },
   });
 
-  writeFileSync(pidPath(), `${process.pid}\n`, { mode: 0o600 });
-  log('daemon.started', { pid: process.pid });
-  process.stdout.write(`${fill(msg.daemonReady, { pid: process.pid, sock: sockPath() })}\n`);
+  server.on('connection', (s: Socket) => {
+    sockets.add(s);
+    s.on('close', () => sockets.delete(s));
+  });
 
-  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
-    process.on(sig, () => void shutdown(sig));
-  }
+  writeFileSync(pidPath(), `${process.pid}\n`, { mode: 0o600 });
+  log('daemon.started', { pid: process.pid, endpoint: ipcEndpoint() });
+  for (const sig of signals) process.on(sig, onSignal[sig]);
+  void connectLoop();
+
+  return { stop: () => stop('stop()'), done };
 }
