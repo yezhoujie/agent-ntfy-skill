@@ -601,6 +601,8 @@ class Daemon:
             self._reply_once(c, self._cmd_slots(req))
         elif cmd == "release":
             self._reply_once(c, self._cmd_release(req))
+        elif cmd == "lease":
+            self._reply_once(c, self._cmd_lease(req))
         elif cmd == "status":
             self._reply_once(c, self._status())
         elif cmd == "stop":
@@ -683,6 +685,10 @@ class Daemon:
         if slot not in known:
             return self._unknown_slot(slot, lang)
         assert isinstance(slot, str)
+        holder = known[slot]["leased_by"]
+        if req.get("slot") and leased_by and holder and holder != leased_by:
+            # 指名释放别的项目的租约：一个会话不能替另一个会话退出远程模式；要释放得由用户去那个项目关模式
+            return {"event": "error", "kind": "not_yours", "sent": False, "message": texts.t("daemon.release.not_yours", lang, slot=slot, holder=holder)}
         if slot in self._pending:
             return {"event": "error", "kind": "active", "sent": False, "message": texts.t("daemon.release.active", lang, slot=slot)}
         if slot in self._confirming:
@@ -693,6 +699,39 @@ class Daemon:
             return {"event": "error", "kind": "state", "sent": False, "message": e.text(lang)}
         LOG.info("释放 slot=%s", slot)
         return {"event": "released", "slot": slot}
+
+    def _no_free_slot(self, slots: dict, lang: str, *, require_confirmed: bool) -> dict:
+        """全部已租用时的错误事件（ask / notify / lease 同款）：列出每个槽位的占用情况，让用户决定——
+        去某个项目关闭远程模式（释放那个槽位）还是新建槽位。租约排他，agent 不替别的项目释放。"""
+        active = self._active()
+        holders = [{"slot": s, "leased_by": r["leased_by"], "subscribed": bool(r["subscribed"]), "active": s in active}
+                   for s, r in slots.items() if r["leased_by"]]
+        key = "daemon.no_confirmed_slot" if require_confirmed else "daemon.no_free_slot"  # 离席时新建的槽位没人过闸：口径不同
+        return {"event": "error", "kind": "no_free_slot", "sent": False, "holders": holders, "message": texts.t(key, lang, n=len(slots))}
+
+    def _cmd_lease(self, req: dict) -> dict:
+        """away on 用：本项目已有租约就返回它（顺手刷新窗格）；没有就当场租一个——已过闸的优先，其次编号最小的未过闸空闲槽位
+        （租下未过闸的正是为了接着走确认，人此刻还在键盘旁）；全部已租 ⇒ no_free_slot + 候选。不看过闸，不看忙不忙。"""
+        lang = self._req_lang(req)
+        leased_by = req.get("leased_by")
+        if not isinstance(leased_by, str) or not leased_by:
+            return {"event": "error", "kind": "bad_request", "sent": False, "message": texts.t("daemon.bad_request.lease_args", lang)}
+        state = self._state()
+        try:
+            slots = state.slots()
+            existing = self._touch_pane(slots, leased_by, req)
+        except StateError as e:
+            return {"event": "error", "kind": "state", "sent": False, "message": e.text(lang)}
+        if existing:
+            return {"event": "leased", "slot": existing, "subscribed": bool(slots[existing]["subscribed"]), "existing": True}
+        try:
+            lease = state.acquire(leased_by, self._active(), require_confirmed=False, pane=_pane_of(req))
+        except NeedsUserDecision as e:
+            return self._no_free_slot(slots, lang, require_confirmed=False)
+        except StateError as e:
+            return {"event": "error", "kind": "state", "sent": False, "message": e.text(lang)}
+        LOG.info("离席租约 slot=%s leased_by=%s subscribed=%s", lease.slot, leased_by, lease.subscribed)
+        return {"event": "leased", "slot": lease.slot, "subscribed": bool(lease.subscribed), "existing": False}
 
     # ---------------------------------------------------------------- ask
 
@@ -756,12 +795,7 @@ class Daemon:
             else:
                 lease = state.acquire(leased_by, self._active(), require_confirmed=require_confirmed, pane=pane)
         except NeedsUserDecision as e:
-            cands = [{"slot": s, "subscribed": slots[s]["subscribed"]} for s in e.candidates]
-            listed = (", ".join(texts.t("daemon.candidate.confirmed" if x["subscribed"] else "daemon.candidate.unconfirmed", lang, slot=x["slot"]) for x in cands)
-                      if cands else texts.t("daemon.no_free_slot.none", lang))
-            key = "daemon.no_confirmed_slot" if require_confirmed else "daemon.no_free_slot"  # 离席时槽位未必全满，新建的也没人过闸：不指 add-slot
-            self._reply_once(c, {"event": "error", "kind": "no_free_slot", "sent": False, "candidates": cands,
-                                 "message": texts.t(key, lang, candidates=listed)})
+            self._reply_once(c, self._no_free_slot(slots, lang, require_confirmed=require_confirmed))
             return None
         except StateError as e:
             self._reply_once(c, {"event": "error", "kind": "state", "sent": False, "message": e.text(lang)})

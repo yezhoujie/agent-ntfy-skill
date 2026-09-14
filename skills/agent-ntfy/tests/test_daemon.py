@@ -342,15 +342,19 @@ class AskFlowTest(unittest.TestCase):
         self.assertEqual(h.client.published, [])
         sock.close()
 
-    def test_all_slots_leased_reports_candidates_with_subscription_state(self):
+    # 全满：列占用情况（谁租的 / 过没过闸 / 有没有提问挂着）交用户决定，不列「可替换候选」，也不让 agent 去 release 别人的
+    def test_all_slots_leased_reports_holders_for_the_user_to_decide(self):
         h = Harness(self, pool_size=2, subscribed=("slot1",))
         h.state.acquire("someone-else")  # slot1 已租
         h.state.acquire("another")  # slot2 已租（未过闸）
         sock, first, events = h.ask(leased_by="wD:p9")
         self.assertEqual((first["event"], first["kind"], first["sent"]), ("error", "no_free_slot", False))
-        self.assertEqual(first["candidates"], [{"slot": "slot1", "subscribed": True}, {"slot": "slot2", "subscribed": False}])
-        self.assertIn("agent-ntfy release <slot>", first["message"])
+        self.assertEqual(first["holders"], [{"slot": "slot1", "leased_by": "someone-else", "subscribed": True, "active": False},
+                                            {"slot": "slot2", "leased_by": "another", "subscribed": False, "active": False}])
+        self.assertNotIn("candidates", first)
+        self.assertNotIn("release", first["message"])
         self.assertIn("agent-ntfy add-slot", first["message"])
+        self.assertEqual(first["message"], Z("daemon.no_free_slot", n=2))
         sock.close()
 
     def test_publish_failure_reports_not_sent(self):
@@ -470,10 +474,9 @@ class LeasePaneTest(unittest.TestCase):
         h.state.acquire("proj:/w/other")  # 唯一已过闸的槽位被别的项目租走
         sock, first, events = h.ask(leased_by=self.ME, tag="me", require_confirmed=True)
         self.assertEqual((first["event"], first["kind"], first["sent"]), ("error", "no_free_slot", False))
-        self.assertEqual(first["candidates"], [{"slot": "slot1", "subscribed": True}])  # 候选只含已过闸的
+        self.assertEqual([x["slot"] for x in first["holders"]], ["slot1"])  # 占用情况只有真租出去的
         self.assertEqual(h.request(cmd="slots")[0]["slots"]["slot2"]["state_key"], "unassigned")  # 没去租未过闸的
-        self.assertIn("slot1", first["message"])
-        self.assertNotIn("add-slot", first["message"])  # 槽位没全满、新建的也要过闸：离席时这条路走不通，不指它
+        self.assertEqual(first["message"], Z("daemon.no_confirmed_slot"))  # 两条出路都要人在键盘旁：等用户回来决定
         self.assertIn("confirm-sub", first["message"])
         sock.close()
         # 不带 require_confirmed（远程模式没开）照旧：租 slot2，报未过闸
@@ -567,13 +570,13 @@ class NotifyTest(unittest.TestCase):
         self.assertEqual(h.client.published, [])
         self.assertEqual(h.state.slots()["slot1"]["leased_by"], self.ME)  # 租约留着，让用户去 confirm-sub 这个槽位
 
-    def test_notify_require_confirmed_reports_no_free_slot_with_confirmed_candidates_only(self):
+    def test_notify_require_confirmed_reports_no_free_slot_with_holders(self):
         h = Harness(self, pool_size=2, subscribed=("slot1",))
         h.state.acquire("proj:/w/other")
         ev = h.notify(leased_by=self.ME, tag="me", require_confirmed=True)[0]
         self.assertEqual((ev["event"], ev["kind"], ev["sent"]), ("error", "no_free_slot", False))
-        self.assertEqual(ev["candidates"], [{"slot": "slot1", "subscribed": True}])
-        self.assertNotIn("add-slot", ev["message"])
+        self.assertEqual([x["slot"] for x in ev["holders"]], ["slot1"])
+        self.assertEqual(ev["message"], Z("daemon.no_confirmed_slot"))
         self.assertEqual(h.state.slots()["slot2"]["leased_by"], None)  # 没去租未过闸的
         self.assertEqual(h.client.published, [])
 
@@ -613,6 +616,66 @@ class NotifyTest(unittest.TestCase):
 
 
 class CommandsTest(unittest.TestCase):
+    # lease：away on 用——已有租约沿用；没有就当场租（已过闸优先，其次最小号未过闸）；全满 ⇒ no_free_slot + 候选
+    def test_lease_prefers_confirmed_free_slot_then_reuses(self):
+        h = Harness(self, subscribed=("slot2",))
+        ev = h.request(cmd="lease", leased_by="proj:/w/a", pane="wD:p3")[0]
+        self.assertEqual((ev["event"], ev["slot"], ev["subscribed"], ev["existing"]), ("leased", "slot2", True, False))
+        self.assertEqual((h.state.slots()["slot2"]["leased_by"], h.state.slots()["slot2"]["pane"]), ("proj:/w/a", "wD:p3"))
+        ev = h.request(cmd="lease", leased_by="proj:/w/a", pane="wD:p4")[0]
+        self.assertEqual((ev["slot"], ev["existing"]), ("slot2", True))  # 沿用，且窗格刷新
+        self.assertEqual(h.state.slots()["slot2"]["pane"], "wD:p4")
+
+    def test_lease_takes_smallest_unconfirmed_when_nothing_confirmed_is_free(self):
+        h = Harness(self, subscribed=())
+        h.state.acquire("proj:/w/other")  # slot1 被占
+        ev = h.request(cmd="lease", leased_by="proj:/w/a", pane=None)[0]
+        self.assertEqual((ev["event"], ev["slot"], ev["subscribed"]), ("leased", "slot2", False))
+
+    def test_lease_when_all_taken_lists_holders(self):
+        h = Harness(self, pool_size=2, subscribed=("slot1",))
+        h.state.acquire("proj:/w/a")
+        h.state.acquire("proj:/w/b")
+        ev = h.request(cmd="lease", leased_by="proj:/w/c", pane=None)[0]
+        self.assertEqual((ev["event"], ev["kind"]), ("error", "no_free_slot"))
+        self.assertEqual([(x["slot"], x["leased_by"]) for x in ev["holders"]], [("slot1", "proj:/w/a"), ("slot2", "proj:/w/b")])
+        self.assertEqual(ev["message"], Z("daemon.no_free_slot", n=2))
+        self.assertEqual(h.state.slots()["slot1"]["leased_by"], "proj:/w/a")  # 别人的租约一个都没动
+
+    # 指名释放别的项目的槽位：拒绝，租约不动——要释放得由用户去那个项目关远程模式
+    def test_release_by_name_refuses_another_projects_slot(self):
+        h = Harness(self, pool_size=2, subscribed=("slot1",))
+        h.state.acquire("proj:/w/a")
+        ev = h.request(cmd="release", slot="slot1", leased_by="proj:/w/b")[0]
+        self.assertEqual((ev["event"], ev["kind"]), ("error", "not_yours"))
+        self.assertEqual(ev["message"], Z("daemon.release.not_yours", slot="slot1", holder="proj:/w/a"))
+        self.assertEqual(h.state.slots()["slot1"]["leased_by"], "proj:/w/a")
+        ev = h.request(cmd="release", slot="slot1", leased_by="proj:/w/a")[0]  # 自己的：照常
+        self.assertEqual((ev["event"], ev["slot"]), ("released", "slot1"))
+
+    # 硬约束：两个项目永远不会同时持有同一个槽位。A 租 slot1 → 释放 → 别人占满 2-5 → B 租到 slot1 → A 再来 ⇒ 只能是 no_free_slot，
+    # 不能把 slot1 给 A（「以前用过」不是归属；归属只看当下的 leased_by）
+    def test_lease_never_hands_a_slot_to_two_projects(self):
+        h = Harness(self, subscribed=("slot1", "slot2", "slot3", "slot4", "slot5"))
+        self.assertEqual(h.request(cmd="lease", leased_by="proj:/w/A", pane=None)[0]["slot"], "slot1")
+        for n, other in enumerate(("proj:/w/c", "proj:/w/d", "proj:/w/e", "proj:/w/f"), start=2):
+            self.assertEqual(h.request(cmd="lease", leased_by=other, pane=None)[0]["slot"], f"slot{n}")  # 其他项目占满 2-5
+        self.assertEqual(h.request(cmd="release", leased_by="proj:/w/A")[0]["event"], "released")  # A 关远程模式，slot1 空出
+        self.assertEqual(h.request(cmd="lease", leased_by="proj:/w/B", pane=None)[0]["slot"], "slot1")  # B 拿到 slot1
+        ev = h.request(cmd="lease", leased_by="proj:/w/A", pane=None)[0]
+        self.assertEqual((ev["event"], ev["kind"]), ("error", "no_free_slot"))
+        holders = [r["leased_by"] for r in h.state.slots().values()]
+        self.assertEqual(len(holders), len(set(holders)))  # 每个槽位一个持有者
+        self.assertEqual(h.state.slots()["slot1"]["leased_by"], "proj:/w/B")
+        # B 在活跃（提问挂着）时 A 也拿不到；B 释放后 A 才能租到 slot1
+        self.assertEqual(h.request(cmd="release", leased_by="proj:/w/B")[0]["event"], "released")
+        self.assertEqual(h.request(cmd="lease", leased_by="proj:/w/A", pane=None)[0]["slot"], "slot1")
+
+    def test_lease_without_leased_by_is_a_bad_request(self):
+        h = Harness(self)
+        ev = h.request(cmd="lease")[0]
+        self.assertEqual((ev["event"], ev["kind"]), ("error", "bad_request"))
+
     def test_slots_release_status(self):
         h = Harness(self)
         slots = h.request(cmd="slots")[0]["slots"]
@@ -1345,7 +1408,7 @@ class ConfirmTest(unittest.TestCase):
         h2.state.acquire("someone-else")
         sock2, first2, _ = h2.ask(leased_by="wD:p9")
         self.assertEqual(first2["kind"], "no_free_slot")
-        self.assertIn("之后要确认", first2["message"])
+        self.assertEqual(first2["message"], Z("daemon.no_free_slot", n=1))
         sock2.close()
 
 

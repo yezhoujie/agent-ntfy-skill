@@ -98,27 +98,14 @@ class StateTest(unittest.TestCase):
         # 第二次拿到的是另一个未分配槽位
         self.assertEqual(self.state.acquire("wD:p2").slot, "slot2")
 
-    # 全部已租用时，返回「需用户决定」及可替换候选清单
-    def test_all_leased_raises_needs_decision_with_candidates(self):
+    # 全部已租用时抛「需用户决定」——不管别人的租约空不空闲，都不会被顶替
+    def test_all_leased_raises_needs_decision_and_never_takes_over(self):
         slots = self.lease_all()
-        with self.assertRaises(NeedsUserDecision) as cm:
+        with self.assertRaises(NeedsUserDecision):
             self.state.acquire("wD:p9")
-        self.assertEqual(cm.exception.candidates, slots)
-
-    # 可替换候选中不含「活跃」槽位
-    def test_candidates_exclude_active_slots(self):
-        slots = self.lease_all()
-        active = {slots[1], slots[3]}
-        with self.assertRaises(NeedsUserDecision) as cm:
-            self.state.acquire("wD:p9", active=active)
-        self.assertEqual(cm.exception.candidates, [s for s in slots if s not in active])
-
-    # 全部槽位都是「活跃」时，候选为空，只剩「新建」一条路
-    def test_all_active_leaves_no_candidates(self):
-        slots = self.lease_all()
-        with self.assertRaises(NeedsUserDecision) as cm:
-            self.state.acquire("wD:p9", active=set(slots))
-        self.assertEqual(cm.exception.candidates, [])
+        with self.assertRaises(NeedsUserDecision):
+            self.state.acquire("wD:p9", active={slots[1], slots[3]})
+        self.assertEqual([r["leased_by"] for r in self.state.slots().values()], [f"user-{i}" for i in range(5)])  # 一个都没被动
 
     # 新建槽位后池子长度 +1，且不设上限
     def test_add_slot_grows_pool_without_limit(self):
@@ -147,14 +134,12 @@ class StateTest(unittest.TestCase):
         with self.assertRaises(state.StateError):
             self.state.release(slots[2])  # 已经是未分配，再释放一次
 
-    # 活跃槽位上正有人等回复：不能释放，也不能替换；活跃集合与租约对不上要响亮失败
-    def test_active_slot_cannot_be_released_or_replaced(self):
+    # 活跃槽位上正有人等回复：不能释放；活跃集合与租约对不上要响亮失败
+    def test_active_slot_cannot_be_released(self):
         slots = self.lease_all()
         with self.assertRaises(state.StateError):
             self.state.release(slots[0], active={slots[0]})
         self.assertEqual(self.state.slot_state(slots[0]), SlotState.IDLE)  # 没被动过
-        with self.assertRaises(state.StateError):
-            self.state.replace(slots[0], "wD:p9", active={slots[0]})
         self.state.release(slots[1])
         with self.assertRaises(state.StateError):  # 未分配的槽位不可能活跃
             self.state.acquire("wD:p9", active={slots[1]})
@@ -196,19 +181,6 @@ class StateTest(unittest.TestCase):
         self.state.mark_subscribed(lease.slot)
         self.state.release(lease.slot)
         self.assertTrue(self.state.acquire("wD:p2").subscribed)
-
-    # 替换：只能替换「已租用·空闲」的槽位
-    def test_replace_idle_slot(self):
-        slots = self.lease_all()
-        lease = self.state.replace(slots[0], "wD:p9")
-        self.assertEqual(lease.slot, slots[0])
-        data = json.loads(self.leases_path.read_text(encoding="utf-8"))
-        self.assertEqual(data[slots[0]]["leased_by"], "wD:p9")
-        with self.assertRaises(state.StateError):
-            self.state.replace("slot99", "wD:p9")
-        self.state.release(slots[1])
-        with self.assertRaises(state.StateError):  # 未分配的直接 acquire，不走替换
-            self.state.replace(slots[1], "wD:p9")
 
     # 状态在进程重启后可以从文件与密钥存储恢复
     def test_state_reloads_from_disk(self):
@@ -292,26 +264,13 @@ class StateTest(unittest.TestCase):
         # 已过闸的都租出去了，剩下的空闲槽位都未过闸 ⇒ 不租，报 NeedsUserDecision
         self.state.mark_subscribed("slot4")
         self.state.acquire("proj:/w/b", require_confirmed=True)
-        with self.assertRaises(NeedsUserDecision) as cm:
+        with self.assertRaises(NeedsUserDecision):
             self.state.acquire("proj:/w/c", require_confirmed=True)
-        self.assertEqual(cm.exception.candidates, ["slot3", "slot4"])  # 只有已过闸的；活跃的也不在其中
-        with self.assertRaises(NeedsUserDecision) as cm:
+        with self.assertRaises(NeedsUserDecision):
             self.state.acquire("proj:/w/c", active={"slot3"}, require_confirmed=True)
-        self.assertEqual(cm.exception.candidates, ["slot4"])
         self.assertEqual(self.state.slot_state("slot1"), SlotState.UNASSIGNED)  # 未过闸的空闲槽位一个都没被动
         # 不带 require_confirmed 照旧：租未过闸的空闲槽位
         self.assertEqual(self.state.acquire("proj:/w/c").slot, "slot1")
-
-    # replace 同款参数：写 pane；require_confirmed 时拒绝换到未过闸的槽位
-    def test_replace_writes_pane_and_respects_require_confirmed(self):
-        slots = self.lease_all()
-        self.state.mark_subscribed(slots[0])
-        lease = self.state.replace(slots[0], "proj:/w/z", pane="wD:p3")
-        self.assertEqual((lease.slot, lease.subscribed), (slots[0], True))
-        self.assertEqual(self.state.slots()[slots[0]]["pane"], "wD:p3")
-        with self.assertRaises(state.StateError):
-            self.state.replace(slots[1], "proj:/w/z", require_confirmed=True)
-        self.assertEqual(self.state.slots()[slots[1]]["leased_by"], "user-1")  # 没被动过
 
 
 class FakeRun:

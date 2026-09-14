@@ -74,18 +74,14 @@ class StateError(Exception):
 
 
 class NeedsUserDecision(StateError):
-    """全部槽位已租用，要用户在「替换某个空闲槽位」与「新建槽位」之间选。
+    """全部槽位已租用，要用户决定：去某个项目关闭远程模式（释放那个槽位），还是新建槽位（agent-ntfy add-slot）。
 
-    candidates 是可替换的槽位名（已租用·空闲），按槽位号排序；活跃槽位一律不在其中——
-    替换它会让用户的回复落到别人的提问上。候选为空时只剩新建一条路。
+    租约是排他的：「已租用·空闲」只表示那个项目此刻没有提问挂着，不表示它不用了——别的项目不能顶替它，
+    一个会话也不替另一个会话释放租约。占用情况由调用方（daemon）列给用户看。
     """
 
-    def __init__(self, candidates):
-        self.candidates = list(candidates)
+    def __init__(self):
         super().__init__("all_leased")
-
-    def text(self, lang: str) -> str:
-        return texts.t("state.all_leased", lang, candidates=str(self.candidates) if self.candidates else texts.t("state.none", lang))
 
 
 class SlotState(Enum):
@@ -479,9 +475,8 @@ class State:
         """租一个槽位。
 
         有「未分配」槽位就直接用（已过闸的优先，省一次手机确认；其余按槽位号）。
-        全部已租用则抛 NeedsUserDecision，带上可替换的空闲槽位清单，由调用方去问用户。
-        require_confirmed（用户离席时）：只考虑已过闸的槽位——空闲的未过闸槽位不租，候选里也不列，
-        因为没人在键盘旁过闸。
+        全部已租用则抛 NeedsUserDecision，由调用方把占用情况列给用户决定（关掉某个项目的远程模式，或新建槽位）。
+        require_confirmed（用户离席时）：只考虑已过闸的槽位——空闲的未过闸槽位不租，因为没人在键盘旁过闸。
         """
         leases = self._load_leases()
         _check_active(leases, active)
@@ -489,21 +484,7 @@ class State:
         if free:
             slot = min(free, key=lambda s: (not leases[s]["subscribed"], _slot_index(s)))
             return self._grant(leases, slot, leased_by, pane)
-        raise NeedsUserDecision(s for s, r in leases.items() if s not in active and r["leased_by"] and (r["subscribed"] or not require_confirmed))
-
-    def replace(self, slot: str, leased_by: str, active: Collection[str] = (), *, require_confirmed: bool = False, pane: str | None = None):
-        """把一个「已租用·空闲」槽位转给新的使用者。活跃槽位拒绝——它上面正有人等回复。"""
-        leases = self._load_leases()
-        _require(leases, slot)
-        _check_active(leases, active)
-        st = _state_of(leases[slot], slot in active)
-        if st is SlotState.ACTIVE:
-            raise StateError("replace.active", slot=slot)
-        if st is SlotState.UNASSIGNED:
-            raise StateError("replace.unassigned", slot=slot)
-        if require_confirmed and not leases[slot]["subscribed"]:
-            raise StateError("replace.unconfirmed", slot=slot)
-        return self._grant(leases, slot, leased_by, pane)
+        raise NeedsUserDecision()
 
     def _grant(self, leases, slot, leased_by, pane):
         if not leased_by:

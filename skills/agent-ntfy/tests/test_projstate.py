@@ -187,12 +187,12 @@ class AwayCommandTest(unittest.TestCase):
             self.assertEqual((code, err), (0, ""))
             self.assertIn("开", out)
             st = json.loads((root / projstate.DIR_NAME / "state.json").read_text(encoding="utf-8"))
-            self.assertEqual((st["away"], st["target"], st["slot"]), (True, f"proj:{root}", None))
+            self.assertEqual((st["away"], st["target"], st["slot"]), (True, f"proj:{root}", "slot1"))  # 开启即租下
 
             code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "status"], env=ta.HERDR, root=ta.CWD)
             self.assertEqual(code, 0)
             self.assertIn(ta.Z("cli.away.state.on"), out)
-            self.assertIn(ta.Z("cli.away.slot.none"), out)
+            self.assertIn("slot1", out)
 
             code, out, err = ta.run(["--home", "/nonexistent/agent-ntfy-home", "away", "off"], env=ta.HERDR, root=ta.CWD)
             self.assertEqual(code, 0)
@@ -352,9 +352,16 @@ class HooksTest(unittest.TestCase):
             code, out, err = ta.run(["--home", str(h.home), "confirm-sub", "slot3", "--subscribed"], env=ta.HERDR, root=ta.CWD)
             self.assertEqual(code, 0)
             self.assertEqual((self.state(root)["slot"], self.state(root)["confirmed"]), ("slot1", True))
-            h.state.acquire("someone-else")  # 让 slot2 有租约可释放
+            h.state.acquire("someone-else")  # slot2 是别的项目租的：指名释放被拒（退 4），它的租约与本项目文件都不动
             code, out, err = ta.run(["--home", str(h.home), "release", "slot2"], env=ta.HERDR, root=ta.CWD)
-            self.assertEqual(code, 0)
+            self.assertEqual(code, 4)
+            self.assertIn("someone-else", err)
+            self.assertEqual(h.state.slots()["slot2"]["leased_by"], "someone-else")
+            self.assertEqual(self.state(root)["slot"], "slot1")
+            # 那个项目的目录已不在时的兜底：以它的身份跑（AGENT_NTFY_TARGET），归属就对上了；本项目文件照样不动
+            code, out, err = ta.run(["--home", str(h.home), "release", "slot2"], env={**ta.HERDR, "AGENT_NTFY_TARGET": "someone-else"}, root=ta.CWD)
+            self.assertEqual((code, err), (0, ""))
+            self.assertIsNone(h.state.slots()["slot2"]["leased_by"])
             self.assertEqual(self.state(root)["slot"], "slot1")
             code, out, err = ta.run(["--home", str(h.home), "release", "slot1"], env=ta.HERDR, root=ta.CWD)  # 显式释放的正是本项目那个 ⇒ 清
             self.assertEqual(code, 0)

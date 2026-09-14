@@ -224,13 +224,13 @@ class AskExitCodesTest(unittest.TestCase):
         self.assertIn("confirm-sub slot1", err)
         self.assertIn("消息未发送", err)
 
-    def test_all_leased_exit_4_lists_candidates(self):
+    def test_all_leased_exit_4_lists_holders(self):
         h = Harness(self, pool_size=1, subscribed=("slot1",))
         h.state.acquire("someone-else")
         code, out, err = run(["--home", str(h.home), "ask"], json.dumps(SAMPLE), HERDR)
         self.assertEqual((code, out), (4, ""))
-        self.assertIn("slot1", err)
-        self.assertIn("已过闸", err)
+        self.assertIn(Z("cli.ask.holder", slot="slot1", holder="someone-else", state=Z("cli.ask.holder.idle")), err)
+        self.assertNotIn("可替换", err)
 
     def test_busy_exit_4(self):
         h = Harness(self)
@@ -266,16 +266,12 @@ class AskExitCodesTest(unittest.TestCase):
         self.assertIn("消息未发送", err)
         self.assertNotIn("Traceback", err)
         self.assertEqual(h.client.published, [])
-        for argv in (["slots"], ["release"]):
+        for argv in (["slots"], ["release"], ["release", "slot1"]):  # 指名槽位也要项目身份（核归属）
             with mock.patch.object(Path, "cwd", side_effect=gone):
                 code, out, err = run(["--home", str(h.home), *argv], root=CWD)
             self.assertEqual((code, out), (3, ""), argv)
             self.assertNotIn("Traceback", err)
             self.assertIn("No such file", err)
-        with mock.patch.object(Path, "cwd", side_effect=gone):
-            code, out, err = run(["--home", str(h.home), "release", "slot1"], root=CWD)  # 指名槽位：用不着项目根
-        self.assertEqual(code, 3)  # slot1 没租约 ⇒ 无需释放（既有语义），不是项目根的错
-        self.assertIn("无需释放", err)
 
     # --timeout 必须是正数：在本地就拦，不用连 daemon
     def test_non_positive_timeout_rejected_locally(self):
@@ -1206,15 +1202,15 @@ class AwayOnTest(unittest.TestCase):
         self.assertEqual(self.fake.calls, [])
         self.assertEqual(h.state.slots()["slot1"]["pane"], "wD:p1")  # 顺手把租约的窗格刷新成当前窗格
 
-    # 未租但池里有空闲已过闸槽位：就绪（惰性，首次提问才租），不开 pane
-    def test_ready_lazily_when_a_confirmed_slot_is_free(self):
+    # 未租但池里有空闲已过闸槽位：当场租下（人要走了，租约与过闸此刻落定），不开 pane；状态文件记下槽位
+    def test_leases_a_confirmed_free_slot_immediately(self):
         h = Harness(self)
         code, out, err = self.away_on(h.home)
         self.assertEqual((code, err), (0, ""))
-        self.assertEqual(out.splitlines()[0], Z("cli.away.ready.lazy"))
-        self.assertEqual((self.state()["away"], self.state()["slot"]), (True, None))
+        self.assertEqual(out.splitlines()[0], Z("cli.away.ready", slot="slot1"))
+        self.assertEqual((self.state()["away"], self.state()["slot"], self.state()["confirmed"]), (True, "slot1", True))
         self.assertEqual(self.fake.calls, [])
-        self.assertIsNone(h.state.slots()["slot1"]["leased_by"])
+        self.assertEqual((h.state.slots()["slot1"]["leased_by"], h.state.slots()["slot1"]["pane"]), (owner(self.root), "wD:p1"))  # 租约 + 窗格都登记了
 
     # 本项目已租但未过闸：对它开确认窗格；状态文件照写
     def test_own_unconfirmed_lease_opens_confirm_pane(self):
@@ -1248,8 +1244,8 @@ class AwayOnTest(unittest.TestCase):
         self.assertIn("slot2", out.splitlines()[0])
         self.assertIn("wD:p7", out)
         self.assertEqual(self.pane_commands()[0][-5:], ["confirm-sub", "slot2", "--close-pane", "--report-to", "wD:p1"])
-        self.assertTrue(self.state()["away"])
-        self.assertIsNone(h.state.slots()["slot2"]["leased_by"])  # 不替用户租：确认过之后首次提问才租
+        self.assertEqual((self.state()["away"], self.state()["slot"], self.state()["confirmed"]), (True, "slot2", False))
+        self.assertEqual(h.state.slots()["slot2"]["leased_by"], owner(self.root))  # 先租下再确认：确认完成时租约已在
 
     # 挑到的槽位正在确认中（上一次 away on 开的窗格还没走完）：不再开第二个窗格，指去已开的那个；照写状态文件
     def test_slot_already_confirming_does_not_open_a_second_pane(self):
@@ -1263,17 +1259,17 @@ class AwayOnTest(unittest.TestCase):
         self.assertNotIn("pane split", " ".join(" ".join(c[1:3]) for c in self.fake.calls))
         self.assertTrue(self.state()["away"])
 
-    # 一个空闲槽位都没有：退 4 + 候选清单（可替换的空闲已租槽位），不写文件
-    def test_no_free_slot_exits_4_with_candidates(self):
+    # 一个空闲槽位都没有：退 4 + 占用情况（谁租的 / 空闲还是有提问 / 过没过闸）交用户决定，不写文件、不动别人的租约
+    def test_no_free_slot_exits_4_with_holders(self):
         h = Harness(self, pool_size=2, subscribed=("slot1",))
         h.state.acquire("proj:/w/a")
         h.state.acquire("proj:/w/b")
         code, out, err = self.away_on(h.home)
         self.assertEqual((code, out), (4, ""))
-        listed = ", ".join([Z("daemon.candidate.confirmed", slot="slot1"), Z("daemon.candidate.unconfirmed", slot="slot2")])
-        self.assertEqual(err.splitlines()[0], "agent-ntfy: " + Z("daemon.no_free_slot", candidates=listed))  # 抬头与 ask 撞满时同款
-        self.assertIn(Z("cli.ask.candidate", slot="slot1", gate=Z("cli.ask.candidate.confirmed")), err)
-        self.assertIn(Z("cli.ask.candidate", slot="slot2", gate=Z("cli.ask.candidate.unconfirmed")), err)
+        self.assertEqual(err.splitlines()[0], "agent-ntfy: " + Z("daemon.no_free_slot", n=2))  # 抬头与 ask 撞满时同款
+        self.assertIn(Z("cli.ask.holder", slot="slot1", holder="proj:/w/a", state=Z("cli.ask.holder.idle")), err)
+        self.assertIn(Z("cli.ask.holder", slot="slot2", holder="proj:/w/b", state=Z("cli.ask.holder.idle") + Z("cli.ask.holder.unconfirmed")), err)
+        self.assertEqual([r["leased_by"] for r in h.state.slots().values()], ["proj:/w/a", "proj:/w/b"])
         self.assertFalse((self.root / projstate.DIR_NAME).exists())
         self.assertEqual([c[1:3] for c in self.fake.calls], [])
 
@@ -1357,9 +1353,30 @@ class AwayOnTest(unittest.TestCase):
             code, out, err = self.away_on(h.home, env={})
         self.assertEqual((code, err), (0, ""))
         self.assertEqual(spawned, [(h.home, "zh")])  # 脱离会话起的 daemon 也显式带语言
-        self.assertEqual(out.splitlines()[0], Z("cli.away.ready.lazy"))
-        self.assertTrue(self.state()["away"])
+        self.assertEqual(out.splitlines()[0], Z("cli.away.ready", slot="slot1"))
+        self.assertEqual((self.state()["away"], self.state()["slot"]), (True, "slot1"))
         self.assertEqual(self.fake.calls, [])
+
+    # away off：顺带释放本项目的租约（daemon 在跑时），状态文件的 slot 清空
+    def test_off_releases_the_projects_lease(self):
+        h = Harness(self)
+        code, out, err = self.away_on(h.home)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(h.state.slots()["slot1"]["leased_by"], owner(self.root))
+        code, out, err = run(["--home", str(h.home), "away", "off"], root=self.root, env=HERDR)
+        self.assertEqual((code, err), (0, ""))
+        self.assertIn(Z("cli.away.off.released", slot="slot1"), out)
+        self.assertIsNone(h.state.slots()["slot1"]["leased_by"])
+        self.assertEqual((self.state()["away"], self.state()["slot"], self.state()["confirmed"]), (False, None, None))
+
+    # 再次 away on：沿用已有租约，不租第二个
+    def test_second_on_reuses_the_existing_lease(self):
+        h = Harness(self)
+        self.away_on(h.home)
+        code, out, err = self.away_on(h.home)
+        self.assertEqual((code, err), (0, ""))
+        self.assertEqual(out.splitlines()[0], Z("cli.away.ready", slot="slot1"))
+        self.assertEqual([s for s, r in h.state.slots().items() if r["leased_by"] == owner(self.root)], ["slot1"])
 
     # 状态目录不可写：第一步就退 3，daemon 不起、herdr 不碰
     def test_unwritable_state_dir_exits_3_before_anything_starts(self):
@@ -1372,11 +1389,26 @@ class AwayOnTest(unittest.TestCase):
         spawn.assert_not_called()
 
     # off / status 不受影响（off 不需要 daemon）
+    # daemon 没跑：只关开关；租约还在 daemon 的文件里，本项目文件里的 slot 也留着（它仍是事实，下次 daemon 起来 slots 能看到）
     def test_off_still_works_without_daemon(self):
-        projstate.save(self.root, away=True, target=owner(self.root))
+        projstate.save(self.root, away=True, slot="slot1", confirmed=True, target=owner(self.root))
         code, out, err = run(["--home", "/nonexistent/agent-ntfy-home", "away", "off"], root=self.root)
         self.assertEqual((code, err), (0, ""))
-        self.assertFalse(self.state()["away"])
+        self.assertEqual((self.state()["away"], self.state()["slot"], self.state()["confirmed"]), (False, "slot1", True))
+
+    # 释放被拒（提问挂着）：开关照关、租约留着，文件里的 slot 也不能清——文件与 daemon 的租约必须说同一件事
+    def test_off_keeps_slot_in_file_when_release_is_refused(self):
+        h = Harness(self)
+        self.away_on(h.home)
+        sock, first, events = h.ask(leased_by=owner(self.root), pane="wD:p1")  # 本项目有提问挂着 ⇒ 释放会被拒
+        code, out, err = run(["--home", str(h.home), "away", "off"], root=self.root, env=HERDR)
+        self.assertEqual(code, 0)
+        self.assertNotIn(Z("cli.away.off.released", slot="slot1"), out)
+        self.assertIn(Z("daemon.release.active", slot="slot1"), err)
+        self.assertEqual(h.state.slots()["slot1"]["leased_by"], owner(self.root))
+        self.assertEqual(h.state.slots()["slot1"]["pane"], "wD:p1")  # 关模式不刷新注入窗格
+        self.assertEqual((self.state()["away"], self.state()["slot"], self.state()["confirmed"]), (False, "slot1", True))
+        sock.close()
 
 
 if __name__ == "__main__":

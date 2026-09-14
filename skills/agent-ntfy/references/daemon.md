@@ -113,24 +113,31 @@ receipt on the phone.
 |---|---|
 | unassigned | no lease |
 | leased, idle | leased to a project, no question waiting |
-| leased, active | a question is waiting; cannot be released or taken over |
+| leased, active | a question is waiting; cannot be released |
 | confirming | a `confirm-sub` is running on it; treated as active |
 
-`ask` and `notify` take a free slot automatically: any free slot when the project's remote mode is off,
-**only a confirmed one when it is on** (`away: true` in the state file). Leases have **no TTL and are
-never reclaimed**; release yours when your task ends (`agent-ntfy release` with no argument releases the
-slot leased by the current project). Once no usable slot is free, `ask` exits 4 with the idle candidates
-and their confirmation state (see [failures.md](failures.md) §5); that is the normal steady state, not an
-error to hide.
+`away on` leases a slot for the project on the spot (a confirmed idle slot if any, else the lowest
+unconfirmed idle one, which it then sends through the reachability check) — the lease and the check are
+settled while the human is still at the keyboard. Outside remote mode `ask` and `notify` take a free slot
+automatically when the project holds none; **with remote mode on they only use confirmed slots** (`away:
+true` in the state file). Leases have **no TTL and are never reclaimed**; release yours when your task ends
+(`agent-ntfy release` with no argument releases the slot leased by the current project; `away off` does the
+same). A lease is exclusive and belongs to its project until that project releases it: `release <slot>`
+carries the caller's project identity and refuses another project's slot (`not_yours`, rc 4) — one session
+never ends another's remote mode. Once no usable slot is free, `ask` / `notify` / `away on` exit 4 with the
+occupancy (holder, idle or question pending, confirmed or not, one line per slot; see
+[failures.md](failures.md) §5) for the user to decide between turning remote mode off in one of those
+projects and `add-slot`; that is the normal steady state, not an error to hide.
 
 ```
 agent-ntfy slots              # one line per slot: name, state, confirmed / unconfirmed, then "<holder>  since <time>" and "pane <id>" when leased
-agent-ntfy release [<slot>]   # rc 0 "released slotN"; refuses an active slot (rc 3)
+agent-ntfy release [<slot>]   # rc 0 "released slotN"; refuses an active slot (rc 3) and another project's slot (rc 4)
 agent-ntfy add-slot           # rc 0 "added slot6 (not yet confirmed to reach the phone). Next: run  agent-ntfy confirm-sub slot6  in your own terminal"
 ```
 
 After upgrading from a version whose lease holder was the pane id: `slots` shows those old leases with a
-pane id (`wD:p1`) as the holder instead of `proj:…`; they are not migrated. `release <slot>` frees them, and
+pane id (`wD:p1`) as the holder instead of `proj:…`; they are not migrated. `release <slot>` run with
+`AGENT_NTFY_TARGET=<that holder>` frees them, and
 the next `ask` from the project leases a slot under the new identity. Restart the daemon after an upgrade:
 an old daemon ignores the fields new clients send, and the new client's `--stop` is not understood by it
 (stop the old one with its own CLI, or with SIGTERM).
@@ -226,7 +233,7 @@ root and gets its own file. The directory carries its own
 | field | written by | meaning |
 |---|---|---|
 | `away` | `away on` / `away off` | the human is away and wants decisions on the phone; while `true`, `ask` and `notify` use confirmed slots only |
-| `slot` | `ask` / `notify` (on `sent` or on the unconfirmed-slot error), `release` (sets `null`), `away status` (corrected from the daemon) | the slot this project currently leases |
+| `slot` | `away on` (leases on the spot), `ask` / `notify` (on `sent` or on the unconfirmed-slot error), `release` and `away off` (set `null`), `away status` (corrected from the daemon) | the slot this project currently leases |
 | `confirmed` | the same commands, plus `confirm-sub` (sets `true` when the confirmed slot is the recorded one) | whether that slot has passed `confirm-sub` |
 | `target` | `away on`, `away off`, `ask`, `notify` | the lease holder identity (`proj:<root>`, or `AGENT_NTFY_TARGET`); informational, `release` leaves it |
 | `updated` | every write | local time, ISO 8601 |

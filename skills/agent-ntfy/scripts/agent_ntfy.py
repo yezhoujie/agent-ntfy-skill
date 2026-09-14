@@ -70,7 +70,7 @@ EXIT_REPLY, EXIT_INVALID, EXIT_TIMEOUT, EXIT_CHANNEL, EXIT_NEEDS_HUMAN, EXIT_INT
 EXIT_SENT = EXIT_REPLY  # notify 的 0：发出去了（它不等回复）
 # error 事件的 kind → 退出码
 EXIT_BY_KIND = {"invalid_input": EXIT_INVALID, "unknown_slot": EXIT_INVALID, "busy": EXIT_NEEDS_HUMAN, "no_free_slot": EXIT_NEEDS_HUMAN,
-                "unconfirmed": EXIT_NEEDS_HUMAN}  # 其余 kind（state / publish_failed / daemon_stopping / bad_request …）都是通道故障 3
+                "unconfirmed": EXIT_NEEDS_HUMAN, "not_yours": EXIT_NEEDS_HUMAN}  # 其余 kind（state / publish_failed / daemon_stopping / bad_request …）都是通道故障 3
 CONFIRM_TIMEOUT = 600  # 与 daemon.CONFIRM_TIMEOUT 同步（这里刻意不 import daemon）
 DAEMON_START_TIMEOUT = 5.0  # away on 起 daemon 后等它在 socket 上应答的上限（秒）
 PROBE_TIMEOUT = 2.0  # 单次探活的 socket 超时：daemon 已 bind 但还没进主循环（卡在初始化）时不能让调用方挂死
@@ -302,15 +302,20 @@ def cmd_ask(args) -> int:
         sock.close()
 
 
+def _holder_state(h: dict, lang: str) -> str:
+    key = "cli.ask.holder.active" if h.get("active") else "cli.ask.holder.idle"
+    gate = "" if h.get("subscribed") else texts.t("cli.ask.holder.unconfirmed", lang)
+    return texts.t(key, lang) + gate
+
+
 def report_send_error(ev: dict, lang: str, leased_by: str, *, sent: bool) -> int:
     """ask / notify 收到 error 事件：打人读文案（先说发没发出去），按 kind 回写状态文件、列候选，返回退出码。"""
     err(texts.t("cli.ask.error_sent" if sent else "cli.ask.error_not_sent", lang, message=ev.get("message")))
     if ev.get("kind") == "unconfirmed" and ev.get("slot"):
         projstate.note(slot=ev["slot"], confirmed=False, target=leased_by)  # 租到了但没过闸：让 agent 知道该确认哪个
     if ev.get("kind") == "no_free_slot":
-        for cand in ev.get("candidates") or []:
-            gate = texts.t("cli.ask.candidate.confirmed" if cand.get("subscribed") else "cli.ask.candidate.unconfirmed", lang)
-            err(texts.t("cli.ask.candidate", lang, slot=cand["slot"], gate=gate))
+        for h in ev.get("holders") or []:
+            err(texts.t("cli.ask.holder", lang, slot=h["slot"], holder=h["leased_by"], state=_holder_state(h, lang)))
     return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
 
 
@@ -385,7 +390,11 @@ def cmd_slots(args) -> int:
 def cmd_release(args) -> int:
     lang = args.lang
     if args.slot:
-        req = {"cmd": "release", "slot": args.slot}
+        # 指名释放：带上本项目身份让 daemon 核归属——别的项目的租约不能释放，要由用户去那个项目关远程模式
+        root = project_root_or_none(lang)
+        if root is None:
+            return EXIT_CHANNEL
+        req = {"cmd": "release", "slot": args.slot, "leased_by": identity(root).leased_by}
     else:
         root = project_root_or_none(lang)  # 不给槽位 = 释放本项目租的那个
         if root is None:
@@ -589,8 +598,21 @@ def cmd_away(args) -> int:
             if not projstate.exists(root):
                 print(texts.t("cli.away.not_enabled", lang))  # 没开过就没什么可关的，也不留目录
                 return 0
-            st = projstate.save(root, away=False, target=identity(root).leased_by)
+            ident = identity(root)
+            released, lease_gone = None, False
+            if probe(Path(args.home)) is not None:  # daemon 在跑才去释放；没跑就只关开关（租约留着，文件里的 slot 也留着——它仍是事实）
+                ev = request(Path(args.home), {"cmd": "release", "leased_by": ident.leased_by}, lang)  # 不带 pane：关模式不刷新注入窗格
+                if ev is not None and ev.get("event") == "released":
+                    released, lease_gone = str(ev["slot"]), True
+                elif ev is not None and ev.get("kind") == "no_lease":
+                    lease_gone = True
+                elif ev is not None:
+                    err(str(ev.get("message")))  # 释放不了（提问挂着 / 确认中 / 状态层坏了）：开关照关，租约与文件里的 slot 都留着
+            fields = {"slot": None, "confirmed": None} if lease_gone else {}
+            st = projstate.save(root, away=False, target=ident.leased_by, **fields)
             print(texts.t("cli.away.state.off", lang))
+            if released:
+                print(texts.t("cli.away.off.released", lang, slot=released))
             print(texts.t("cli.away.path", lang, path=projstate.state_path(root)))
             return 0
         enabled = projstate.exists(root)
@@ -682,44 +704,34 @@ def _confirm_or_point(home: Path, slot: str, slots: dict, lang: str) -> bool:
 
 
 def away_on(home: Path, root: Path, lang: str) -> int:
-    """一站式开启：① 状态目录可写 ② daemon 在跑 ③ 有能用的槽位（本项目的租约已过闸 / 池里有空闲已过闸 / 否则开确认窗格）④ 写文件。
-    ①②③ 任一没过就退 3 / 4，文件与目录都不动。"""
+    """一站式开启：① 状态目录可写 ② daemon 在跑 ③ 当场给本项目租一个槽位（已有就沿用；已过闸的优先，没有就租一个未过闸的并接着走确认）
+    ④ 写文件。①②③ 任一没过就退 3 / 4，文件与目录都不动。
+    要走的人此刻还在键盘旁：租约与过闸都在这一步落定，别拖到第一次提问才发现池满或没过闸——那时候没人能处理。"""
     if not _state_dir_writable(root):
         err(texts.t("cli.away.io_failed", lang, error=texts.t("cli.away.unwritable", lang, path=projstate.state_dir(root))))
         return EXIT_CHANNEL
     if not _ensure_daemon(home, lang):
         return EXIT_CHANNEL
     ident = identity(root)
-    ev = request(home, {"cmd": "slots", "leased_by": ident.leased_by, "pane": ident.pane}, lang)
+    ev = request(home, {"cmd": "lease", "leased_by": ident.leased_by, "pane": ident.pane}, lang)
     if ev is None:
         return EXIT_CHANNEL
-    if ev.get("event") != "slots":
+    if ev.get("event") != "leased":
         err(str(ev.get("message")))
+        if ev.get("kind") == "no_free_slot":
+            # 全部已租：列出占用情况（措辞与 ask 撞满时一致），由用户决定去哪个项目关模式、还是新建槽位
+            for h in ev.get("holders") or []:
+                err(texts.t("cli.ask.holder", lang, slot=h["slot"], holder=h["leased_by"], state=_holder_state(h, lang)))
         return EXIT_BY_KIND.get(str(ev.get("kind")), EXIT_CHANNEL)
-    slots: dict = ev["slots"]
-    mine = next((s for s, r in slots.items() if r.get("leased_by") == ident.leased_by), None)
-    if mine is not None:
-        if slots[mine].get("subscribed"):
-            print(texts.t("cli.away.ready", lang, slot=mine))
-        elif not _confirm_or_point(home, mine, slots, lang):
-            return EXIT_NEEDS_HUMAN
+    slot, subscribed = str(ev["slot"]), bool(ev.get("subscribed"))
+    if subscribed:
+        print(texts.t("cli.away.ready", lang, slot=slot))
     else:
-        free = sorted((s for s, r in slots.items() if not r.get("leased_by")), key=_slot_number)
-        if any(slots[s].get("subscribed") for s in free):
-            print(texts.t("cli.away.ready.lazy", lang))  # 惰性：首次提问才租，别为「开个开关」烧掉一个槽位
-        elif not free:
-            # 全部已租：列出可替换的空闲槽位（措辞与 ask 撞满时一致），让用户 release 一个再来
-            idle = [s for s, r in slots.items() if r.get("state_key") == "idle"]
-            listed = (", ".join(texts.t("daemon.candidate.confirmed" if slots[s].get("subscribed") else "daemon.candidate.unconfirmed", lang, slot=s) for s in idle)
-                      if idle else texts.t("daemon.no_free_slot.none", lang))
-            err(texts.t("daemon.no_free_slot", lang, candidates=listed))
-            for s in idle:
-                gate = texts.t("cli.ask.candidate.confirmed" if slots[s].get("subscribed") else "cli.ask.candidate.unconfirmed", lang)
-                err(texts.t("cli.ask.candidate", lang, slot=s, gate=gate))
-            return EXIT_NEEDS_HUMAN
-        elif not _confirm_or_point(home, free[0], slots, lang):
-            return EXIT_NEEDS_HUMAN
-    projstate.save(root, away=True, target=ident.leased_by)
+        ev2 = request(home, {"cmd": "slots"}, lang)  # 只为看它是不是正在确认中（上一次开的窗格还没走完）
+        slots: dict = ev2["slots"] if ev2 and ev2.get("event") == "slots" else {slot: {}}
+        if not _confirm_or_point(home, slot, slots, lang):
+            return EXIT_NEEDS_HUMAN  # 租约留着（人在键盘旁，跑完 confirm-sub 再 away on 就是它）；开关不写
+    projstate.save(root, away=True, slot=slot, confirmed=subscribed, target=ident.leased_by)
     print(texts.t("cli.away.path", lang, path=projstate.state_path(root)))
     return 0
 

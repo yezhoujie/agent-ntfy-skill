@@ -357,8 +357,8 @@ class StateErrorTest(unittest.TestCase):
         e = state.StateError("slot.missing", slot="slot9", n=5)
         self.assertEqual(str(e), "槽位 slot9 不存在（池子里只有 5 个）")  # 日志 / zh 一个字不变
         self.assertEqual(e.text("en"), "slot slot9 does not exist (the pool only has 5)")
-        self.assertEqual(cjk(state.NeedsUserDecision(["slot2"]).text("en")), 0)
-        self.assertEqual(str(state.NeedsUserDecision([])), "全部槽位已租用，可替换的空闲槽位：无")
+        self.assertEqual(cjk(state.NeedsUserDecision().text("en")), 0)
+        self.assertEqual(str(state.NeedsUserDecision()), "全部槽位已租用")
         h = Harness(self, lang="en")
         (h.home / "leases.json").write_text("{not json", encoding="utf-8")
         ev = h.request(cmd="release", slot="slot1", lang="en")[0]

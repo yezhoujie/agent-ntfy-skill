@@ -127,14 +127,16 @@ Inside herdr you can do more than relay: run `confirm-sub slot1` yourself; it op
 **All slots leased**:
 
 ```
-agent-ntfy: message NOT sent: All slots are leased. Release an idle one (agent-ntfy release <slot>, then retry; candidates: slot2 (confirmed), slot3 (unconfirmed — picking it means one more round on the phone)) or add one (agent-ntfy add-slot, which then needs confirming)
-agent-ntfy:   candidate: slot2 (confirmed)
-agent-ntfy:   candidate: slot3 (unconfirmed — picking it means one more round on the phone)
+agent-ntfy: message NOT sent: All 5 slots are leased; occupancy below. Tell the user and let them decide: turn remote mode off in one of those projects (which releases its slot), or add a slot (agent-ntfy add-slot, then away on). Never release another project's lease for it
+agent-ntfy:   slot1: proj:/Users/me/work/api (idle)
+agent-ntfy:   slot2: proj:/Users/me/work/web (question pending)
+agent-ntfy:   slot3: proj:/Users/me/work/cli (idle, unconfirmed)
+…
 ```
 
-This is the normal state once the pool has been in use for a while (leases never expire). Ask the user which idle slot to release, or whether to add one; a confirmed candidate saves them a round on the phone. Slots with a question in flight are never listed. Then run `release <slot>` or `add-slot` and retry.
+This is the normal state once the pool has been in use for a while (leases never expire). Show the user the occupancy and let them decide: they turn remote mode off in one of those projects themselves (its `away off` releases the slot), or you `add-slot` and retry (`away on`, or `confirm-sub` for the new slot). A lease is exclusive — "idle" only means no question is pending right now, not that the project is done with it — so **never release another project's slot**: `release <slot>` on one refuses with `slot slotN is leased by proj:…, not by this project; …` (rc 4). Leases from a project whose directory no longer exists can be released by running `release <slot>` with `AGENT_NTFY_TARGET=<that holder>` set.
 
-**No confirmed slot while remote mode is on** (`away: true` in the project's state file): `agent-ntfy: message NOT sent: In remote mode only confirmed slots can be used, and every confirmed slot is taken. Release an idle confirmed one (agent-ntfy release <slot>, then retry; candidates: …) or wait for the user to confirm a free slot at their terminal (agent-ntfy confirm-sub <slot>)`, followed by the same `candidate:` lines. Free but unconfirmed slots are not taken automatically, because nobody is at the keyboard to confirm them; the human decides.
+**No confirmed slot while remote mode is on** (`away: true` in the project's state file): `agent-ntfy: message NOT sent: In remote mode only confirmed slots can be used, and every confirmed slot is leased; occupancy below. Wait for the user to return and decide: turn remote mode off in one of those projects, or add a slot and confirm it (agent-ntfy add-slot, then confirm-sub)`, followed by the same occupancy lines. Free but unconfirmed slots are not taken automatically, because nobody is at the keyboard to confirm them; both ways out need the human.
 
 **Busy**: `agent-ntfy: message NOT sent: this target already has a question waiting on slot1; wait for it to finish` — another `ask` from the same project is still blocking (`notify` is not affected and may be sent meanwhile). `slot slot1 is in the middle of a reachability check; retry once it finishes` — a `confirm-sub` is running on that slot.
 
@@ -158,7 +160,7 @@ Lines starting `agent-ntfy: note:` on stderr while `ask` blocks are informationa
 | `release [<slot>]` | released | unknown slot | – | daemon not running; slot has a question waiting; slot has no lease; state file error | – | – |
 | `add-slot` | added (prints the new slot; confirm it next) | – | – | daemon not running / pool store write failed | – | – |
 | `slots` | listed | – | – | daemon not running | – | – |
-| `away on` | remote mode enabled (stdout says whether a slot is ready, leased lazily, or being confirmed in a pane) | – | – | state directory not writable; daemon did not come up; could not open a herdr pane | outside herdr and the slot needs confirming; every slot is leased (`All slots are leased. …` + `candidate:` lines) | – |
+| `away on` | remote mode enabled (stdout says whether a slot is ready, leased lazily, or being confirmed in a pane) | – | – | state directory not writable; daemon did not come up; could not open a herdr pane | outside herdr and the slot needs confirming; every slot is leased (`All N slots are leased; occupancy below. …` + one line per slot) | – |
 | `away off` / `away status` | done / printed (also when remote mode was never enabled) | – | – | state file unreadable or unwritable | – | – |
 | `daemon --status` | running, one status line on stdout | not running (`daemon: not running`), or `daemon: no answer (pid file N still there; it may have died)` | – | – | – | – |
 | `daemon --stop` | `daemon: pid N stopped`; also when nothing was running and no pid file exists (`daemon: not running`) | stale pid file but no answer; `did not acknowledge the stop`; `did not exit within 30 s` | – | – | – | – |

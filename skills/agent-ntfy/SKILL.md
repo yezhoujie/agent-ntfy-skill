@@ -204,8 +204,8 @@ It starts the daemon if needed (in a herdr pane when inside herdr, detached othe
 slot the phone actually receives is available, and only then writes the state file. **Relay its stdout
 to the user**; the outcomes are:
 
-- `remote mode is on; slot slotN is ready` or `… a slot is leased automatically on the first ask …` —
-  nothing to do.
+- `remote mode is on; slot slotN is ready` — the project now holds that slot (leased on the spot, so the
+  lease and the reachability check are settled while the human is still at the keyboard); nothing to do.
 - `… slot slotN still needs its reachability check: started it in herdr pane <id>. Tell the user: 1. … 2. … 3. …` —
   the topic is shown only in that pane; the user subscribes there, presses Enter, taps the button on the
   phone. Tell them **not to close that pane before pressing Enter and tapping the button** (closing cancels
@@ -219,9 +219,12 @@ to the user**; the outcomes are:
 - rc 3 (daemon did not come up, or no herdr pane could be opened) or rc 4 (outside herdr and the slot is
   unconfirmed, so the user must run `confirm-sub <slot>` in their own terminal — relay that; when their run
   finishes it prints one line for them to send back to you, `agent-ntfy: slotN is confirmed; …`, because
-  without herdr nothing reaches you by itself; or every slot is leased: stderr `All slots are leased. Release
-  an idle one …` with `candidate:` lines) with the reason on stderr: remote mode is **not** enabled and
-  nothing is written.
+  without herdr nothing reaches you by itself; or every slot is leased: stderr `All N slots are leased;
+  occupancy below. …` with one line per slot — who holds it, idle or question pending, confirmed or not) with
+  the reason on stderr: remote mode is **not** enabled and nothing is written. When every slot is leased,
+  show the user that occupancy and let *them* decide: turn remote mode off in one of those projects (which
+  releases its slot), or `add-slot` and run `away on` again. **Never release another project's slot** —
+  `release <slot>` refuses it (rc 4); a lease is that project's until its own `away off` / `release`.
 
 The switch and the current slot live in `<project root>/.agent-ntfy/state.json` (project root = the git
 toplevel, else the cwd), written by `away on|off` and refreshed by `ask` / `notify` / `confirm-sub` /
@@ -232,8 +235,10 @@ toplevel, else the cwd), written by `away on|off` and refreshed by `ask` / `noti
 ```
 
 `away: true` means the human is away and expects decisions on the phone; while it is set, `ask` and
-`notify` use only slots that have passed `confirm-sub`. `slot` is the lease this project currently holds
-(`null` until the first `ask`); `confirmed: false` means that slot still needs `confirm-sub`. The file
+`notify` use only slots that have passed `confirm-sub`. `slot` is the lease this project holds — `away on`
+leases one immediately (an already confirmed idle slot if any, else the lowest unconfirmed idle one, which it
+then sends through the check); `confirmed: false` means that slot still needs `confirm-sub`. `away off`
+releases it. The file
 never contains the topic name. If the directory is absent, the project has never enabled remote mode and
 nothing is written.
 
@@ -251,7 +256,8 @@ or the user's next phone message lands in the wrong pane.
   `release` (no argument) and `away on|status` refresh it.
 - When your task ends, run `release` (no argument releases this project's slot). `slots` shows the pool.
 - `release` also clears `slot` in the state file; `away off` is the human's call, not yours.
-- After an upgrade: restart the daemon, and free leases left by an older version with `release <slot>`
+- After an upgrade: restart the daemon, and free leases left by an older version with `release <slot>` run
+  from the project that held them
   ([references/daemon.md](references/daemon.md) §4).
 
 ## References

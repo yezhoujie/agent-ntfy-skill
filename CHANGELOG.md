@@ -15,6 +15,22 @@ version is only a tag you can pin (`npx skills add 'yezhoujie/agent-ntfy-skill#v
 - A `confirm-sub` run by hand ends with a line to paste into the agent (`agent-ntfy: slotN is confirmed; …`)
   and tells the user the terminal window can be closed — the only way the result reaches an agent without herdr.
 
+### Changed
+
+- `away on` leases a slot for the project on the spot (a confirmed idle slot if any, else the lowest
+  unconfirmed idle one, which it then sends through the reachability check) instead of waiting for the first
+  `ask`: the lease and the check are settled while the human is still at the keyboard, and `state.json` shows
+  the slot right away. `away off` releases the project's slot. The daemon gained a `lease` command for this.
+- A lease belongs to its project until that project releases it. When every slot is leased, `ask` / `notify`
+  / `away on` no longer list "idle slots you could take over"; they print the occupancy (holder, idle or
+  question pending, confirmed or not, one line per slot) for the user to decide between turning remote mode
+  off in one of those projects and `add-slot`. `release <slot>` now carries the caller's project identity and
+  refuses another project's slot (`not_yours`, rc 4); to free a lease whose project directory is gone, run it
+  with `AGENT_NTFY_TARGET=<that holder>`. The state layer's `replace` (never reachable from the CLI) is gone.
+- `away off` clears `slot` / `confirmed` in `state.json` only when the lease was actually released (or there
+  was none); when the release is refused or the daemon is not running the file keeps saying what the daemon's
+  lease says. It also no longer re-targets the injection pane.
+
 ## [0.1.1] - 2026-09-14
 
 ### Added

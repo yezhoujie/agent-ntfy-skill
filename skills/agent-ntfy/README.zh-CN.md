@@ -182,7 +182,7 @@ JSON
 
 它打印「通知已发到 slot1（用户想回话会以指令形式送达）」并立即返回：无按钮、不等待，退出码 0 已发 · 1 输入不合格 · 3 通道故障 · 4 需要人介入。提问挂着的时候也能发。ntfy app 里**一个 topic 只有一个输入框**、不是每张卡一个：有提问挂着时你发的任何内容都算那个提问的回复；没有提问在等时才注入 agent 的会话（§2）。通知与提问共用同一份 ntfy.sh 配额（§8），所以 SKILL.md 要求 agent 别拿它碎碎念。
 
-**日常维护。** 槽位租出去之后不会自动收回（`agent-ntfy slots` 看谁占着哪个——项目路径、从何时起、哪个窗格——`agent-ntfy release <slot>` 释放）。五个全被占满后 agent 会来问你释放哪个、还是 `add-slot` 新建——这是常态，不是故障。
+**日常维护。** 槽位租出去之后不会自动收回（`agent-ntfy slots` 看谁占着哪个——项目路径、从何时起、哪个窗格——`agent-ntfy release <slot>` 释放）。五个全被占满后 agent 会把占用情况列给你，由你决定：自己去某个项目关掉远程模式，还是让它 `add-slot` 新建。它不会替别的项目释放槽位——这是常态，不是故障。
 
 ## 6. 手机不弹通知怎么办（Android / MIUI 排查清单）
 
@@ -251,7 +251,7 @@ agent-ntfy away off       # 我回来了
 agent-ntfy away status    # 人读；加 --json 打印原文
 ```
 
-`away on` 是一站式的：没有 daemon 应答就起一个（在 herdr 里开新窗格起，否则用 `--detach`）；保证本项目有一个已过闸的槽位、或者池里有空闲的已过闸槽位（都没有时，在 herdr 里就开一个确认窗格、告诉 agent 该让你看哪个窗格，确认结束时窗格会把结果送回 agent 的会话；不在 herdr 里就退 4 并写明要跑的 `confirm-sub` 命令）；这些都成了才在 `<项目根>/.agent-ntfy/` 建目录（项目根 = git 仓根，不在仓里就是当前目录），目录自带 `.gitignore`（内容 `*`，git 看不到它，你仓里的 `.gitignore` 不动），内有 `state.json`：
+`away on` 是一站式的：没有 daemon 应答就起一个（在 herdr 里开新窗格起，否则用 `--detach`）；当场给本项目租一个槽位——已经租着的就沿用，否则优先空闲的已过闸槽位，再没有就租编号最小的未过闸空闲槽位并接着走确认（在 herdr 里开一个确认窗格、告诉 agent 该让你看哪个窗格，确认结束时窗格会把结果送回 agent 的会话；不在 herdr 里就退 4 并写明要跑的 `confirm-sub` 命令）；这些都成了才在 `<项目根>/.agent-ntfy/` 建目录（项目根 = git 仓根，不在仓里就是当前目录），目录自带 `.gitignore`（内容 `*`，git 看不到它，你仓里的 `.gitignore` 不动），内有 `state.json`：
 
 ```json
 {"away": true, "slot": "slot2", "confirmed": true, "target": "proj:/path/to/project", "updated": "2026-09-13T21:04:11+08:00"}
@@ -259,7 +259,7 @@ agent-ntfy away status    # 人读；加 --json 打印原文
 
 `slot` / `confirmed` / `target` 由 `ask`、`notify`、`confirm-sub`、`release`、`away` 顺手刷新——但**只在目录已存在的项目里**，没启用过远程模式的项目不会被建目录。`away status` 会向 daemon 要租约、两边不一致时按 daemon 改写文件（并打印「已按 daemon 的租约校正状态文件」）；daemon 没跑就照旧读文件并注明未校对。topic 名永远不写进去。`away` 为 `true` 期间 `ask` / `notify` 只用已过闸的槽位——没有人在键盘旁替新槽位过闸。
 
-`away status --json`（给 agent 读的那个形态）要在 agent 所在的 herdr 窗格里、或它起的子进程里跑：它和 `ask` / `notify` / `slots` 一样会把当前窗格记到租约上，从别处跑会把手机消息指到错的窗格。一条典型的规则是：*`.agent-ntfy/state.json` 里 `away: true` ⇒ 一切要我拍板的事用 `agent-ntfy ask`；后台跑（前台工具调用几分钟就会被杀、卡片作废）；做完 `release`。*
+`away status --json`（给 agent 读的那个形态）要在 agent 所在的 herdr 窗格里、或它起的子进程里跑：它和 `ask` / `notify` / `slots` 一样会把当前窗格记到租约上，从别处跑会把手机消息指到错的窗格。一条典型的规则是：*`.agent-ntfy/state.json` 里 `away: true` ⇒ 一切要我拍板的事用 `agent-ntfy ask`；后台跑（前台工具调用几分钟就会被杀、卡片作废）；做完 `away off`（它会释放槽位）。*
 
 ## 10. 已知行为
 
@@ -374,7 +374,7 @@ npx skills add 'yezhoujie/agent-ntfy-skill#v0.1.0' --skill agent-ntfy
 1. **用你现在手上的 CLI** 停掉正在跑的 daemon：`agent-ntfy daemon --stop`。文件已经换成新版的话，改用 `kill -TERM <pid>`（pid 在 `~/.agent-ntfy/daemon.pid` 里）。原因：从 0.1.0 起 `--stop` 是经 socket 向 daemon 发命令；旧版 daemon 不认这条命令，新版 CLI 会报「没有确认停止」并退 1。
 2. 换文件：`npx skills update`（或再跑一遍安装命令、或拷目录）。
 3. 起新 daemon：`agent-ntfy daemon --detach`，然后 `agent-ntfy daemon --status` 的行尾应有「传输：unix」（Windows 上是 `tcp`）。不管怎样都必须重启：旧版 daemon 会忽略新版 CLI 发的字段。
-4. 跑 `agent-ntfy slots`。0.1.0 之前租下的槽位，持有者显示的是 `wG:p1` 这样的窗格 id 而不是 `proj:<路径>`；用 `agent-ntfy release <slot>` 释放它们（不带参数的 `release` 只找得到当前项目的租约）。
+4. 跑 `agent-ntfy slots`。0.1.0 之前租下的槽位，持有者显示的是 `wG:p1` 这样的窗格 id 而不是 `proj:<路径>`；用 `AGENT_NTFY_TARGET=<那个持有者> agent-ntfy release <slot>` 释放它们（`release <slot>` 只释放本项目自己的租约；不带参数的 `release` 只找得到当前项目的租约）。
 5. 在 agent 工作的那个 herdr 窗格里跑一次 `agent-ntfy slots`（或 `ask` / `notify` / `away status`），让项目的租约记下这个窗格；手机消息就注入到它。
 
 其余不需要迁移：状态目录布局与 `state.json` 没变，缺省值（`AGENT_NTFY_IPC`、`AGENT_NTFY_STORE`）在 macOS 上就是原来的行为。

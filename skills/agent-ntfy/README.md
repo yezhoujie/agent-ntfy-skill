@@ -188,7 +188,7 @@ JSON
 
 It prints `notification sent on slot1 (if the user replies, it arrives as an instruction)` and returns at once: no button, no waiting, exit codes 0 sent · 1 invalid input · 3 channel failure · 4 a human must act. It is allowed while a question is pending. The ntfy app has **one reply box per topic**, not per card: whatever you send while a question is pending is that question's reply; when nothing is pending it is injected into the agent's session (§2). Notifications count against the same ntfy.sh quota as questions (§8), so the agent is told not to chatter.
 
-**Housekeeping.** Slots are leased until released (`agent-ntfy slots` to see who holds what — the project path, since when, and the pane — and `agent-ntfy release <slot>` to free one). Once all five are taken the agent asks you which to release or whether to `add-slot`; that is normal steady state.
+**Housekeeping.** Slots are leased until released (`agent-ntfy slots` to see who holds what — the project path, since when, and the pane — and `agent-ntfy release <slot>` to free one). Once all five are taken the agent shows you who holds what and you decide: turn remote mode off in one of those projects yourself, or let it `add-slot`. It never releases another project's slot; that is normal steady state.
 
 ## 6. If nothing pops up on the phone (Android / MIUI checklist)
 
@@ -263,7 +263,7 @@ agent-ntfy away off       # you are back
 agent-ntfy away status    # in words; add --json for the raw file
 ```
 
-`away on` is a one-stop command. It starts the daemon if none answers (inside herdr in a new pane, otherwise with `--detach`), makes sure the project has a confirmed slot or that a confirmed idle slot is available (if not, inside herdr it opens a confirmation pane, tells the agent which pane you should look at, and the pane sends the result back into the agent's session when the check ends; outside herdr it exits 4 and names the `confirm-sub` command to run), and only then creates `<project root>/.agent-ntfy/` (project root = the git toplevel, else the current directory) with a self-ignoring `.gitignore` and a `state.json`:
+`away on` is a one-stop command. It starts the daemon if none answers (inside herdr in a new pane, otherwise with `--detach`), leases a slot for the project on the spot — the one it already holds, else a confirmed idle slot, else the lowest unconfirmed idle slot, which it then sends through the reachability check (inside herdr it opens a confirmation pane, tells the agent which pane you should look at, and the pane sends the result back into the agent's session when the check ends; outside herdr it exits 4 and names the `confirm-sub` command to run) — and only then creates `<project root>/.agent-ntfy/` (project root = the git toplevel, else the current directory) with a self-ignoring `.gitignore` and a `state.json`:
 
 ```json
 {"away": true, "slot": "slot2", "confirmed": true, "target": "proj:/path/to/project", "updated": "2026-09-13T21:04:11+08:00"}
@@ -279,7 +279,7 @@ Run `away status --json` (the form meant for the agent) from the agent's herdr p
 from it: like `ask` / `notify` / `slots` it records the current pane on the lease, and run from elsewhere it would point
 phone messages at the wrong pane. A typical rule reads: *if `.agent-ntfy/state.json` says `away: true`, use
 `agent-ntfy ask` for anything that needs my decision; run it in the background (a foreground tool call is
-killed after minutes and the card is cancelled); `release` when done.*
+killed after minutes and the card is cancelled); `away off` when done (it releases the slot).*
 
 ## 10. Known behaviours
 
@@ -409,7 +409,7 @@ npx skills add 'yezhoujie/agent-ntfy-skill#v0.1.0' --skill agent-ntfy
 1. Stop the running daemon **with the CLI you have now**: `agent-ntfy daemon --stop`. If you already replaced the files, send it `kill -TERM <pid>` instead (the pid is in `~/.agent-ntfy/daemon.pid`). Reason: since 0.1.0 `--stop` asks the daemon over its socket; a daemon from an earlier version does not know that command, so the new CLI reports `did not acknowledge the stop` and exits 1.
 2. Update the files: `npx skills update` (or run the install command again, or copy the directory).
 3. Start the new daemon: `agent-ntfy daemon --detach`, then `agent-ntfy daemon --status` should show `transport: unix` (or `tcp` on Windows). A restart is required in any case: an earlier daemon ignores the fields the new CLI sends.
-4. Run `agent-ntfy slots`. Leases taken before 0.1.0 show a pane id such as `wG:p1` as holder instead of `proj:<path>`; free them with `agent-ntfy release <slot>` (`release` without argument only finds the current project's lease).
+4. Run `agent-ntfy slots`. Leases taken before 0.1.0 show a pane id such as `wG:p1` as holder instead of `proj:<path>`; free them with `AGENT_NTFY_TARGET=<that holder> agent-ntfy release <slot>` (`release <slot>` only releases your own project's lease; `release` without argument only finds the current project's lease).
 5. In the herdr pane your agent works in, run `agent-ntfy slots` (or `ask` / `notify` / `away status`) so the project's lease records that pane; phone messages are injected there.
 
 Nothing else migrates: the state directory layout and `state.json` are unchanged, and the defaults (`AGENT_NTFY_IPC`, `AGENT_NTFY_STORE`) reproduce the previous behaviour on macOS.
