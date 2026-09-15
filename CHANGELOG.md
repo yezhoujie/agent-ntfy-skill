@@ -16,6 +16,12 @@ pin (`npx skills add 'yezhoujie/agent-remote-communication-skills#v0.1.2' --skil
 - `send-file` with a relative path (`send-file out/shot.png`) no longer fails with `file not found`: the path
   is resolved against the directory the command runs in before it reaches the daemon, which has a working
   directory of its own. The `file not found` message now names the resolved absolute path.
+- An option's value is no longer mistaken for a command's positional argument when it comes first:
+  `send-file --caption "a note" ./shot.png` used to look for a file named `a note`, and `away --name x on`
+  refused `--name` as unknown. The positional is the first argument that is neither an option nor the value
+  of one the command takes (`rename`, `send-file`, `away`), and an option's value is the token right after
+  it whatever it looks like — `--caption --draft` used to drop the caption silently, and `away on --name --new`
+  also switched on `--new`.
 
 ### [0.1.1][agent-lark-0.1.1] - 2026-09-15
 

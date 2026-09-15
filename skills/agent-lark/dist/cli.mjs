@@ -14997,8 +14997,8 @@ var require_axios = __commonJS({
         return normalized;
       }
       const callbackLookup = callbackify(lookup, (value) => utils$1.isArray(value) ? value : [value]);
-      normalized = (hostname, opt2, cb) => {
-        callbackLookup(hostname, opt2, (err, arg0, arg1) => {
+      normalized = (hostname, opt, cb) => {
+        callbackLookup(hostname, opt, (err, arg0, arg1) => {
           if (err) {
             return cb(err);
           }
@@ -15008,7 +15008,7 @@ var require_axios = __commonJS({
           } catch (error) {
             return cb(error);
           }
-          opt2.all ? cb(err, addresses) : cb(err, addresses[0].address, addresses[0].family);
+          opt.all ? cb(err, addresses) : cb(err, addresses[0].address, addresses[0].family);
         });
       };
       normalizedLookupCache.set(lookup, normalized);
@@ -16640,23 +16640,23 @@ var require_axios = __commonJS({
     });
     var deprecatedWarnings = {};
     validators$1.transitional = function transitional(validator2, version, message) {
-      function formatMessage(opt2, desc) {
-        return "[Axios v" + VERSION + "] Transitional option '" + opt2 + "'" + desc + (message ? ". " + message : "");
+      function formatMessage(opt, desc) {
+        return "[Axios v" + VERSION + "] Transitional option '" + opt + "'" + desc + (message ? ". " + message : "");
       }
-      return (value, opt2, opts) => {
+      return (value, opt, opts) => {
         if (validator2 === false) {
-          throw new AxiosError(formatMessage(opt2, " has been removed" + (version ? " in " + version : "")), AxiosError.ERR_DEPRECATED);
+          throw new AxiosError(formatMessage(opt, " has been removed" + (version ? " in " + version : "")), AxiosError.ERR_DEPRECATED);
         }
-        if (version && !deprecatedWarnings[opt2]) {
-          deprecatedWarnings[opt2] = true;
-          console.warn(formatMessage(opt2, " has been deprecated since v" + version + " and will be removed in the near future"));
+        if (version && !deprecatedWarnings[opt]) {
+          deprecatedWarnings[opt] = true;
+          console.warn(formatMessage(opt, " has been deprecated since v" + version + " and will be removed in the near future"));
         }
-        return validator2 ? validator2(value, opt2, opts) : true;
+        return validator2 ? validator2(value, opt, opts) : true;
       };
     };
     validators$1.spelling = function spelling(correctSpelling) {
-      return (value, opt2) => {
-        console.warn(`${opt2} is likely a misspelling of ${correctSpelling}`);
+      return (value, opt) => {
+        console.warn(`${opt} is likely a misspelling of ${correctSpelling}`);
         return true;
       };
     };
@@ -16667,18 +16667,18 @@ var require_axios = __commonJS({
       const keys = Object.keys(options);
       let i = keys.length;
       while (i-- > 0) {
-        const opt2 = keys[i];
-        const validator2 = Object.prototype.hasOwnProperty.call(schema, opt2) ? schema[opt2] : void 0;
+        const opt = keys[i];
+        const validator2 = Object.prototype.hasOwnProperty.call(schema, opt) ? schema[opt] : void 0;
         if (validator2) {
-          const value = options[opt2];
-          const result = value === void 0 || validator2(value, opt2, options);
+          const value = options[opt];
+          const result = value === void 0 || validator2(value, opt, options);
           if (result !== true) {
-            throw new AxiosError("option " + opt2 + " must be " + result, AxiosError.ERR_BAD_OPTION_VALUE);
+            throw new AxiosError("option " + opt + " must be " + result, AxiosError.ERR_BAD_OPTION_VALUE);
           }
           continue;
         }
         if (allowUnknown !== true) {
-          throw new AxiosError("Unknown option " + opt2, AxiosError.ERR_BAD_OPTION);
+          throw new AxiosError("Unknown option " + opt, AxiosError.ERR_BAD_OPTION);
         }
       }
     }
@@ -124564,8 +124564,8 @@ ${formatCalendarInner2(raw)}
       if (obj.placeholder)
         visit2(obj.placeholder, out);
       if (Array.isArray(obj.options)) {
-        for (const opt2 of obj.options) {
-          const o = opt2;
+        for (const opt of obj.options) {
+          const o = opt;
           if (o === null || o === void 0 ? void 0 : o.text)
             visit2(o.text, out);
         }
@@ -124933,8 +124933,8 @@ ${inner}
       const lines = [];
       if (parsed.topic)
         lines.push(parsed.topic);
-      for (const opt2 of (_b = parsed.options) !== null && _b !== void 0 ? _b : [])
-        lines.push(`\u2022 ${opt2}`);
+      for (const opt of (_b = parsed.options) !== null && _b !== void 0 ? _b : [])
+        lines.push(`\u2022 ${opt}`);
       return { content: `<vote>
 ${lines.join("\n")}
 </vote>`, resources: [] };
@@ -126707,8 +126707,8 @@ function visit(node, out) {
   }
   if (obj.label) visit(obj.label, out);
   if (obj.placeholder) visit(obj.placeholder, out);
-  if (Array.isArray(obj.options)) for (const opt2 of obj.options) {
-    const o = opt2;
+  if (Array.isArray(obj.options)) for (const opt of obj.options) {
+    const o = opt;
     if (o?.text) visit(o.text, out);
   }
   if (Array.isArray(obj.elements)) for (const el of obj.elements) visit(el, out);
@@ -129350,7 +129350,7 @@ ${lines.length > 0 ? lines.join("\n") : "[video chat]"}
       };
       const lines = [];
       if (parsed.topic) lines.push(parsed.topic);
-      for (const opt2 of parsed.options ?? []) lines.push(`\u2022 ${opt2}`);
+      for (const opt of parsed.options ?? []) lines.push(`\u2022 ${opt}`);
       return {
         content: `<vote>
 ${lines.join("\n")}
@@ -135105,9 +135105,9 @@ var require_packer_async = __commonJS({
     var Stream = __require("stream");
     var constants = require_constants2();
     var Packer = require_packer();
-    var PackerAsync = module.exports = function(opt2) {
+    var PackerAsync = module.exports = function(opt) {
       Stream.call(this);
-      let options = opt2 || {};
+      let options = opt || {};
       this._packer = new Packer(options);
       this._deflate = this._packer.createDeflate();
       this.readable = true;
@@ -135440,13 +135440,13 @@ var require_packer_sync = __commonJS({
     }
     var constants = require_constants2();
     var Packer = require_packer();
-    module.exports = function(metaData, opt2) {
+    module.exports = function(metaData, opt) {
       if (!hasSyncZlib) {
         throw new Error(
           "To use the sync capability of this library in old node versions, please pin pngjs to v2.3.0"
         );
       }
-      let options = opt2 || {};
+      let options = opt || {};
       let packer = new Packer(options);
       let chunks = [];
       chunks.push(Buffer.from(constants.PNG_SIGNATURE));
@@ -136868,9 +136868,9 @@ async function splitPane(cwd, pane, run = runHerdr) {
   const id = env.result?.pane?.pane_id;
   return typeof id === "string" && id ? id : null;
 }
-function quoteForPaneShell(argv, platform5 = process.platform) {
-  if (platform5 === "win32") return argv.map(quoteWindows).join(" ");
-  return argv.map(quotePosix).join(" ");
+function quoteForPaneShell(argv2, platform5 = process.platform) {
+  if (platform5 === "win32") return argv2.map(quoteWindows).join(" ");
+  return argv2.map(quotePosix).join(" ");
 }
 function quotePosix(a) {
   if (a !== "" && !a.startsWith("=") && /^[A-Za-z0-9_@%+=:,./-]+$/.test(a)) return a;
@@ -136895,8 +136895,8 @@ function quoteWindows(a) {
   }
   return `${out}${"\\".repeat(backslashes * 2)}"`;
 }
-async function runInPane(pane, argv, run = runHerdr) {
-  return (await run(["pane", "run", pane, quoteForPaneShell(argv)])).ok;
+async function runInPane(pane, argv2, run = runHerdr) {
+  return (await run(["pane", "run", pane, quoteForPaneShell(argv2)])).ok;
 }
 async function closePane(pane, run = runHerdr) {
   return run(["pane", "close", pane]);
@@ -137347,10 +137347,10 @@ function validateAsk(raw) {
       problems.push(fill(msg.vOptionsMax, { max: LIMITS.maxOptions }));
     const seen = /* @__PURE__ */ new Set();
     o.options.forEach((item, i) => {
-      const opt2 = item ?? {};
-      const id = str2(opt2.id);
-      const label = str2(opt2.label);
-      const consequence = str2(opt2.consequence);
+      const opt = item ?? {};
+      const id = str2(opt.id);
+      const label = str2(opt.label);
+      const consequence = str2(opt.consequence);
       if (!id) problems.push(fill(msg.vOptionId, { i }));
       else if (seen.has(id)) problems.push(fill(msg.vOptionIdDup, { i, id }));
       else seen.add(id);
@@ -137360,7 +137360,7 @@ function validateAsk(raw) {
       else if (consequence.length > LIMITS.optionConsequence)
         problems.push(fill(msg.vOptionConsequenceLong, { i, max: LIMITS.optionConsequence }));
       if (id && label && consequence)
-        options.push({ id, label, consequence, danger: opt2.danger === true });
+        options.push({ id, label, consequence, danger: opt.danger === true });
     });
   }
   let select = "single";
@@ -137981,9 +137981,9 @@ ${text}`;
       reply = picked.map((o) => o.label).join("\u3001");
       via = "form";
     } else {
-      const opt2 = p.payload.options.find((o) => o.id === value.optionId);
-      if (!opt2) return { toast: { type: "error", content: T.toastBadOption } };
-      reply = opt2.label;
+      const opt = p.payload.options.find((o) => o.id === value.optionId);
+      if (!opt) return { toast: { type: "error", content: T.toastBadOption } };
+      reply = opt.label;
       via = "button";
     }
     const closedCard = askCard({
@@ -138723,15 +138723,6 @@ function die(code, text) {
 `);
   process.exit(code);
 }
-function flag(args, name) {
-  return args.includes(`--${name}`);
-}
-function opt(args, name) {
-  const i = args.indexOf(`--${name}`);
-  if (i < 0) return void 0;
-  const v = args[i + 1];
-  return v && !v.startsWith("--") ? v : void 0;
-}
 var OPTIONS = {
   setup: { flags: ["update", "reset", "reuse", "close-pane"], opts: ["scopes", "report-to"] },
   daemon: { flags: ["detach", "status", "stop", "force"], opts: [] },
@@ -138747,18 +138738,35 @@ var OPTIONS = {
   status: { flags: [], opts: [] },
   help: { flags: [], opts: [] }
 };
-function rejectUnknownOptions(command, args) {
-  const known = OPTIONS[command] ?? { flags: [], opts: [] };
+OPTIONS.away = {
+  flags: [],
+  opts: [...new Set(Object.entries(OPTIONS).flatMap(([k, v]) => k.startsWith("away ") ? v.opts : []))]
+};
+function argv(command, args) {
+  const valued = OPTIONS[command]?.opts ?? [];
+  const flags = /* @__PURE__ */ new Set();
+  const opts = /* @__PURE__ */ new Map();
+  const positionals = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (!a.startsWith("--")) continue;
-    const name = a.slice(2);
-    if (known.flags.includes(name)) continue;
-    if (known.opts.includes(name)) {
-      i += 1;
+    if (!a.startsWith("--")) {
+      positionals.push(a);
       continue;
     }
-    die(1, fill(msg.unknownOption, { option: a }));
+    const name = a.slice(2);
+    if (valued.includes(name)) {
+      if (!opts.has(name)) opts.set(name, args[i + 1]);
+      i += 1;
+    } else flags.add(name);
+  }
+  return { flag: (name) => flags.has(name), opt: (name) => opts.get(name), positional: () => positionals[0] };
+}
+function rejectUnknownOptions(command, args) {
+  const known = OPTIONS[command]?.flags ?? [];
+  const a = argv(command, args);
+  for (const token of args) {
+    const name = token.slice(2);
+    if (token.startsWith("--") && a.flag(name) && !known.includes(name)) die(1, fill(msg.unknownOption, { option: token }));
   }
 }
 async function readStdin() {
@@ -138799,11 +138807,12 @@ async function runSetup(args, deps) {
     throw new SetupExit(code, text);
   };
   const typed = { secret: "" };
-  const update = flag(args, "update");
-  const reuse = flag(args, "reuse");
-  const reportTo = opt(args, "report-to");
-  const closeAfter = flag(args, "close-pane");
-  const scopes = opt(args, "scopes")?.split(",").map((s) => s.trim()).filter(Boolean) ?? DEFAULT_SCOPES;
+  const a = argv("setup", args);
+  const update = a.flag("update");
+  const reuse = a.flag("reuse");
+  const reportTo = a.opt("report-to");
+  const closeAfter = a.flag("close-pane");
+  const scopes = a.opt("scopes")?.split(",").map((s) => s.trim()).filter(Boolean) ?? DEFAULT_SCOPES;
   const report = async (line) => {
     if (!reportTo) return;
     const r = await deps.herdr.promptPane(reportTo, line);
@@ -138811,10 +138820,10 @@ async function runSetup(args, deps) {
 `);
   };
   try {
-    if (flag(args, "reset")) clearCreds();
+    if (a.flag("reset")) clearCreds();
     const existing = resolveCreds();
     const alreadyPersisted = existing?.source === "keychain" || existing?.source === "file";
-    if (alreadyPersisted && !update && !flag(args, "reset")) {
+    if (alreadyPersisted && !update && !a.flag("reset")) {
       say("setupHaveCreds", { origin: existing.origin });
       await report(fill(msg.setupReportExists, { origin: existing.origin }));
       return 0;
@@ -138858,9 +138867,9 @@ async function runSetup(args, deps) {
   }
 }
 async function handOff(deps) {
-  const argv = [deps.execPath, deps.cliPath, "--home", homeDir(), "setup", "--reuse"];
+  const argv2 = [deps.execPath, deps.cliPath, "--home", homeDir(), "setup", "--reuse"];
   const pane = deps.herdr.insideHerdr() ? deps.herdr.currentPaneId() : null;
-  const command = quoteForPaneShell(argv);
+  const command = quoteForPaneShell(argv2);
   if (!pane) {
     deps.err(`${msg.prefix}${fill(msg.setupReuseNeedsTerminal, { command })}
 `);
@@ -138872,7 +138881,7 @@ async function handOff(deps) {
 `);
     return 3;
   }
-  const typed = await deps.herdr.runInPane(opened, [...argv, "--report-to", pane, "--close-pane"]);
+  const typed = await deps.herdr.runInPane(opened, [...argv2, "--report-to", pane, "--close-pane"]);
   if (!typed) {
     deps.err(`${msg.prefix}${fill(msg.setupHandoffFailed, { why: `pane run failed in ${opened}`, command })}
 `);
@@ -139054,7 +139063,8 @@ async function startDaemonDetached() {
   return { ok: false, message: fill(msg.daemonNoReply, { log: logPath() }) };
 }
 async function cmdDaemon(args) {
-  if (flag(args, "status")) {
+  const a = argv("daemon", args);
+  if (a.flag("status")) {
     const res = await request({ type: "ping" }, { timeoutMs: 5e3 });
     if (!res.ok) die(1, res.reason === "down" ? msg.daemonNotRunning : fill(msg.daemonNoAnswer, { message: res.message }));
     if (res.kind !== "pong") die(1, msg.daemonWeird);
@@ -139072,14 +139082,14 @@ async function cmdDaemon(args) {
     );
     return;
   }
-  if (flag(args, "stop")) {
+  if (a.flag("stop")) {
     if (!await daemonAlive()) {
       if (existsSync4(pidPath())) unlinkSync4(pidPath());
       process.stdout.write(`${msg.daemonWasNotRunning}
 `);
       return;
     }
-    if (!flag(args, "force")) {
+    if (!a.flag("force")) {
       const probe = await request({ type: "ping" }, { timeoutMs: 5e3 });
       if (probe.ok && probe.kind === "pong" && probe.status.pendingAsks > 0)
         die(4, fill(msg.daemonStopRefused, { n: probe.status.pendingAsks }));
@@ -139097,7 +139107,7 @@ async function cmdDaemon(args) {
     }
     die(3, fill(msg.daemonStopStuck, { log: logPath() }));
   }
-  if (flag(args, "detach")) {
+  if (a.flag("detach")) {
     const r = await startDaemonDetached();
     if (!r.ok) die(3, r.message);
     process.stdout.write(`${r.message}
@@ -139117,15 +139127,15 @@ async function cmdDaemon(args) {
   await daemon.done;
   process.exit(0);
 }
-function bindArgs(args) {
-  const name = opt(args, "name");
+function bindArgs(a) {
+  const name = a.opt("name");
   if (name !== void 0) {
     const problem = taskNameProblem(name);
     if (problem) die(1, problem);
   }
-  const reuse = opt(args, "reuse");
-  if (reuse && flag(args, "new")) die(1, msg.bindModeConflict);
-  return { name, mode: reuse ? "reuse" : flag(args, "new") ? "new" : void 0, reuseChatId: reuse };
+  const reuse = a.opt("reuse");
+  if (reuse && a.flag("new")) die(1, msg.bindModeConflict);
+  return { name, mode: reuse ? "reuse" : a.flag("new") ? "new" : void 0, reuseChatId: reuse };
 }
 function dieBind(res) {
   if (res.code === 4 && res.candidates?.length) {
@@ -139144,8 +139154,9 @@ function dieBind(res) {
 }
 async function cmdBind(args) {
   const { root, label, paneId } = ctx();
+  const a = argv("bind", args);
   const res = await request(
-    { type: "bind", root, label, paneId, chatId: opt(args, "chat"), ...bindArgs(args) },
+    { type: "bind", root, label, paneId, chatId: a.opt("chat"), ...bindArgs(a) },
     { onNote: (text) => process.stderr.write(`note: ${text}
 `) }
   );
@@ -139168,7 +139179,7 @@ async function cmdUnbind() {
   });
 }
 async function cmdRename(args) {
-  const name = args.find((a) => !a.startsWith("--"));
+  const name = argv("rename", args).positional();
   if (!name?.trim()) die(1, msg.renameUsage);
   const problem = taskNameProblem(name);
   if (problem) die(1, problem);
@@ -139194,10 +139205,11 @@ async function cmdAsk(args) {
   ${err.problems.join("\n  ")}`);
     throw err;
   }
-  const seconds = Number(opt(args, "timeout") ?? 43200);
+  const a = argv("ask", args);
+  const seconds = Number(a.opt("timeout") ?? 43200);
   if (!Number.isFinite(seconds) || seconds <= 0) die(1, msg.timeoutArg);
   const res = await request(
-    { type: "ask", root, label, paneId, payload, timeoutMs: seconds * 1e3, urgent: flag(args, "urgent") },
+    { type: "ask", root, label, paneId, payload, timeoutMs: seconds * 1e3, urgent: a.flag("urgent") },
     { onNote: (text) => process.stderr.write(`note: ${text}
 `) }
   );
@@ -139229,10 +139241,11 @@ async function cmdNotify() {
 }
 async function cmdSendFile(args) {
   const { root, label, paneId } = ctx();
-  const given = args.find((a) => !a.startsWith("--"));
+  const a = argv("send-file", args);
+  const given = a.positional();
   if (!given) die(1, msg.sendFileUsage);
   const path2 = resolve2(given);
-  const res = await request({ type: "sendFile", root, label, paneId, path: path2, caption: opt(args, "caption") });
+  const res = await request({ type: "sendFile", root, label, paneId, path: path2, caption: a.opt("caption") });
   finish(res, () => process.stdout.write(`${msg.fileSent}
 `));
 }
@@ -139251,11 +139264,12 @@ async function waitConnected(ping, deadlineMs, pollMs = 250) {
   }
 }
 async function cmdAway(args) {
-  const sub = args.find((a) => !a.startsWith("--")) ?? "status";
+  const sub = argv("away", args).positional() ?? "status";
+  const a = argv(`away ${sub}`, args);
   const { root, label, paneId } = ctx();
   if (sub === "status") {
     const state = readProjectState(root);
-    if (flag(args, "json")) {
+    if (a.flag("json")) {
       process.stdout.write(`${JSON.stringify(state ?? { away: false, chatId: null, target: root, updated: "" })}
 `);
       return;
@@ -139273,7 +139287,7 @@ async function cmdAway(args) {
   const away = sub === "on";
   let chatId;
   if (away) {
-    const choice = bindArgs(args);
+    const choice = bindArgs(a);
     if (!resolveCreds()) die(4, msg.awayNoCreds);
     const d = await startDaemonDetached();
     if (!d.ok) die(3, d.message);
@@ -139359,19 +139373,19 @@ async function cmdStatus() {
     }
   }
 }
-function takeHome(argv) {
-  const i = argv.findIndex((a) => a === "--home" || a.startsWith("--home="));
-  if (i < 0) return argv;
-  const joined = argv[i].startsWith("--home=");
-  const dir = joined ? argv[i].slice("--home=".length) : argv[i + 1];
+function takeHome(argv2) {
+  const i = argv2.findIndex((a) => a === "--home" || a.startsWith("--home="));
+  if (i < 0) return argv2;
+  const joined = argv2[i].startsWith("--home=");
+  const dir = joined ? argv2[i].slice("--home=".length) : argv2[i + 1];
   if (!dir || !joined && dir.startsWith("--")) die(1, msg.homeNeedsDir);
   process.env.AGENT_LARK_HOME = resolve2(dir);
-  return [...argv.slice(0, i), ...argv.slice(i + (joined ? 1 : 2))];
+  return [...argv2.slice(0, i), ...argv2.slice(i + (joined ? 1 : 2))];
 }
 async function main() {
   const [cmd, ...args] = takeHome(process.argv.slice(2));
   if (cmd === "away") {
-    const sub = args.find((a) => !a.startsWith("--")) ?? "status";
+    const sub = argv("away", args).positional() ?? "status";
     rejectUnknownOptions(`away ${sub}`, args);
   } else if (cmd === void 0 || cmd === "--help" || cmd === "-h" || cmd === "help") rejectUnknownOptions("help", args);
   else if (cmd in OPTIONS) rejectUnknownOptions(cmd, args);
@@ -139415,6 +139429,7 @@ if (isEntry)
     process.exit(3);
   });
 export {
+  argv,
   describeError,
   describeProbeError,
   isTransientNetworkError,

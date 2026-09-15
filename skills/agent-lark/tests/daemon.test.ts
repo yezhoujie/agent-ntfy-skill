@@ -1,9 +1,10 @@
 // The daemon in-process, with the Feishu channel and herdr replaced by fakes.
-import { after, test } from 'node:test';
+import { after, test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { createFakeChannel, type FakeChannelOptions } from './fixtures/fake-channel.js';
 import { createFakeHerdr } from './fixtures/fake-herdr.js';
@@ -538,6 +539,105 @@ test('ask and notify remember the payload language on the live binding', PER_TES
   await asking;
   assert.equal((await bindings(home))[0]?.lang, 'zh');
   await daemon.stop();
+});
+
+// ---- send-file: the daemon's own gate ---------------------------------------
+// The CLI resolves the path before asking (see the cli tests); what is
+// checked here is what the daemon lets through for whatever path a request
+// names. Everything under tmpdir() is allowed, so a target outside the
+// allowlist has to live elsewhere: this package's own checkout.
+const outsideFile = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'package.json');
+const MB = 1024 * 1024;
+const rx = (s: string): string => s.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+/** An empty file grown to `bytes` without writing them (sparse where the file system allows). */
+function sparse(path: string, bytes: number): string {
+  writeFileSync(path, '');
+  truncateSync(path, bytes);
+  return path;
+}
+async function sendFileSetup(t: TestContext) {
+  const { fake, daemon, home } = await start();
+  t.after(() => daemon.stop());
+  await connected();
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'al-send-')));
+  homes.push(project);
+  await bindChat(project, 'oc_x');
+  const send = (path: string) => request({ type: 'sendFile', root: project, label: 'p', paneId: null, path });
+  return { fake, home, project, send };
+}
+const refusal = (res: Awaited<ReturnType<typeof request>>): string => {
+  assert.equal(res.ok, false, JSON.stringify(res));
+  return res.ok ? '' : `${res.code} ${res.message}`;
+};
+
+test('send-file: a regular file inside the project is sent as a file under its base name', PER_TEST, async (t) => {
+  const { fake, project, send } = await sendFileSetup(t);
+  writeFileSync(join(project, 'note.txt'), 'hello');
+  const res = await send(join(project, 'note.txt'));
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const last = fake.sent.at(-1) as { chatId: string; input: { file: { source: Buffer; fileName: string } } };
+  assert.equal(last.chatId, 'oc_x');
+  assert.equal(last.input.file.fileName, 'note.txt');
+  assert.equal(last.input.file.source.toString(), 'hello');
+});
+
+test('send-file: a relative path is taken from the daemon\'s own working directory', PER_TEST, async (t) => {
+  const { fake } = await sendFileSetup(t);
+  const cwd = realpathSync(process.cwd());
+  assert.ok(existsSync(join(cwd, 'package.json')), `no package.json in ${cwd}; the runner starts the tests from the package root`);
+  await bindChat(cwd, 'oc_cwd');
+  const res = await request({ type: 'sendFile', root: cwd, label: 'p', paneId: null, path: 'package.json' });
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.equal((fake.sent.at(-1) as { input: { file: { fileName: string } } }).input.file.fileName, 'package.json');
+});
+
+test('send-file: a symlink inside the project pointing outside the allowlist is refused, naming the allowed directories', PER_TEST, async (t) => {
+  const { home, project, send } = await sendFileSetup(t);
+  const target = realpathSync(outsideFile);
+  if (target.startsWith(realpathSync(tmpdir()) + sep)) {
+    t.skip(`this checkout is under tmpdir(), which is always allowed: ${target}`);
+    return;
+  }
+  try {
+    symlinkSync(outsideFile, join(project, 'link.json'));
+  } catch (err) {
+    t.skip(`cannot create symlinks here: ${String(err)}`);
+    return;
+  }
+  const why = refusal(await send(join(project, 'link.json')));
+  assert.match(why, new RegExp(`^1 refusing to send ${rx(target)}\n`));
+  assert.match(why, new RegExp(`^  this project ${rx(project)}$`, 'm'));
+  assert.match(why, new RegExp(`^  ${rx(join(home, 'media'))}$`, 'm'));
+  assert.match(why, new RegExp(`^  ${rx(tmpdir())}$`, 'm'));
+});
+
+test('send-file: a directory is refused as not a regular file', PER_TEST, async (t) => {
+  const { project, send } = await sendFileSetup(t);
+  mkdirSync(join(project, 'dir'));
+  assert.equal(refusal(await send(join(project, 'dir'))), `1 not a regular file: ${join(project, 'dir')}`);
+});
+
+test('send-file: an image one byte over 10 MB is refused', PER_TEST, async (t) => {
+  const { project, send } = await sendFileSetup(t);
+  assert.equal(refusal(await send(sparse(join(project, 'big.png'), 10 * MB + 1))), '1 file too large: 10.0 MB, limit 10 MB');
+});
+
+test('send-file: an image of exactly 10 MB is sent as an image', PER_TEST, async (t) => {
+  const { fake, project, send } = await sendFileSetup(t);
+  const res = await send(sparse(join(project, 'cap.png'), 10 * MB));
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const last = fake.sent.at(-1) as { input: { image?: { source: Buffer } } };
+  assert.equal(last.input.image?.source.length, 10 * MB);
+});
+
+test('send-file: any other file one byte over 30 MB is refused', PER_TEST, async (t) => {
+  const { project, send } = await sendFileSetup(t);
+  assert.equal(refusal(await send(sparse(join(project, 'big.bin'), 30 * MB + 1))), '1 file too large: 30.0 MB, limit 30 MB');
+});
+
+test('send-file: a path that does not exist is refused as file not found', PER_TEST, async (t) => {
+  const { project, send } = await sendFileSetup(t);
+  assert.equal(refusal(await send(join(project, 'nope.txt'))), `1 file not found: ${join(project, 'nope.txt')}`);
 });
 
 test('a message in a released group is ignored; the stuck-alert poll only watches live away bindings', PER_TEST, async () => {

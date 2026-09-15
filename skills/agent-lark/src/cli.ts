@@ -99,17 +99,6 @@ function die(code: number, text: string): never {
   process.exit(code);
 }
 
-function flag(args: string[], name: string): boolean {
-  return args.includes(`--${name}`);
-}
-
-function opt(args: string[], name: string): string | undefined {
-  const i = args.indexOf(`--${name}`);
-  if (i < 0) return undefined;
-  const v = args[i + 1];
-  return v && !v.startsWith('--') ? v : undefined;
-}
-
 /**
  * Every `--option` a subcommand accepts, by name. Anything else on its
  * command line is refused before the command does a thing: a misspelt or
@@ -131,20 +120,56 @@ const OPTIONS: Record<string, { flags: string[]; opts: string[] }> = {
   status: { flags: [], opts: [] },
   help: { flags: [], opts: [] },
 };
+// Consulted to find `away`'s subcommand itself (`away --name x on`), before
+// the subcommand's own entry — the one that gets enforced — is known.
+OPTIONS.away = {
+  flags: [],
+  opts: [...new Set(Object.entries(OPTIONS).flatMap(([k, v]) => (k.startsWith('away ') ? v.opts : [])))],
+};
+
+export interface Argv {
+  /** `--name` given as a flag. */
+  flag(name: string): boolean;
+  /** The value given to `--name`; undefined when the option is absent or the last token. */
+  opt(name: string): string | undefined;
+  /** The first argument that is neither an option nor an option's value. */
+  positional(): string | undefined;
+}
+
+/**
+ * `command`'s arguments read by one rule: an option the command takes a value
+ * for (`OPTIONS[command].opts`) owns the next token, whatever it looks like;
+ * every other `--x` is a flag; the rest are positionals. Reading through this
+ * everywhere is what keeps `away on --name --new` naming the group `--new`
+ * instead of also switching modes.
+ */
+export function argv(command: string, args: string[]): Argv {
+  const valued = OPTIONS[command]?.opts ?? [];
+  const flags = new Set<string>();
+  const opts = new Map<string, string | undefined>();
+  const positionals: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (!a.startsWith('--')) {
+      positionals.push(a);
+      continue;
+    }
+    const name = a.slice(2);
+    if (valued.includes(name)) {
+      if (!opts.has(name)) opts.set(name, args[i + 1]);
+      i += 1;
+    } else flags.add(name);
+  }
+  return { flag: (name) => flags.has(name), opt: (name) => opts.get(name), positional: () => positionals[0] };
+}
 
 /** Exit 1 on the first `--option` that `command` does not know (`--home` was taken out of argv already). */
 function rejectUnknownOptions(command: string, args: string[]): void {
-  const known = OPTIONS[command] ?? { flags: [], opts: [] };
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i]!;
-    if (!a.startsWith('--')) continue;
-    const name = a.slice(2);
-    if (known.flags.includes(name)) continue;
-    if (known.opts.includes(name)) {
-      i += 1; // the option's value, which may look like anything
-      continue;
-    }
-    die(1, fill(msg.unknownOption, { option: a }));
+  const known = OPTIONS[command]?.flags ?? [];
+  const a = argv(command, args);
+  for (const token of args) {
+    const name = token.slice(2);
+    if (token.startsWith('--') && a.flag(name) && !known.includes(name)) die(1, fill(msg.unknownOption, { option: token }));
   }
 }
 
@@ -232,11 +257,12 @@ export async function runSetup(args: string[], deps: SetupDeps): Promise<number>
   // The secret typed so far, so that whatever text leaves through the report
   // line can be masked — including an error nobody anticipated.
   const typed = { secret: '' };
-  const update = flag(args, 'update');
-  const reuse = flag(args, 'reuse');
-  const reportTo = opt(args, 'report-to');
-  const closeAfter = flag(args, 'close-pane');
-  const scopes = (opt(args, 'scopes')?.split(',').map((s) => s.trim()).filter(Boolean)) ?? DEFAULT_SCOPES;
+  const a = argv('setup', args);
+  const update = a.flag('update');
+  const reuse = a.flag('reuse');
+  const reportTo = a.opt('report-to');
+  const closeAfter = a.flag('close-pane');
+  const scopes = (a.opt('scopes')?.split(',').map((s) => s.trim()).filter(Boolean)) ?? DEFAULT_SCOPES;
 
   // The result reaches the agent that opened this pane as one line, whatever
   // the outcome — a pane it cannot see is otherwise a black box to it.
@@ -247,12 +273,12 @@ export async function runSetup(args: string[], deps: SetupDeps): Promise<number>
   };
 
   try {
-    if (flag(args, 'reset')) clearCreds();
+    if (a.flag('reset')) clearCreds();
     const existing = resolveCreds();
     // Credentials sitting only in the environment are not yet *configured* —
     // setup's job is to verify and persist them, so only a store short-circuits.
     const alreadyPersisted = existing?.source === 'keychain' || existing?.source === 'file';
-    if (alreadyPersisted && !update && !flag(args, 'reset')) {
+    if (alreadyPersisted && !update && !a.flag('reset')) {
       say('setupHaveCreds', { origin: existing.origin });
       await report(fill(msg.setupReportExists, { origin: existing.origin }));
       return 0;
@@ -545,7 +571,8 @@ async function startDaemonDetached(): Promise<{ ok: boolean; message: string }> 
 
 
 async function cmdDaemon(args: string[]): Promise<void> {
-  if (flag(args, 'status')) {
+  const a = argv('daemon', args);
+  if (a.flag('status')) {
     const res = await request({ type: 'ping' }, { timeoutMs: 5000 });
     if (!res.ok) die(1, res.reason === 'down' ? msg.daemonNotRunning : fill(msg.daemonNoAnswer, { message: res.message }));
     if (res.kind !== 'pong') die(1, msg.daemonWeird);
@@ -560,7 +587,7 @@ async function cmdDaemon(args: string[]): Promise<void> {
     );
     return;
   }
-  if (flag(args, 'stop')) {
+  if (a.flag('stop')) {
     if (!(await daemonAlive())) {
       if (existsSync(pidPath())) unlinkSync(pidPath());
       process.stdout.write(`${msg.daemonWasNotRunning}\n`);
@@ -568,7 +595,7 @@ async function cmdDaemon(args: string[]): Promise<void> {
     }
     // Stopping cancels every waiting question, which leaves a dead card on
     // someone's phone. Refuse unless the caller says that is what they want.
-    if (!flag(args, 'force')) {
+    if (!a.flag('force')) {
       const probe = await request({ type: 'ping' }, { timeoutMs: 5000 });
       if (probe.ok && probe.kind === 'pong' && probe.status.pendingAsks > 0)
         die(4, fill(msg.daemonStopRefused, { n: probe.status.pendingAsks }));
@@ -586,7 +613,7 @@ async function cmdDaemon(args: string[]): Promise<void> {
     }
     die(3, fill(msg.daemonStopStuck, { log: logPath() }));
   }
-  if (flag(args, 'detach')) {
+  if (a.flag('detach')) {
     const r = await startDaemonDetached();
     if (!r.ok) die(3, r.message);
     process.stdout.write(`${r.message}\n`);
@@ -608,15 +635,15 @@ async function cmdDaemon(args: string[]): Promise<void> {
 // ---------------------------------------------------------------- bind / unbind / rename
 
 /** The group-choosing flags shared by `bind` and `away on`. */
-function bindArgs(args: string[]): Pick<Request & { type: 'bind' }, 'name' | 'mode' | 'reuseChatId'> {
-  const name = opt(args, 'name');
+function bindArgs(a: Argv): Pick<Request & { type: 'bind' }, 'name' | 'mode' | 'reuseChatId'> {
+  const name = a.opt('name');
   if (name !== undefined) {
     const problem = taskNameProblem(name);
     if (problem) die(1, problem);
   }
-  const reuse = opt(args, 'reuse');
-  if (reuse && flag(args, 'new')) die(1, msg.bindModeConflict);
-  return { name, mode: reuse ? 'reuse' : flag(args, 'new') ? 'new' : undefined, reuseChatId: reuse };
+  const reuse = a.opt('reuse');
+  if (reuse && a.flag('new')) die(1, msg.bindModeConflict);
+  return { name, mode: reuse ? 'reuse' : a.flag('new') ? 'new' : undefined, reuseChatId: reuse };
 }
 
 /**
@@ -638,8 +665,9 @@ function dieBind(res: Extract<Response, { ok: false }>): never {
 
 async function cmdBind(args: string[]): Promise<void> {
   const { root, label, paneId } = ctx();
+  const a = argv('bind', args);
   const res = await request(
-    { type: 'bind', root, label, paneId, chatId: opt(args, 'chat'), ...bindArgs(args) },
+    { type: 'bind', root, label, paneId, chatId: a.opt('chat'), ...bindArgs(a) },
     { onNote: (text) => process.stderr.write(`note: ${text}\n`) },
   );
   if (!res.ok) dieBind(res);
@@ -668,7 +696,7 @@ async function cmdUnbind(): Promise<void> {
 }
 
 async function cmdRename(args: string[]): Promise<void> {
-  const name = args.find((a) => !a.startsWith('--'));
+  const name = argv('rename', args).positional();
   if (!name?.trim()) die(1, msg.renameUsage);
   const problem = taskNameProblem(name);
   if (problem) die(1, problem);
@@ -697,10 +725,11 @@ async function cmdAsk(args: string[]): Promise<void> {
       die(1, `${fill(msg.askProblems, { n: err.problems.length })}\n  ${err.problems.join('\n  ')}`);
     throw err;
   }
-  const seconds = Number(opt(args, 'timeout') ?? 43_200);
+  const a = argv('ask', args);
+  const seconds = Number(a.opt('timeout') ?? 43_200);
   if (!Number.isFinite(seconds) || seconds <= 0) die(1, msg.timeoutArg);
   const res = await request(
-    { type: 'ask', root, label, paneId, payload, timeoutMs: seconds * 1000, urgent: flag(args, 'urgent') },
+    { type: 'ask', root, label, paneId, payload, timeoutMs: seconds * 1000, urgent: a.flag('urgent') },
     { onNote: (text) => process.stderr.write(`note: ${text}\n`) },
   );
   finish(res, (r) => {
@@ -730,12 +759,13 @@ async function cmdNotify(): Promise<void> {
 
 async function cmdSendFile(args: string[]): Promise<void> {
   const { root, label, paneId } = ctx();
-  const given = args.find((a) => !a.startsWith('--'));
+  const a = argv('send-file', args);
+  const given = a.positional();
   if (!given) die(1, msg.sendFileUsage);
   // The daemon checks the path from its own working directory, so a relative
   // one must be resolved here, where the caller meant it.
   const path = resolve(given);
-  const res = await request({ type: 'sendFile', root, label, paneId, path, caption: opt(args, 'caption') });
+  const res = await request({ type: 'sendFile', root, label, paneId, path, caption: a.opt('caption') });
   finish(res, () => process.stdout.write(`${msg.fileSent}\n`));
 }
 
@@ -768,11 +798,12 @@ export async function waitConnected(
 }
 
 async function cmdAway(args: string[]): Promise<void> {
-  const sub = args.find((a) => !a.startsWith('--')) ?? 'status';
+  const sub = argv('away', args).positional() ?? 'status';
+  const a = argv(`away ${sub}`, args);
   const { root, label, paneId } = ctx();
   if (sub === 'status') {
     const state = readProjectState(root);
-    if (flag(args, 'json')) {
+    if (a.flag('json')) {
       process.stdout.write(`${JSON.stringify(state ?? { away: false, chatId: null, target: root, updated: '' })}\n`);
       return;
     }
@@ -791,7 +822,7 @@ async function cmdAway(args: string[]): Promise<void> {
     // daemon that reached Feishu, and a group for this project. Asking the
     // user to run three commands in order is how a channel ends up switched
     // half-on.
-    const choice = bindArgs(args);
+    const choice = bindArgs(a);
     if (!resolveCreds()) die(4, msg.awayNoCreds);
     const d = await startDaemonDetached();
     if (!d.ok) die(3, d.message);
@@ -889,7 +920,7 @@ function takeHome(argv: string[]): string[] {
 async function main(): Promise<void> {
   const [cmd, ...args] = takeHome(process.argv.slice(2));
   if (cmd === 'away') {
-    const sub = args.find((a) => !a.startsWith('--')) ?? 'status';
+    const sub = argv('away', args).positional() ?? 'status';
     rejectUnknownOptions(`away ${sub}`, args);
   } else if (cmd === undefined || cmd === '--help' || cmd === '-h' || cmd === 'help') rejectUnknownOptions('help', args);
   else if (cmd in OPTIONS) rejectUnknownOptions(cmd, args);

@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { isTransientNetworkError, waitConnected } from '../src/cli.js';
+import { argv, isTransientNetworkError, waitConnected } from '../src/cli.js';
 import type { Response } from '../src/ipc.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -240,6 +240,18 @@ describe('with a fake daemon', () => {
     assert.equal(existsSync(join(project, '.agent-lark')), false, 'state was written although nothing was bound');
   });
 
+  test('away with --name before the subcommand: the value is not taken for the subcommand', () => {
+    const r = cmd(['away', '--name', 'next task', 'on']);
+    assert.equal(r.status, 4, r.stdout + r.stderr);
+    assert.match(r.stderr, /rerun with --reuse <chatId> or --new/);
+  });
+
+  test('away on with --new as the value of --name: it is the name, not the --new mode', () => {
+    const r = cmd(['away', 'on', '--name', '--new']);
+    assert.equal(r.status, 4, r.stdout + r.stderr);
+    assert.match(r.stderr, /rerun with --reuse <chatId> or --new/);
+  });
+
   test('away on --reuse: bound, state.json written, and outside herdr the extra line is printed', () => {
     const r = cmd(['away', 'on', '--reuse', 'oc_old', '--name', 'next task']);
     assert.equal(r.status, 0, r.stdout + r.stderr);
@@ -272,6 +284,12 @@ describe('with a fake daemon', () => {
     const r = cmd(['send-file', 'out/missing.txt']);
     assert.equal(r.status, 1, r.stdout + r.stderr);
     assert.ok(r.stderr.includes(`file not found: ${join(project, 'out', 'missing.txt')}`), r.stderr);
+  });
+
+  test('send-file with --caption before the path: the caption is not taken for the path', () => {
+    const r = cmd(['send-file', '--caption', 'a note', 'out/note.txt']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /^Sent to the project group$/m);
   });
 
   test('rename with a task name over 60 code points: exit 1 before the daemon is asked', () => {
@@ -380,6 +398,31 @@ describe('with a fake daemon whose first handshakes fail', () => {
     assert.equal(s.away, true);
     assert.equal(s.chatId, 'oc_old');
   });
+});
+
+// ---- reading a command line, in-process --------------------------------------
+// One rule for flags, option values and the positional: an option the command
+// takes a value for owns the next token, whatever it looks like.
+
+test('argv: the token after a value-taking option is its value, even one starting with --; a trailing option has none', () => {
+  const s = argv('send-file', ['--caption', '--foo', './x']);
+  assert.equal(s.opt('caption'), '--foo');
+  assert.equal(s.positional(), './x');
+  assert.equal(argv('send-file', ['./x', '--caption', 'a note']).opt('caption'), 'a note');
+  assert.equal(argv('send-file', ['./x', '--caption']).opt('caption'), undefined);
+  assert.equal(argv('send-file', ['./x']).opt('caption'), undefined);
+});
+
+test('argv: a value that looks like a flag is not one, and a flag is not a value', () => {
+  const a = argv('away on', ['on', '--name', '--new', '--reuse', 'oc_x']);
+  assert.equal(a.positional(), 'on');
+  assert.equal(a.opt('name'), '--new');
+  assert.equal(a.flag('new'), false);
+  assert.equal(a.opt('reuse'), 'oc_x');
+  const b = argv('away on', ['--new', 'on', '--name', 'x']);
+  assert.equal(b.flag('new'), true);
+  assert.equal(b.positional(), 'on');
+  assert.equal(b.opt('name'), 'x');
 });
 
 // ---- waiting for the handshake, in-process ---------------------------------
