@@ -24,10 +24,11 @@ pin (`npx skills add 'yezhoujie/agent-remote-communication-skills#v0.1.2' --skil
   below the caller's and runs the interactive setup there, then injects one `[agent-lark] setup: …` line back
   into the caller's session (`--report-to <pane>`; success, failure, interruption and "credentials already
   stored" each have their line) and offers to close the pane (`--close-pane`); outside herdr it exits 4 and
-  prints the command for the human to run in their own terminal.
+  prints the command for the human to run in their own terminal. The new pane takes focus; every end that is
+  not success sends a `failed: <why>` line.
 - `/agent-lark setup`, `/agent-lark on`, `/agent-lark off`: three arguments the agent understands
   (SKILL.md, "Invoked with an argument") — guided setup, remote mode on (through setup when there are no
-  credentials yet), remote mode off. The README opens with the three ways to set up.
+  credentials yet), remote mode off.
 - `AGENT_LARK_OFFLINE=1` makes `setup` refuse both of its network calls (exit 3); the test runner sets it, so
   no test can register an app or probe credentials by accident.
 
@@ -40,6 +41,15 @@ pin (`npx skills add 'yezhoujie/agent-remote-communication-skills#v0.1.2' --skil
 - The App Secret is masked as `***` in every error text, log line and report line that could otherwise
   quote it.
 - `npm test` rebuilds `dist/cli.mjs` after the type check, so the CLI tests always run the current sources.
+- `setup` ends by telling the user to go back to the agent session and say "turn remote mode on" or type
+  `/agent-lark on`, instead of listing `daemon --detach` and `away on` for them to run by hand.
+- Multi-line bilingual texts (the `setup` menu) print the Chinese block and then the English block instead of
+  joining them on one line.
+- README rewritten as a user guide (180 lines): setup by hand or through your agent, then what you say and
+  what the agent does; file locations, environment variables, exit codes and the CLI reference moved to
+  `references/`.
+- SKILL.md: the `setup --reuse` command handed to the human outside herdr must be run in a terminal window of
+  their own — never suggested inside the agent session (no TTY there).
 
 #### Removed
 

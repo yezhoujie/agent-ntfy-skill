@@ -163,7 +163,7 @@ Every exit code with its stderr text and what the agent is told to do: [referenc
 
 ## 9. Upgrading
 
-Versions are git tags `agent-lark/vX.Y.Z`; what changed is in [CHANGELOG.md](../../CHANGELOG.md). An install is a snapshot of the repository; `npx skills update` refreshes it (`-g` for global installs, `-p` for the current project). To stay on a release, install with the tag as git ref: `npx skills add 'yezhoujie/agent-remote-communication-skills#agent-lark/v0.1.0' --skill agent-lark`.
+Versions are git tags `agent-lark/vX.Y.Z`; what changed is in [CHANGELOG.md](../../CHANGELOG.md). An install is a snapshot of the repository; `npx skills update` refreshes it (`-g` for global installs, `-p` for the current project). To stay on a release, install with the tag as git ref: `npx skills add 'yezhoujie/agent-remote-communication-skills#agent-lark/v0.1.1' --skill agent-lark`.
 
 On a machine that runs the daemon: 1. `agent-lark daemon --stop` with the CLI you have now (refused while a question is pending — wait, or `--stop --force`; if the files were already replaced and the old daemon does not answer, `kill -TERM <pid>`, the pid is in `~/.agent-lark/daemon.pid`). 2. Update the files. 3. `agent-lark daemon --detach`. Credentials, group bindings and the per-project switch all carry over; then say "turn remote mode on" so the agent records its pane again.
 
