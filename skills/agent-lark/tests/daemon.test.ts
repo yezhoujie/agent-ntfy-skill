@@ -1,7 +1,7 @@
 // The daemon in-process, with the Feishu channel and herdr replaced by fakes.
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1045,4 +1045,246 @@ test('attachments: the injected text names where each one was saved, before the 
   for (const d of downloads) assert.ok(d.startsWith(join(home, 'media')), d);
   assert.match(downloads[1]!, /notes\.txt$/);
   await daemon.stop();
+});
+
+// ---- quoting a card: which one the human is replying to --------------------
+
+test('a message quoting an answered question card is injected with "(reply to: …)" on top; rootId works as the quote too', PER_TEST, async () => {
+  const { daemon, fake, herdr } = await start();
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: 'w1:p1', payload: askPayload, timeoutMs: 5000 });
+  await waitFor(() => fake.sent.length === 1, 'the question card to be sent');
+  await fake.message({ chatId: 'oc_x', content: 'Keep' });
+  await asking;
+  await fake.message({ chatId: 'oc_x', content: 'actually, one more thing', replyToMessageId: 'om_1' });
+  await waitFor(() => herdr.prompts.length === 1, 'the injection');
+  assert.equal(herdr.prompts[0]!.text, `[agent-lark remote] ${fill(msg.replyTo, { title: 't' })}\nactually, one more thing`);
+  await fake.message({ chatId: 'oc_x', content: 'and this', rootId: 'om_1' });
+  await waitFor(() => herdr.prompts.length === 2, 'the second injection');
+  assert.equal(herdr.prompts[1]!.text, `[agent-lark remote] ${fill(msg.replyTo, { title: 't' })}\nand this`);
+  await daemon.stop();
+});
+
+test('a message quoting something the daemon never sent, or quoting nothing, is injected as is', PER_TEST, async () => {
+  const { daemon, fake, herdr } = await start();
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  await request({ type: 'notify', root: '/p', label: 'p', paneId: 'w1:p1', payload: { title: 'Tests green', body: 'b' } });
+  await fake.message({ chatId: 'oc_x', content: 'who said that?', replyToMessageId: 'om_someone_elses' });
+  await fake.message({ chatId: 'oc_x', content: 'plain' });
+  await waitFor(() => herdr.prompts.length === 2, 'both injections');
+  assert.deepEqual(
+    herdr.prompts.map((p) => p.text),
+    ['[agent-lark remote] who said that?', '[agent-lark remote] plain'],
+  );
+  await daemon.stop();
+});
+
+test('while a question is pending, a quoted message is still that question\'s answer and is not injected', PER_TEST, async () => {
+  const { daemon, fake, herdr } = await start();
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  await request({ type: 'notify', root: '/p', label: 'p', paneId: 'w1:p1', payload: { title: 'Tests green', body: 'b' } });
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: 'w1:p1', payload: askPayload, timeoutMs: 5000 });
+  await waitFor(() => fake.sent.length === 2, 'the question card to be sent');
+  await fake.message({ chatId: 'oc_x', content: 'Drop, and about that notify: fine', replyToMessageId: 'om_1' });
+  assert.deepEqual(await asking, { ok: true, kind: 'ask', reply: 'Drop, and about that notify: fine', via: 'text' });
+  await sleep(50);
+  assert.equal(herdr.prompts.length, 0);
+  await daemon.stop();
+});
+
+test('only the last 200 cards are remembered for quoting; the oldest are forgotten first', PER_TEST, async () => {
+  const { daemon, fake, herdr } = await start();
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  for (let i = 1; i <= 201; i++) {
+    const res = await request({ type: 'notify', root: '/p', label: 'p', paneId: 'w1:p1', payload: { title: `n${i}`, body: 'b' } });
+    assert.ok(res.ok, `notify ${i}`);
+  }
+  assert.equal(fake.sent.length, 201);
+  await fake.message({ chatId: 'oc_x', content: 'first', replyToMessageId: 'om_1' });
+  await fake.message({ chatId: 'oc_x', content: 'second', replyToMessageId: 'om_2' });
+  await fake.message({ chatId: 'oc_x', content: 'last', replyToMessageId: 'om_201' });
+  await waitFor(() => herdr.prompts.length === 3, 'the injections');
+  assert.deepEqual(
+    herdr.prompts.map((p) => p.text),
+    [
+      '[agent-lark remote] first',
+      `[agent-lark remote] ${fill(msg.replyTo, { title: 'n2' })}\nsecond`,
+      `[agent-lark remote] ${fill(msg.replyTo, { title: 'n201' })}\nlast`,
+    ],
+  );
+  await daemon.stop();
+});
+
+// ---- media directory sweep ---------------------------------------------------
+
+const DAY = 24 * 60 * 60 * 1000;
+/** Three files under <home>/media (8 days old, 1 day old, fresh) plus an empty subdirectory. */
+function seedMedia(home: string): { old: string; recent: string; fresh: string; empty: string } {
+  const dir = join(home, 'media', 'abc123');
+  mkdirSync(dir, { recursive: true });
+  const at = (name: string, ageMs: number): string => {
+    const f = join(dir, name);
+    writeFileSync(f, 'x'.repeat(1024));
+    const t = (Date.now() - ageMs) / 1000;
+    utimesSync(f, t, t);
+    return f;
+  };
+  const old = at('old.png', 8 * DAY);
+  const recent = at('recent.png', 1 * DAY);
+  const fresh = at('fresh.png', 0);
+  const empty = join(home, 'media', 'empty-dir');
+  mkdirSync(empty, { recursive: true });
+  return { old, recent, fresh, empty };
+}
+const swept = (home: string): string | undefined =>
+  readFileSync(join(home, 'daemon.log'), 'utf8')
+    .split('\n')
+    .find((l) => l.includes('media.swept'));
+async function withTtl<T>(value: string | undefined, fn: () => Promise<T>): Promise<T> {
+  const prev = process.env.AGENT_LARK_MEDIA_TTL_DAYS;
+  if (value === undefined) delete process.env.AGENT_LARK_MEDIA_TTL_DAYS;
+  else process.env.AGENT_LARK_MEDIA_TTL_DAYS = value;
+  try {
+    return await fn();
+  } finally {
+    if (prev === undefined) delete process.env.AGENT_LARK_MEDIA_TTL_DAYS;
+    else process.env.AGENT_LARK_MEDIA_TTL_DAYS = prev;
+  }
+}
+
+test('media sweep at start: files older than the default 7 days go, the rest and the log line stay; empty directories go too', PER_TEST, async () => {
+  await withTtl(undefined, async () => {
+    const home = freshHome();
+    const m = seedMedia(home);
+    const daemon = await runDaemon({ createChannel: () => createFakeChannel().channel, herdr: createFakeHerdr().deps, connectRetryMs: 50 });
+    daemons.push(daemon);
+    const line = await waitFor(() => swept(home), 'the media.swept log line');
+    assert.match(line, /"removed":1/);
+    assert.match(line, /"keptBytes":2048/);
+    assert.equal(existsSync(m.old), false);
+    assert.equal(existsSync(m.recent), true);
+    assert.equal(existsSync(m.fresh), true);
+    assert.equal(existsSync(m.empty), false);
+    assert.equal(existsSync(join(home, 'media')), true, 'the media root itself must stay');
+    const status = await waitFor(async () => (await ping())?.connected && (await ping()), 'pong');
+    assert.match(status.media.at, /^\d{4}-\d{2}-\d{2}T/);
+    assert.deepEqual({ ...status.media, at: '' }, { ttlDays: 7, files: 2, bytes: 2048, at: '' });
+    // ping reports what the last sweep counted, it does not rescan
+    writeFileSync(join(home, 'media', 'abc123', 'later.png'), 'y'.repeat(10));
+    const again = await ping();
+    assert.equal(again?.media.files, 2);
+    assert.equal(again?.media.at, status.media.at);
+    await daemon.stop();
+  });
+});
+
+test('AGENT_LARK_MEDIA_TTL_DAYS=0: nothing is swept, and the status says so', PER_TEST, async () => {
+  await withTtl('0', async () => {
+    const home = freshHome();
+    const m = seedMedia(home);
+    const daemon = await runDaemon({ createChannel: () => createFakeChannel().channel, herdr: createFakeHerdr().deps, connectRetryMs: 50 });
+    daemons.push(daemon);
+    const status = await waitFor(async () => (await ping())?.connected && (await ping()), 'pong');
+    assert.match(status.media.at, /^\d{4}-\d{2}-\d{2}T/);
+    assert.deepEqual({ ...status.media, at: '' }, { ttlDays: 0, files: 3, bytes: 3072, at: '' });
+    assert.equal(existsSync(m.old), true);
+    assert.equal(existsSync(m.empty), true);
+    assert.equal(swept(home), undefined);
+    await daemon.stop();
+  });
+});
+
+test('an unusable AGENT_LARK_MEDIA_TTL_DAYS falls back to 7 days with a warning on stderr and in the log', PER_TEST, async () => {
+  await withTtl('abc', async () => {
+    const home = freshHome();
+    const m = seedMedia(home);
+    const written: string[] = [];
+    const realWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      written.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    let daemon: Daemon;
+    try {
+      daemon = await runDaemon({ createChannel: () => createFakeChannel().channel, herdr: createFakeHerdr().deps, connectRetryMs: 50 });
+    } finally {
+      process.stderr.write = realWrite;
+    }
+    daemons.push(daemon);
+    assert.ok(written.some((w) => /AGENT_LARK_MEDIA_TTL_DAYS/.test(w) && /abc/.test(w)), written.join(''));
+    await waitFor(() => swept(home), 'the media.swept log line');
+    assert.equal(existsSync(m.old), false);
+    assert.equal(existsSync(m.recent), true);
+    assert.match(readFileSync(join(home, 'daemon.log'), 'utf8'), /media\.ttl-invalid/);
+    assert.equal((await ping())?.media.ttlDays, 7);
+    await daemon.stop();
+  });
+});
+
+test('stop() clears the sweep timer: sweeps stop with the daemon, and no Timeout is left behind', PER_TEST, async () => {
+  // getActiveResourcesInfo() does not list unref'd timers (measured), so the
+  // proof is behavioural: with a 30 ms sweep interval, no sweep is logged
+  // after stop().
+  const timeouts = () => process.getActiveResourcesInfo().filter((r) => r === 'Timeout').length;
+  const before = timeouts();
+  const home = freshHome();
+  const daemon = await runDaemon({ createChannel: () => createFakeChannel().channel, herdr: createFakeHerdr().deps, connectRetryMs: 50, sweepMs: 30 });
+  daemons.push(daemon);
+  const sweeps = () => readFileSync(join(home, 'daemon.log'), 'utf8').split('\n').filter((l) => l.includes('media.swept')).length;
+  await waitFor(() => sweeps() >= 3, 'periodic sweeps');
+  await daemon.stop();
+  let resolved = false;
+  void daemon.done.then(() => (resolved = true));
+  await sleep(0);
+  assert.equal(resolved, true, 'done did not resolve');
+  const after = sweeps();
+  await sleep(120);
+  assert.equal(sweeps(), after, 'the sweep timer kept firing after stop()');
+  assert.equal(timeouts(), before, 'a timer is still pending after stop()');
+});
+
+test('media sweep never follows a symlink: what it points at outside the state dir is untouched, the link itself goes by its own mtime', PER_TEST, async (t) => {
+  await withTtl(undefined, async () => {
+    const home = freshHome();
+    const outside = mkdtempSync(join(tmpdir(), 'al-outside-'));
+    homes.push(outside);
+    const aged = (f: string): void => {
+      const ts = (Date.now() - 8 * DAY) / 1000;
+      utimesSync(f, ts, ts);
+    };
+    mkdirSync(join(outside, 'dir'));
+    writeFileSync(join(outside, 'old.txt'), 'x');
+    aged(join(outside, 'old.txt'));
+    writeFileSync(join(outside, 'dir', 'old2.txt'), 'x');
+    aged(join(outside, 'dir', 'old2.txt'));
+    const media = join(home, 'media');
+    mkdirSync(media, { recursive: true });
+    try {
+      symlinkSync(join(outside, 'dir'), join(media, 'linkdir'), 'dir');
+      symlinkSync(join(outside, 'old.txt'), join(media, 'linkfile-fresh'));
+      symlinkSync(join(outside, 'old.txt'), join(media, 'linkfile-old'));
+    } catch (err) {
+      t.skip(`cannot create symlinks here: ${String(err)}`);
+      return;
+    }
+    const ts = (Date.now() - 8 * DAY) / 1000;
+    lutimesSync(join(media, 'linkfile-old'), ts, ts);
+
+    const daemon = await runDaemon({ createChannel: () => createFakeChannel().channel, herdr: createFakeHerdr().deps, connectRetryMs: 50 });
+    daemons.push(daemon);
+    const line = await waitFor(() => swept(home), 'the media.swept log line');
+    // nothing behind a link was touched, even though every target is old
+    assert.equal(existsSync(join(outside, 'old.txt')), true);
+    assert.equal(existsSync(join(outside, 'dir', 'old2.txt')), true);
+    // the links themselves: fresh ones stay (a fresh link to an old file included), an old one is unlinked
+    assert.equal(lstatSync(join(media, 'linkdir')).isSymbolicLink(), true);
+    assert.equal(lstatSync(join(media, 'linkfile-fresh')).isSymbolicLink(), true);
+    assert.equal(existsSync(join(media, 'linkfile-old')), false);
+    assert.match(line, /"removed":1/);
+    await daemon.stop();
+  });
 });

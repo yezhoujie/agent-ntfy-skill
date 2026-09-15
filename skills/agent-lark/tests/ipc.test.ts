@@ -16,7 +16,7 @@ const { isDaemonListening, request, serve } = await import('../src/ipc.js');
 const { msg } = await import('../src/texts.js');
 
 type Handle = Parameters<typeof serve>[0]['handle'];
-const pong = { ok: true, kind: 'pong', status: { pid: 1, connection: 'fake', connected: true, lastError: null, pendingAsks: 0, bindings: 0, startedAt: '' } } as const;
+const pong = { ok: true, kind: 'pong', status: { pid: 1, connection: 'fake', connected: true, lastError: null, pendingAsks: 0, bindings: 0, startedAt: '', media: { ttlDays: 7, files: 0, bytes: 0, at: '' } } } as const;
 
 async function withServer<T>(handle: Handle, body: () => Promise<T>): Promise<T> {
   const server = await serve({ handle });

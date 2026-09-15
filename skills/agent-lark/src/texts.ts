@@ -184,6 +184,9 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   daemonStatusLine:
     'daemon: pid {pid}  connected {connected}  connection {connection}  pending questions {pending}  bound projects {bindings}  started {startedAt}',
   daemonLastError: '  last error: {error}',
+  daemonMediaLine: 'media: ttl {ttl} days, {mb} MB in {files} files (as of last sweep {at})',
+  daemonMediaLineOff: 'media: no automatic cleanup (AGENT_LARK_MEDIA_TTL_DAYS=0), {mb} MB in {files} files (as of last sweep {at})',
+  mediaTtlInvalid: 'agent-lark: warning: AGENT_LARK_MEDIA_TTL_DAYS={value} is not a whole number of days; using {fallback}',
   daemonStopStuck: 'daemon: still answering 10 s after the stop request; see the log: {log}',
   daemonWasNotRunning: 'daemon: was not running',
   daemonStopRefused:
@@ -284,6 +287,7 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   injectUnheard:
     '({n} voice message(s) received but transcription failed — most likely the app lacks the speech_to_text:speech scope. Tell the user: run agent-lark setup --update to rescan and add that scope, or type instead this time.)',
   injectSaved: '[saved: {path}]',
+  replyTo: '(reply to: "{title}")',
   injectFilesWithText: '(attachments saved locally)',
   injectFilesOnly: '(I sent attachments; they are saved locally)',
   lateTapNoOption: '(follow-up) I tapped the card above again',

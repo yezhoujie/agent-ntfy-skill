@@ -33,6 +33,8 @@ export interface DaemonStatus {
   pendingAsks: number;
   bindings: number;
   startedAt: string;
+  /** The daemon's media directory: retention in days (0 = never swept) and what it held at the last sweep (`at`, ISO time). */
+  media: { ttlDays: number; files: number; bytes: number; at: string };
 }
 
 export type Response =

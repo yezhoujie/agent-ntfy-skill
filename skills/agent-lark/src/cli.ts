@@ -301,6 +301,10 @@ async function cmdDaemon(args: string[]): Promise<void> {
       `${fill(msg.daemonStatusLine, { pid: s.pid, connected: String(s.connected), connection: s.connection, pending: s.pendingAsks, bindings: s.bindings, startedAt: s.startedAt })}\n`,
     );
     if (s.lastError) process.stdout.write(`${fill(msg.daemonLastError, { error: s.lastError })}\n`);
+    const mb = (s.media.bytes / 1024 / 1024).toFixed(1);
+    process.stdout.write(
+      `${s.media.ttlDays === 0 ? fill(msg.daemonMediaLineOff, { mb, files: s.media.files, at: s.media.at }) : fill(msg.daemonMediaLine, { ttl: s.media.ttlDays, mb, files: s.media.files, at: s.media.at })}\n`,
+    );
     return;
   }
   if (flag(args, 'stop')) {

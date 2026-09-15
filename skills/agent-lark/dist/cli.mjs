@@ -136437,6 +136437,9 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       daemonWeird: "daemon: unrecognized reply",
       daemonStatusLine: "daemon: pid {pid}  connected {connected}  connection {connection}  pending questions {pending}  bound projects {bindings}  started {startedAt}",
       daemonLastError: "  last error: {error}",
+      daemonMediaLine: "media: ttl {ttl} days, {mb} MB in {files} files (as of last sweep {at})",
+      daemonMediaLineOff: "media: no automatic cleanup (AGENT_LARK_MEDIA_TTL_DAYS=0), {mb} MB in {files} files (as of last sweep {at})",
+      mediaTtlInvalid: "agent-lark: warning: AGENT_LARK_MEDIA_TTL_DAYS={value} is not a whole number of days; using {fallback}",
       daemonStopStuck: "daemon: still answering 10 s after the stop request; see the log: {log}",
       daemonWasNotRunning: "daemon: was not running",
       daemonStopRefused: '{n} question(s) still pending on the phone. Stopping the daemon now turns those cards into "\u26A0\uFE0F Cancelled" \u2014 a dead card for the human.\nWait for the answer, or do it anyway: agent-lark daemon --stop --force',
@@ -136532,6 +136535,7 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       injectVoice: "(voice transcript) {text}",
       injectUnheard: "({n} voice message(s) received but transcription failed \u2014 most likely the app lacks the speech_to_text:speech scope. Tell the user: run agent-lark setup --update to rescan and add that scope, or type instead this time.)",
       injectSaved: "[saved: {path}]",
+      replyTo: '(reply to: "{title}")',
       injectFilesWithText: "(attachments saved locally)",
       injectFilesOnly: "(I sent attachments; they are saved locally)",
       lateTapNoOption: "(follow-up) I tapped the card above again",
@@ -136942,7 +136946,7 @@ function writeProjectState(root, patch, opts = {}) {
   renameSync2(tmp, projectStatePath(root));
   return next;
 }
-var sockPath, pidPath, logPath, bindingsPath, projectStateDir, projectStatePath;
+var sockPath, pidPath, logPath, bindingsPath, mediaDir, projectStateDir, projectStatePath;
 var init_paths = __esm({
   "src/paths.ts"() {
     "use strict";
@@ -136950,6 +136954,7 @@ var init_paths = __esm({
     pidPath = () => join2(homeDir(), "daemon.pid");
     logPath = () => join2(homeDir(), "daemon.log");
     bindingsPath = () => join2(homeDir(), "bindings.json");
+    mediaDir = () => join2(homeDir(), "media");
     projectStateDir = (root) => join2(root, ".agent-lark");
     projectStatePath = (root) => join2(projectStateDir(root), "state.json");
   }
@@ -137548,10 +137553,81 @@ __export(daemon_exports, {
   DaemonStartError: () => DaemonStartError,
   runDaemon: () => runDaemon
 });
-import { appendFileSync, mkdirSync as mkdirSync3, readFileSync as readFileSync4, realpathSync, statSync as statSync2, writeFileSync as writeFileSync4, unlinkSync as unlinkSync3, existsSync as existsSync3 } from "node:fs";
+import { appendFileSync, lstatSync, mkdirSync as mkdirSync3, readdirSync, readFileSync as readFileSync4, realpathSync, rmdirSync, statSync as statSync2, writeFileSync as writeFileSync4, unlinkSync as unlinkSync3, existsSync as existsSync3 } from "node:fs";
 import { createHash as createHash3, randomUUID as randomUUID2 } from "node:crypto";
 import { basename as basename2, join as join3, sep } from "node:path";
 import { platform as platform4, tmpdir } from "node:os";
+function mediaTtlDays() {
+  const raw = process.env.AGENT_LARK_MEDIA_TTL_DAYS?.trim();
+  if (raw === void 0 || raw === "") return { days: MEDIA_TTL_DAYS };
+  if (/^\d+$/.test(raw)) return { days: Number(raw) };
+  return { days: MEDIA_TTL_DAYS, invalid: raw };
+}
+function measureDir(dir) {
+  const out = { files: 0, bytes: 0 };
+  const walk = (d) => {
+    let entries;
+    try {
+      entries = readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = join3(d, e.name);
+      if (e.isSymbolicLink()) continue;
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile()) {
+        out.files += 1;
+        try {
+          out.bytes += lstatSync(p).size;
+        } catch {
+        }
+      }
+    }
+  };
+  walk(dir);
+  return out;
+}
+function sweepDir(root, cutoffMs) {
+  const out = { removed: 0, keptFiles: 0, keptBytes: 0, failed: 0 };
+  const walk = (d, isRoot) => {
+    let entries;
+    try {
+      entries = readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = join3(d, e.name);
+      const link = e.isSymbolicLink();
+      if (!link && e.isDirectory()) {
+        walk(p, false);
+        continue;
+      }
+      if (!link && !e.isFile()) continue;
+      try {
+        const st = lstatSync(p);
+        if (st.mtimeMs < cutoffMs) {
+          unlinkSync3(p);
+          out.removed += 1;
+        } else if (!link) {
+          out.keptFiles += 1;
+          out.keptBytes += st.size;
+        }
+      } catch (err) {
+        out.failed += 1;
+        log("media.remove-failed", { path: p, err: String(err).slice(0, 200) });
+      }
+    }
+    if (isRoot) return;
+    try {
+      if (readdirSync(d).length === 0) rmdirSync(d);
+    } catch {
+    }
+  };
+  walk(root, true);
+  return out;
+}
 function log(event, detail = {}) {
   const line = `${(/* @__PURE__ */ new Date()).toISOString()} ${event} ${JSON.stringify(detail)}
 `;
@@ -137572,7 +137648,7 @@ function resolveSendable(path2, root) {
   } catch (err) {
     return { error: fill(msg.fileRealpath, { error: String(err) }) };
   }
-  const allowed = [root, join3(homeDir(), "media"), tmpdir()].map((d) => {
+  const allowed = [root, mediaDir(), tmpdir()].map((d) => {
     try {
       return realpathSync(d);
     } catch {
@@ -137580,7 +137656,7 @@ function resolveSendable(path2, root) {
     }
   });
   if (!allowed.some((d) => within(real, d)))
-    return { error: fill(msg.fileRefused, { real, root, media: join3(homeDir(), "media"), tmp: tmpdir() }) };
+    return { error: fill(msg.fileRefused, { real, root, media: mediaDir(), tmp: tmpdir() }) };
   const st = statSync2(real);
   if (!st.isFile()) return { error: fill(msg.fileNotRegular, { real }) };
   const isImage = /\.(png|jpe?g|gif|webp|bmp)$/i.test(real);
@@ -137601,6 +137677,12 @@ async function runDaemon(deps = {}) {
   if (await isDaemonListening(2e3)) throw new DaemonStartError(3, msg.daemonAlready);
   const herdr = deps.herdr ?? { agentList, promptPane, findPaneForProject };
   const retryMs = deps.connectRetryMs ?? CONNECT_RETRY_MS;
+  const ttl = mediaTtlDays();
+  if (ttl.invalid !== void 0) {
+    process.stderr.write(`${fill(msg.mediaTtlInvalid, { value: ttl.invalid, fallback: ttl.days })}
+`);
+    log("media.ttl-invalid", { value: ttl.invalid, fallback: ttl.days });
+  }
   let bindings;
   try {
     bindings = new BindingStore({
@@ -137613,6 +137695,11 @@ async function runDaemon(deps = {}) {
   }
   const pendings = /* @__PURE__ */ new Map();
   const closed = /* @__PURE__ */ new Map();
+  const sentCards = /* @__PURE__ */ new Map();
+  const rememberCard = (messageId, kind, title) => {
+    sentCards.set(messageId, { title, kind });
+    while (sentCards.size > SENT_CARDS_KEEP) sentCards.delete(sentCards.keys().next().value);
+  };
   const remember = (p) => {
     closed.set(p.reqId, p.payload);
     while (closed.size > CLOSED_KEEP) closed.delete(closed.keys().next().value);
@@ -137676,7 +137763,8 @@ async function runDaemon(deps = {}) {
   const langOf = (b) => b?.lang ?? "en";
   const receipt = async (b, why) => {
     try {
-      await channel.send(b.chatId, { card: receiptCard(b.label, why, langOf(b)) });
+      const sent = await channel.send(b.chatId, { card: receiptCard(b.label, why, langOf(b)) });
+      rememberCard(sent.messageId, "receipt", t(langOf(b)).notDelivered);
     } catch (err) {
       log("receipt.failed", { root: b.root, err: String(err) });
     }
@@ -137740,7 +137828,7 @@ async function runDaemon(deps = {}) {
   const saveResources = async (incoming) => {
     const out = { saved: [], spoken: [], unheard: 0 };
     if (!incoming.resources.length) return out;
-    const dir = join3(homeDir(), "media", createHash3("sha1").update(incoming.chatId).digest("hex").slice(0, 12));
+    const dir = join3(mediaDir(), createHash3("sha1").update(incoming.chatId).digest("hex").slice(0, 12));
     mkdirSync3(dir, { recursive: true, mode: 448 });
     for (const res of incoming.resources) {
       const kind = res.type === "image" ? "image" : "file";
@@ -137799,6 +137887,9 @@ ${msg.injectFilesOnly}`;
       await answer(p, text, "text");
       return;
     }
+    const quoted = sentCards.get(incoming.replyToMessageId ?? incoming.rootId ?? "");
+    if (quoted) text = `${fill(msg.replyTo, { title: quoted.title })}
+${text}`;
     await inject(b, text, incoming.messageId);
   }));
   channel.on("cardAction", guarded("card-action", async (evt) => {
@@ -137969,7 +138060,8 @@ ${msg.renamePermissionHint}` : text;
       const detail = (a.terminal_title_stripped ? `**${a.terminal_title_stripped}**
 ` : "") + fill(t(lang).statusPane, { pane: a.pane_id });
       try {
-        await channel.send(b.chatId, { card: statusCard(b.label, detail, lang) });
+        const sent = await channel.send(b.chatId, { card: statusCard(b.label, detail, lang) });
+        rememberCard(sent.messageId, "status", t(lang).statusBlocked);
         log("status.pushed", { root: b.root, kind: "blocked" });
       } catch (err) {
         log("status.failed", { root: b.root, err: String(err) });
@@ -137978,6 +138070,18 @@ ${msg.renamePermissionHint}` : text;
   };
   const pollTimer = setInterval(() => void poll().catch((err) => log("poll.failed", { err: String(err).slice(0, 200) })), deps.pollMs ?? POLL_MS);
   pollTimer.unref();
+  let mediaSeen = { files: 0, bytes: 0, at: "" };
+  const sweepMedia = () => {
+    if (ttl.days === 0) {
+      mediaSeen = { ...measureDir(mediaDir()), at: (/* @__PURE__ */ new Date()).toISOString() };
+      return;
+    }
+    const r = sweepDir(mediaDir(), Date.now() - ttl.days * DAY_MS);
+    mediaSeen = { files: r.keptFiles, bytes: r.keptBytes, at: (/* @__PURE__ */ new Date()).toISOString() };
+    log("media.swept", { removed: r.removed, keptFiles: r.keptFiles, keptBytes: r.keptBytes, failed: r.failed, ttlDays: ttl.days });
+  };
+  const sweepTimer = ttl.days === 0 ? void 0 : setInterval(sweepMedia, deps.sweepMs ?? MEDIA_SWEEP_MS);
+  sweepTimer?.unref();
   let server;
   const sockets = /* @__PURE__ */ new Set();
   let resolveDone;
@@ -138010,6 +138114,7 @@ ${msg.renamePermissionHint}` : text;
     log("daemon.stopping", { why });
     for (const sig of signals) process.off(sig, onSignal[sig]);
     clearInterval(pollTimer);
+    if (sweepTimer) clearInterval(sweepTimer);
     if (retryTimer) clearTimeout(retryTimer);
     wakeRetry?.();
     const cancelled = [...pendings.values()];
@@ -138069,7 +138174,8 @@ ${msg.renamePermissionHint}` : text;
               lastError,
               pendingAsks: pendings.size,
               bindings: bindings.activeAll().length,
-              startedAt
+              startedAt,
+              media: { ttlDays: ttl.days, ...mediaSeen }
             }
           };
         case "stop":
@@ -138275,7 +138381,8 @@ ${msg.renamePermissionHint}` : text;
           }
           if (payload.lang) bindings.touch(req.root, { lang: payload.lang });
           try {
-            await channel.send(b.chatId, { card: notifyCard(payload, b.label) });
+            const sent = await channel.send(b.chatId, { card: notifyCard(payload, b.label) });
+            rememberCard(sent.messageId, "notify", payload.title);
             log("notify.sent", { root: b.root });
             return { ok: true, kind: "ack" };
           } catch (err) {
@@ -138327,6 +138434,7 @@ ${msg.renamePermissionHint}` : text;
           } catch (err) {
             return { ok: false, code: 3, message: fill(msg.sendFailed, { error: err instanceof Error ? err.message : String(err) }) };
           }
+          rememberCard(messageId, "ask", payload.title);
           log("ask.sent", { reqId, root: b.root, options: payload.options.length, select: payload.select, urgent });
           let settle;
           const result = new Promise((resolve3) => {
@@ -138377,11 +138485,12 @@ ${msg.renamePermissionHint}` : text;
   writeFileSync4(pidPath(), `${process.pid}
 `, { mode: 384 });
   log("daemon.started", { pid: process.pid, endpoint: ipcEndpoint() });
+  setImmediate(sweepMedia);
   for (const sig of signals) process.on(sig, onSignal[sig]);
   void connectLoop().catch((err) => log("connect-loop.failed", { err: String(err).slice(0, 200) }));
   return { stop: () => stop("stop()"), done };
 }
-var INJECT_PREFIX, POLL_MS, STATUS_COOLDOWN_MS, CONNECT_RETRY_MS, CONNECT_RETRY_MAX_MS, CLOSE_GRACE_MS, CANCEL_CARD_MS, DaemonStartError, MAX_IMAGE_BYTES, MAX_FILE_BYTES, CLOSED_KEEP;
+var INJECT_PREFIX, POLL_MS, STATUS_COOLDOWN_MS, CONNECT_RETRY_MS, CONNECT_RETRY_MAX_MS, CLOSE_GRACE_MS, CANCEL_CARD_MS, MEDIA_TTL_DAYS, MEDIA_SWEEP_MS, DAY_MS, DaemonStartError, MAX_IMAGE_BYTES, MAX_FILE_BYTES, CLOSED_KEEP, SENT_CARDS_KEEP;
 var init_daemon = __esm({
   "src/daemon.ts"() {
     "use strict";
@@ -138401,6 +138510,9 @@ var init_daemon = __esm({
     CONNECT_RETRY_MAX_MS = 6e4;
     CLOSE_GRACE_MS = 2e3;
     CANCEL_CARD_MS = 3e3;
+    MEDIA_TTL_DAYS = 7;
+    MEDIA_SWEEP_MS = 24 * 60 * 60 * 1e3;
+    DAY_MS = 24 * 60 * 60 * 1e3;
     DaemonStartError = class extends Error {
       constructor(code, message) {
         super(message);
@@ -138411,6 +138523,7 @@ var init_daemon = __esm({
     MAX_IMAGE_BYTES = 10 * 1024 * 1024;
     MAX_FILE_BYTES = 30 * 1024 * 1024;
     CLOSED_KEEP = 50;
+    SENT_CARDS_KEEP = 200;
   }
 });
 
@@ -138657,6 +138770,11 @@ async function cmdDaemon(args) {
     );
     if (s.lastError) process.stdout.write(`${fill(msg.daemonLastError, { error: s.lastError })}
 `);
+    const mb = (s.media.bytes / 1024 / 1024).toFixed(1);
+    process.stdout.write(
+      `${s.media.ttlDays === 0 ? fill(msg.daemonMediaLineOff, { mb, files: s.media.files, at: s.media.at }) : fill(msg.daemonMediaLine, { ttl: s.media.ttlDays, mb, files: s.media.files, at: s.media.at })}
+`
+    );
     return;
   }
   if (flag(args, "stop")) {

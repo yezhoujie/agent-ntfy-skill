@@ -298,7 +298,7 @@ describe('with a fake daemon whose first handshakes fail', () => {
 const pong = (connected: boolean, lastError: string | null): Response => ({
   ok: true,
   kind: 'pong',
-  status: { pid: 1, connection: connected ? 'connected' : 'connecting', connected, lastError, pendingAsks: 0, bindings: 0, startedAt: '' },
+  status: { pid: 1, connection: connected ? 'connected' : 'connecting', connected, lastError, pendingAsks: 0, bindings: 0, startedAt: '', media: { ttlDays: 7, files: 0, bytes: 0, at: '' } },
 });
 
 test('waitConnected gives up at the deadline with the daemon\'s last connect error', async () => {

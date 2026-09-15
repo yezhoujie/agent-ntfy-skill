@@ -34,6 +34,8 @@ export const pidPath = (): string => join(homeDir(), 'daemon.pid');
 export const logPath = (): string => join(homeDir(), 'daemon.log');
 export const bindingsPath = (): string => join(homeDir(), 'bindings.json');
 export const credsFilePath = (): string => join(homeDir(), 'app.json');
+/** Where inbound attachments are saved (per group, under the state dir); swept by the daemon after a while. */
+export const mediaDir = (): string => join(homeDir(), 'media');
 
 /**
  * Lease holder identity: the git toplevel, else the cwd. A worktree or a

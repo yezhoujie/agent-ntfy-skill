@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
+import { appendFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, statSync, writeFileSync, unlinkSync, existsSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { basename, join, sep } from 'node:path';
 import { platform, tmpdir } from 'node:os';
@@ -9,7 +9,7 @@ import { askCard, checkerName, notifyCard, optionIdOf, receiptCard, statusCard }
 import { resolveCreds } from './creds.js';
 import { agentList, findPaneForProject, promptPane } from './herdr.js';
 import { isDaemonListening, serve, type Candidate, type Request, type Response } from './ipc.js';
-import { ensureHomeDir, homeDir, ipcEndpoint, logPath, pidPath, sockPath } from './paths.js';
+import { ensureHomeDir, homeDir, ipcEndpoint, logPath, mediaDir, pidPath, sockPath } from './paths.js';
 import { fill, msg, t } from './texts.js';
 import { validateAsk, validateNotify, ValidationError, type AskPayload, type Lang } from './validate.js';
 
@@ -22,6 +22,99 @@ const CONNECT_RETRY_MAX_MS = 60_000;
 const CLOSE_GRACE_MS = 2_000;
 /** How long stop() waits for Feishu to accept a cancelled card before moving on. */
 const CANCEL_CARD_MS = 3_000;
+/** Inbound attachments are kept this many days unless AGENT_LARK_MEDIA_TTL_DAYS says otherwise. */
+const MEDIA_TTL_DAYS = 7;
+const MEDIA_SWEEP_MS = 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Retention for the media directory, in days; 0 switches the sweep off. A
+ * value that is not a whole number falls back to the default with a warning,
+ * rather than silently keeping or deleting everything.
+ */
+function mediaTtlDays(): { days: number; invalid?: string } {
+  const raw = process.env.AGENT_LARK_MEDIA_TTL_DAYS?.trim();
+  if (raw === undefined || raw === '') return { days: MEDIA_TTL_DAYS };
+  if (/^\d+$/.test(raw)) return { days: Number(raw) };
+  return { days: MEDIA_TTL_DAYS, invalid: raw };
+}
+
+/** Files and bytes under a directory, following no symlinks. */
+function measureDir(dir: string): { files: number; bytes: number } {
+  const out = { files: 0, bytes: 0 };
+  const walk = (d: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = join(d, e.name);
+      if (e.isSymbolicLink()) continue;
+      if (e.isDirectory()) walk(p);
+      else if (e.isFile()) {
+        out.files += 1;
+        try {
+          out.bytes += lstatSync(p).size;
+        } catch {
+          // gone in between
+        }
+      }
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+/**
+ * Delete files older than the cutoff under the media directory, then the
+ * directories that ended up empty (never the root). A symlink is never
+ * followed — nothing behind it is read or removed — and is itself dropped
+ * by its own mtime like a file; a file that cannot be removed is logged and
+ * skipped.
+ */
+function sweepDir(root: string, cutoffMs: number): { removed: number; keptFiles: number; keptBytes: number; failed: number } {
+  const out = { removed: 0, keptFiles: 0, keptBytes: 0, failed: 0 };
+  const walk = (d: string, isRoot: boolean): void => {
+    let entries;
+    try {
+      entries = readdirSync(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = join(d, e.name);
+      const link = e.isSymbolicLink();
+      if (!link && e.isDirectory()) {
+        walk(p, false);
+        continue;
+      }
+      if (!link && !e.isFile()) continue;
+      try {
+        const st = lstatSync(p);
+        if (st.mtimeMs < cutoffMs) {
+          unlinkSync(p);
+          out.removed += 1;
+        } else if (!link) {
+          out.keptFiles += 1;
+          out.keptBytes += st.size;
+        }
+      } catch (err) {
+        out.failed += 1;
+        log('media.remove-failed', { path: p, err: String(err).slice(0, 200) });
+      }
+    }
+    if (isRoot) return;
+    try {
+      if (readdirSync(d).length === 0) rmdirSync(d);
+    } catch {
+      // not empty after all, or already gone
+    }
+  };
+  walk(root, true);
+  return out;
+}
 
 /** The slice of the Feishu channel the daemon actually uses; a test double implements just this. */
 export type ChannelLike = Pick<
@@ -55,6 +148,8 @@ export interface DaemonDeps {
   connectRetryMs?: number;
   /** How often the panes of away projects are polled for a stuck agent. */
   pollMs?: number;
+  /** How often the media directory is swept (the first sweep runs at start regardless). */
+  sweepMs?: number;
 }
 
 export interface DaemonHandle {
@@ -112,7 +207,7 @@ function resolveSendable(
   } catch (err) {
     return { error: fill(msg.fileRealpath, { error: String(err) }) };
   }
-  const allowed = [root, join(homeDir(), 'media'), tmpdir()]
+  const allowed = [root, mediaDir(), tmpdir()]
     .map((d) => {
       try {
         return realpathSync(d);
@@ -121,7 +216,7 @@ function resolveSendable(
       }
     });
   if (!allowed.some((d) => within(real, d)))
-    return { error: fill(msg.fileRefused, { real, root, media: join(homeDir(), 'media'), tmp: tmpdir() }) };
+    return { error: fill(msg.fileRefused, { real, root, media: mediaDir(), tmp: tmpdir() }) };
   const st = statSync(real);
   if (!st.isFile()) return { error: fill(msg.fileNotRegular, { real }) };
   const isImage = /\.(png|jpe?g|gif|webp|bmp)$/i.test(real);
@@ -149,6 +244,8 @@ interface Pending {
 
 /** How many closed questions are remembered, so a late form submit can still be read as labels. */
 const CLOSED_KEEP = 50;
+/** How many sent cards are remembered, so a message quoting one can say which. */
+const SENT_CARDS_KEEP = 200;
 
 /**
  * A checker inside a form reports its state in a shape the card docs do not
@@ -169,6 +266,11 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
   if (await isDaemonListening(2000)) throw new DaemonStartError(3, msg.daemonAlready);
   const herdr: HerdrDeps = deps.herdr ?? { agentList, promptPane, findPaneForProject };
   const retryMs = deps.connectRetryMs ?? CONNECT_RETRY_MS;
+  const ttl = mediaTtlDays();
+  if (ttl.invalid !== undefined) {
+    process.stderr.write(`${fill(msg.mediaTtlInvalid, { value: ttl.invalid, fallback: ttl.days })}\n`);
+    log('media.ttl-invalid', { value: ttl.invalid, fallback: ttl.days });
+  }
 
   let bindings: BindingStore;
   try {
@@ -183,6 +285,12 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
   const pendings = new Map<string, Pending>();
   /** Questions already closed, newest last; a late submit on one is still read as labels. */
   const closed = new Map<string, AskPayload>();
+  /** Cards this daemon sent, newest last, so a phone message quoting one can name it to the agent. */
+  const sentCards = new Map<string, { title: string; kind: 'ask' | 'notify' | 'status' | 'receipt' }>();
+  const rememberCard = (messageId: string, kind: 'ask' | 'notify' | 'status' | 'receipt', title: string): void => {
+    sentCards.set(messageId, { title, kind });
+    while (sentCards.size > SENT_CARDS_KEEP) sentCards.delete(sentCards.keys().next().value!);
+  };
   const remember = (p: Pending): void => {
     closed.set(p.reqId, p.payload);
     while (closed.size > CLOSED_KEEP) closed.delete(closed.keys().next().value!);
@@ -268,7 +376,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
 
   const receipt = async (b: Binding, why: string): Promise<void> => {
     try {
-      await channel.send(b.chatId, { card: receiptCard(b.label, why, langOf(b)) });
+      const sent = await channel.send(b.chatId, { card: receiptCard(b.label, why, langOf(b)) });
+      rememberCard(sent.messageId, 'receipt', t(langOf(b)).notDelivered);
     } catch (err) {
       log('receipt.failed', { root: b.root, err: String(err) });
     }
@@ -358,7 +467,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
   const saveResources = async (incoming: NormalizedMessage): Promise<{ saved: string[]; spoken: string[]; unheard: number }> => {
     const out = { saved: [] as string[], spoken: [] as string[], unheard: 0 };
     if (!incoming.resources.length) return out;
-    const dir = join(homeDir(), 'media', createHash('sha1').update(incoming.chatId).digest('hex').slice(0, 12));
+    const dir = join(mediaDir(), createHash('sha1').update(incoming.chatId).digest('hex').slice(0, 12));
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     for (const res of incoming.resources) {
       // Only images have their own download type; everything else (files,
@@ -423,6 +532,10 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
       await answer(p, text, 'text');
       return;
     }
+    // A message written as a reply to one of our cards: say which, so the
+    // agent knows what "yes, do that" refers to.
+    const quoted = sentCards.get(incoming.replyToMessageId ?? incoming.rootId ?? '');
+    if (quoted) text = `${fill(msg.replyTo, { title: quoted.title })}\n${text}`;
     await inject(b, text, incoming.messageId);
   }));
 
@@ -639,7 +752,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
       const detail =
         (a.terminal_title_stripped ? `**${a.terminal_title_stripped}**\n` : '') + fill(t(lang).statusPane, { pane: a.pane_id });
       try {
-        await channel.send(b.chatId, { card: statusCard(b.label, detail, lang) });
+        const sent = await channel.send(b.chatId, { card: statusCard(b.label, detail, lang) });
+        rememberCard(sent.messageId, 'status', t(lang).statusBlocked);
         log('status.pushed', { root: b.root, kind: 'blocked' });
       } catch (err) {
         log('status.failed', { root: b.root, err: String(err) });
@@ -648,6 +762,22 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
   };
   const pollTimer = setInterval(() => void poll().catch((err) => log('poll.failed', { err: String(err).slice(0, 200) })), deps.pollMs ?? POLL_MS);
   pollTimer.unref();
+
+  // ---- media retention -------------------------------------------------------
+  // What the directory holds is counted while sweeping and kept for `ping`;
+  // the count is as of the last sweep, never a rescan on every status call.
+  let mediaSeen: { files: number; bytes: number; at: string } = { files: 0, bytes: 0, at: '' };
+  const sweepMedia = (): void => {
+    if (ttl.days === 0) {
+      mediaSeen = { ...measureDir(mediaDir()), at: new Date().toISOString() };
+      return;
+    }
+    const r = sweepDir(mediaDir(), Date.now() - ttl.days * DAY_MS);
+    mediaSeen = { files: r.keptFiles, bytes: r.keptBytes, at: new Date().toISOString() };
+    log('media.swept', { removed: r.removed, keptFiles: r.keptFiles, keptBytes: r.keptBytes, failed: r.failed, ttlDays: ttl.days });
+  };
+  const sweepTimer = ttl.days === 0 ? undefined : setInterval(sweepMedia, deps.sweepMs ?? MEDIA_SWEEP_MS);
+  sweepTimer?.unref();
 
   // ---- IPC ----------------------------------------------------------------
   let server: Server | undefined;
@@ -686,6 +816,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
     log('daemon.stopping', { why });
     for (const sig of signals) process.off(sig, onSignal[sig]);
     clearInterval(pollTimer);
+    if (sweepTimer) clearInterval(sweepTimer);
     if (retryTimer) clearTimeout(retryTimer);
     wakeRetry?.();
     // Release every waiting client first; the card rewrites go out after, each
@@ -753,6 +884,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
               pendingAsks: pendings.size,
               bindings: bindings.activeAll().length,
               startedAt,
+              media: { ttlDays: ttl.days, ...mediaSeen },
             },
           };
 
@@ -995,7 +1127,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
           }
           if (payload.lang) bindings.touch(req.root, { lang: payload.lang });
           try {
-            await channel.send(b.chatId, { card: notifyCard(payload, b.label) });
+            const sent = await channel.send(b.chatId, { card: notifyCard(payload, b.label) });
+            rememberCard(sent.messageId, 'notify', payload.title);
             log('notify.sent', { root: b.root });
             return { ok: true, kind: 'ack' };
           } catch (err) {
@@ -1053,6 +1186,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
           } catch (err) {
             return { ok: false, code: 3, message: fill(msg.sendFailed, { error: err instanceof Error ? err.message : String(err) }) };
           }
+          rememberCard(messageId, 'ask', payload.title);
           log('ask.sent', { reqId, root: b.root, options: payload.options.length, select: payload.select, urgent });
           // Registered before anything else goes over the wire: the card is on
           // the phone from `send` on, and a tap that lands while the urgent flag
@@ -1110,6 +1244,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
 
   writeFileSync(pidPath(), `${process.pid}\n`, { mode: 0o600 });
   log('daemon.started', { pid: process.pid, endpoint: ipcEndpoint() });
+  setImmediate(sweepMedia);
   for (const sig of signals) process.on(sig, onSignal[sig]);
   void connectLoop().catch((err) => log('connect-loop.failed', { err: String(err).slice(0, 200) }));
 
