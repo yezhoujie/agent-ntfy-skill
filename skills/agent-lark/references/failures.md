@@ -223,6 +223,7 @@ agent-lark: setup --reuse asks for the App ID and App Secret interactively, and 
 
 Give the user the second line as is (absolute paths, the `--home` of this run); they run it, type the App
 ID and the App Secret (not echoed), and tell you when it is done — nothing comes back to you by itself.
+The user must run it in a terminal window of their own (Terminal, iTerm, …). Never suggest running it inside this session — a `!`-prefixed command, a shell tool, a background job: none of them has a TTY, and the CLI refuses without one.
 
 **QR code expired** before it was scanned:
 `The QR code expired before it was scanned. Run again: agent-lark setup (original error: …)` (rc 4) — the user reruns `setup`

@@ -49,13 +49,15 @@ same words in a sentence). Each maps to one flow:
     or the user says they are done ⇒ ask them what the pane printed, or run `status` (its credential
     layers show whether anything was stored). Outside herdr it exits 4 and
     puts the exact command on stderr (`node <cli> --home <dir> setup --reuse`): give that command to the
-    user to run in their own terminal, and let them tell you when it is done. Either way the human still
+    user to run in their own terminal, and let them tell you when it is done. The user must run it in a terminal window of their own (Terminal, iTerm, …). Never suggest running it inside this session — a `!`-prefixed command, a shell tool, a background job: none of them has a TTY, and the CLI refuses without one.
+    Either way the human still
     has to enable the scopes, the event and the callback for a reused app in the Feishu developer
     console; the interactive setup lists them.
   - When it is done, report the outcome in one sentence. **Do not `away on`** — that is the next word.
 - **`on`** — the remote-mode "on" flow from "Remote mode and the per-project state file" (`away on
-  --name "<task>"` from your own pane, relay stdout). No credentials yet ⇒ the `setup` flow above first,
-  then `away on` again.
+  --name "<task>"` from your own pane, relay stdout). No credentials yet ⇒ the `setup` flow above first
+  (outside herdr that means handing the user the `setup --reuse` command for a terminal window of their
+  own, never for this session), then `away on` again.
 - **`off`** — `away off` (the switch only; the group and the daemon stay).
 
 ## Ask a question
@@ -279,7 +281,7 @@ this skill). The human sets the channel up once per machine and once per project
 
 ```bash
 agent-lark setup                                   # once per machine, on a terminal: menu — 1) new app by QR code  2) reuse an app (App ID + Secret typed there)
-cd <project> && agent-lark away on --name "<task>" # once per project: daemon up, group created or taken back, switch on
+# once per project: tell the agent to turn remote mode on (or type /agent-lark on); it runs away on from its own pane so that pane is recorded
 ```
 
 - **No credentials yet** (`away on` exits 4 with `No Feishu app credentials yet. Run once: agent-lark setup`):
@@ -288,7 +290,8 @@ cd <project> && agent-lark away on --name "<task>" # once per project: daemon up
   code ⇒ you run `setup` and hand over the URL line (or a PNG of it); reuse ⇒ you run `setup --reuse`,
   which inside herdr opens its own pane for the human to type the App ID and App Secret (the secret
   never reaches you) and reports back with one `[agent-lark] setup:` line, and outside herdr exits 4 with
-  the command for the human to run themselves. The four report lines, verbatim:
+  the command for the human to run themselves. The user must run it in a terminal window of their own (Terminal, iTerm, …). Never suggest running it inside this session — a `!`-prefixed command, a shell tool, a background job: none of them has a TTY, and the CLI refuses without one.
+  The four report lines, verbatim:
   - `[agent-lark] setup: credentials stored for cli_xxxxxxxx (<app name>); the scopes must be enabled in the developer console before use` — done; remind the user of the console work if they have not done it, then `away on` again.
   - `[agent-lark] setup: failed: 3 probes refused (<why>)` — the only `failed:` form; relay `<why>` (the secret is masked as `***` wherever it could appear).
   - `[agent-lark] setup: interrupted before any credentials were stored` — the human pressed Ctrl-C; ask whether to try again.
