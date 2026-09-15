@@ -227,6 +227,7 @@ test('reuse without a terminal, inside herdr: a pane is split below the caller a
   assert.deepEqual(argv.slice(4), ['setup', '--reuse', '--report-to', 'w1:p2', '--close-pane']);
   assert.match(text(f.out), /pane w1:p9/);
   assert.match(text(f.out), /\[agent-lark\] setup:/);
+  assert.match(text(f.out), /that pane has focus now/);
   assert.equal(f.probes.length, 0);
 });
 
@@ -346,4 +347,30 @@ test('--report-to when credentials already exist: the pane still reports one lin
   assert.match(f.prompts[0]![1], /^\[agent-lark\] setup: .*already/);
   assert.match(f.prompts[0]![1], /--reset/);
   assert.ok(!f.herdr.some((h) => h[0] === 'close'), 'nothing was set up, so the pane is left for the human to read');
+});
+
+test('--report-to: the offline guard (exit 3) is reported as a "failed:" line too, so the caller never waits for nothing', async () => {
+  isolate();
+  const f = fake(scripted(['cli_ok1', 'hunter2']), { inHerdr: 'w1:p9', offline: true });
+  assert.equal(await runSetup(['--reuse', '--report-to', 'w1:p2'], f.deps), 3);
+  assert.equal(f.prompts.length, 1);
+  assert.match(f.prompts[0]![1], /^\[agent-lark\] setup: failed: offline/);
+  assert.doesNotMatch(f.prompts[0]![1], /hunter2/);
+});
+
+test('--report-to: an unexpected exception inside the questions is reported as "failed:" (secret masked) and then rethrown', async () => {
+  isolate();
+  const io = scripted(['cli_ok1', 'hunter2', 'cli_ok1']);
+  const broken = { ...io, questionHidden: async (prompt: string) => (io.hidden.length ? Promise.reject(new TypeError('tty broke while holding hunter2')) : io.questionHidden(prompt)) };
+  const f = fake(broken, {
+    inHerdr: 'w1:p9',
+    probe: async () => {
+      throw new Error('refused');
+    },
+  });
+  await assert.rejects(runSetup(['--reuse', '--report-to', 'w1:p2'], f.deps), /tty broke/);
+  assert.equal(f.prompts.length, 1);
+  assert.match(f.prompts[0]![1], /^\[agent-lark\] setup: failed: .*tty broke/);
+  assert.doesNotMatch(f.prompts[0]![1], /hunter2/);
+  assert.match(f.prompts[0]![1], /\*\*\*/);
 });

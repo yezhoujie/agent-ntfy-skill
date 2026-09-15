@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { en, fill, msg, zh } from '../src/texts.js';
+import { both, en, fill, msg, zh } from '../src/texts.js';
 
 const placeholders = (s: string): string[] => [...new Set(s.match(/\{[a-zA-Z_]+\}/g) ?? [])].sort();
 
@@ -43,4 +43,15 @@ test('the four herdr prompt failure codes have card wording in both languages', 
     assert.ok(en[key].trim());
   }
   assert.deepEqual(placeholders(zh.promptRefused), ['{code}', '{message}']);
+});
+
+test('both(): a single-line value is zh and en side by side; a multi-line value is the zh block, then the en block, never joined on one line', () => {
+  assert.equal(both('setupMenuPrompt'), `${zh.setupMenuPrompt}　/　${en.setupMenuPrompt}`);
+  const menu = both('setupMenu');
+  assert.equal(menu, `${zh.setupMenu}\n${en.setupMenu}`);
+  assert.doesNotMatch(menu, /　\/　/);
+  const lines = menu.split('\n');
+  assert.equal(lines.length, 6);
+  assert.deepEqual(lines.slice(0, 3), zh.setupMenu.split('\n'));
+  assert.deepEqual(lines.slice(3), en.setupMenu.split('\n'));
 });

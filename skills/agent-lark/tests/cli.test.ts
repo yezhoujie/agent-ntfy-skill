@@ -24,6 +24,14 @@ after(() => {
   for (const dir of scratch) rmSync(dir, { recursive: true, force: true });
 });
 
+// Every spawned CLI is pointed away from the machine's real credentials: a
+// keychain service that never holds anything, and a throwaway config dir.
+const isolatedEnv = (): NodeJS.ProcessEnv => {
+  const env: NodeJS.ProcessEnv = { ...process.env, AGENT_LARK_KEYCHAIN: 'agent-lark-test-never-stored', XDG_CONFIG_HOME: tmp('agent-lark-cfg-') };
+  for (const k of ['AGENT_LARK_APP_ID', 'AGENT_LARK_APP_SECRET', 'AGENT_LARK_OWNER_OPEN_ID', 'AGENT_LARK_STORE']) delete env[k];
+  return env;
+};
+
 function run(args: string[], opts: { input?: string; home?: string } = {}) {
   assert.ok(existsSync(cli), `dist/cli.mjs not found at ${cli} — run \`npm run build\` first`);
   const home = opts.home ?? tmp('agent-lark-cli-');
@@ -32,7 +40,7 @@ function run(args: string[], opts: { input?: string; home?: string } = {}) {
   const r = spawnSync(process.execPath, [cli, ...args], {
     input: opts.input ?? '',
     encoding: 'utf8',
-    env: { ...process.env, AGENT_LARK_HOME: home },
+    env: { ...isolatedEnv(), AGENT_LARK_HOME: home },
     timeout: 10_000,
   });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, home };
@@ -95,7 +103,7 @@ test('away off with no daemon: exit 0, the local state file is switched off, and
   const project = realpathSync(tmp('agent-lark-off-'));
   mkdirSync(join(project, '.agent-lark'));
   writeFileSync(join(project, '.agent-lark', 'state.json'), JSON.stringify({ away: true, chatId: 'oc_x', target: project, updated: '' }));
-  const r = spawnSync(process.execPath, [cli, 'away', 'off'], { encoding: 'utf8', env: { ...process.env, AGENT_LARK_HOME: tmp('agent-lark-home-') }, input: '', cwd: project });
+  const r = spawnSync(process.execPath, [cli, 'away', 'off'], { encoding: 'utf8', env: { ...isolatedEnv(), AGENT_LARK_HOME: tmp('agent-lark-home-') }, input: '', cwd: project });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /^Remote mode is off\.$/m);
   assert.match(r.stdout, /daemon is not running; local state cleared/);
@@ -106,7 +114,7 @@ test('away off with no daemon: exit 0, the local state file is switched off, and
 
 test('away off with no daemon and no state file: exit 0, "never used", nothing created', () => {
   const project = realpathSync(tmp('agent-lark-off-'));
-  const r = spawnSync(process.execPath, [cli, 'away', 'off'], { encoding: 'utf8', env: { ...process.env, AGENT_LARK_HOME: tmp('agent-lark-home-') }, input: '', cwd: project });
+  const r = spawnSync(process.execPath, [cli, 'away', 'off'], { encoding: 'utf8', env: { ...isolatedEnv(), AGENT_LARK_HOME: tmp('agent-lark-home-') }, input: '', cwd: project });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /never used agent-lark/);
   assert.equal(existsSync(join(project, '.agent-lark')), false);
@@ -166,7 +174,7 @@ describe('with a fake daemon', () => {
   // Not inside herdr as far as the CLI can tell, whatever spawned the tests.
   // `away on` checks for credentials before talking to the daemon; the fake
   // pair keeps it off the real keychain.
-  const env: NodeJS.ProcessEnv = { ...process.env, AGENT_LARK_HOME: home, AGENT_LARK_APP_ID: 'cli_fake', AGENT_LARK_APP_SECRET: 'fake-secret' };
+  const env: NodeJS.ProcessEnv = { ...isolatedEnv(), AGENT_LARK_HOME: home, AGENT_LARK_APP_ID: 'cli_fake', AGENT_LARK_APP_SECRET: 'fake-secret' };
   delete env.HERDR_ENV;
   delete env.HERDR_PANE_ID;
   const entry = join(here, 'fixtures', 'daemon-entry.js');
@@ -304,7 +312,7 @@ describe('with a fake daemon whose first handshakes fail', () => {
   const home = mkdtempSync(join(tmpdir(), 'al-cli-late-home-'));
   // Six failures at a doubling 50 ms interval: connected about 3 s in.
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...isolatedEnv(),
     AGENT_LARK_HOME: home,
     AGENT_LARK_APP_ID: 'cli_fake',
     AGENT_LARK_APP_SECRET: 'fake-secret',

@@ -26,10 +26,11 @@ test('Windows quoting follows CommandLineToArgvW as list2cmdline applies it: spa
   assert.equal(quoteForPaneShell(['C:\\node.exe', 'a b', 'say "hi"', 'C:\\dir\\', 'x y\\'], 'win32'), 'C:\\node.exe "a b" "say \\"hi\\"" C:\\dir\\ "x y\\\\"');
 });
 
-test('splitPane: the split is asked below the caller with cwd and no focus; the new pane id comes out of result.pane.pane_id', async () => {
+test('splitPane: the split is asked below the caller with cwd, taking focus; the new pane id comes out of result.pane.pane_id', async () => {
   const ok = recorder(() => ({ ok: true, stdout: JSON.stringify({ id: 'x', result: { pane: { pane_id: 'w1:p7' } } }) }));
   assert.equal(await splitPane('/work', 'w1:p2', ok.run), 'w1:p7');
-  assert.deepEqual(ok.calls, [['pane', 'split', '--pane', 'w1:p2', '--direction', 'down', '--cwd', '/work', '--no-focus']]);
+  // The new pane takes focus: the human types the secret there next.
+  assert.deepEqual(ok.calls, [['pane', 'split', '--pane', 'w1:p2', '--direction', 'down', '--cwd', '/work']]);
   const refused = recorder(() => ({ ok: false, stdout: '', error: 'herdr: not found' }));
   assert.equal(await splitPane('/work', 'w1:p2', refused.run), null);
   const odd = recorder(() => ({ ok: true, stdout: '{"result":{}}' }));

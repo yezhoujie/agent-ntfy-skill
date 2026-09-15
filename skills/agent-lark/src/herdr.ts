@@ -120,11 +120,12 @@ export const runHerdr: HerdrRunner = async (args) => {
 };
 
 /**
- * Open a new pane below `pane` (cwd set, focus left alone) and return its id;
- * null when it could not be opened or herdr's answer is not the expected shape.
+ * Open a new pane below `pane` (cwd set; the new pane takes focus, since the
+ * human types there next) and return its id; null when it could not be
+ * opened or herdr's answer is not the expected shape.
  */
 export async function splitPane(cwd: string, pane: string, run: HerdrRunner = runHerdr): Promise<string | null> {
-  const r = await run(['pane', 'split', '--pane', pane, '--direction', 'down', '--cwd', cwd, '--no-focus']);
+  const r = await run(['pane', 'split', '--pane', pane, '--direction', 'down', '--cwd', cwd]);
   if (!r.ok) return null;
   const env = parse<{ pane?: { pane_id?: unknown } }>(r.stdout);
   const id = env.result?.pane?.pane_id;

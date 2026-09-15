@@ -203,10 +203,14 @@ export interface SetupDeps {
   cwd: string;
 }
 
-/** Ends `runSetup` from anywhere inside it with this exit code. */
+/** Ends `runSetup` from anywhere inside it with this exit code; `reported` means the pane has already sent its report line. */
 class SetupExit extends Error {
-  constructor(readonly code: number) {
-    super(`setup exit ${code}`);
+  constructor(
+    readonly code: number,
+    readonly reason: string,
+    readonly reported = false,
+  ) {
+    super(`setup exit ${code}: ${reason}`);
   }
 }
 
@@ -223,8 +227,11 @@ export async function runSetup(args: string[], deps: SetupDeps): Promise<number>
     deps.out(`${both(key, vars, varsEn)}\n`);
   const fail = (code: number, text: string): never => {
     deps.err(`${msg.prefix}${text}\n`);
-    throw new SetupExit(code);
+    throw new SetupExit(code, text);
   };
+  // The secret typed so far, so that whatever text leaves through the report
+  // line can be masked — including an error nobody anticipated.
+  const typed = { secret: '' };
   const update = flag(args, 'update');
   const reuse = flag(args, 'reuse');
   const reportTo = opt(args, 'report-to');
@@ -269,15 +276,18 @@ export async function runSetup(args: string[], deps: SetupDeps): Promise<number>
 
     if (branch === 'reuse') {
       if (!deps.io.isTTY) return handOff(deps);
-      await runReuse(deps, store, say, fail, report, closeAfter, scopes);
+      await runReuse(deps, store, say, fail, report, closeAfter, scopes, typed);
       return 0;
     }
     if (deps.offline) fail(3, msg.offline);
     await runQr(deps, store, say, fail, update ? existing?.appId : undefined, scopes);
     return 0;
   } catch (err) {
+    // Whatever ended the run, the caller's pane gets one line: a report that
+    // never comes leaves the agent waiting for it.
     if (err instanceof SetupExit) {
       if (err.code === 130) await report(msg.setupReportInterrupted);
+      else if (!err.reported) await report(fill(msg.setupReportFailed, { why: maskSecret(err.reason, typed.secret) }));
       return err.code;
     }
     if (err instanceof InputInterrupted) {
@@ -285,6 +295,7 @@ export async function runSetup(args: string[], deps: SetupDeps): Promise<number>
       await report(msg.setupReportInterrupted);
       return 130;
     }
+    await report(fill(msg.setupReportFailed, { why: maskSecret(describeError(err), typed.secret) }));
     throw err;
   } finally {
     deps.io.close();
@@ -326,6 +337,7 @@ async function runReuse(
   report: (line: string) => Promise<void>,
   closeAfter: boolean,
   scopes: string[],
+  typed: { secret: string },
 ): Promise<void> {
   for (let attempt = 1; ; attempt++) {
     let appId: string;
@@ -337,6 +349,7 @@ async function runReuse(
     // The secret is read hidden and travels only into the probe and the
     // store: never argv, never a log line, never an error message.
     const appSecret = (await deps.io.questionHidden(both('setupSecretPrompt'))).trim();
+    typed.secret = appSecret;
     if (deps.offline) fail(3, msg.offline);
     say('setupProbing');
     let info: { appName?: string; ownerId?: string };
@@ -350,7 +363,8 @@ async function runReuse(
       if (attempt >= REUSE_ATTEMPTS) {
         const line = both('setupReuseGaveUp', { n: attempt });
         await report(fill(msg.setupReportFailed, { why: `${attempt} probes refused (${why})` }));
-        fail(1, line);
+        deps.err(`${msg.prefix}${line}\n`);
+        throw new SetupExit(1, line, true);
       }
       continue;
     }

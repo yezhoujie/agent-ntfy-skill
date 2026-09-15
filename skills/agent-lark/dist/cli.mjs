@@ -136267,7 +136267,10 @@ function fill(template, vars = {}) {
   return template.replace(/\{([a-zA-Z_]+)\}/g, (whole, name) => name in vars ? String(vars[name]) : whole);
 }
 function both(key, vars = {}, varsEn = vars) {
-  return `${fill(zh[key], vars)}\u3000/\u3000${fill(en[key], varsEn)}`;
+  const z = fill(zh[key], vars);
+  const e = fill(en[key], varsEn);
+  return z.includes("\n") || e.includes("\n") ? `${z}
+${e}` : `${z}\u3000/\u3000${e}`;
 }
 var zh, en, msg, t;
 var init_texts = __esm({
@@ -136454,7 +136457,7 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       awayUsage: "Usage: agent-lark away on [--name <task>] [--reuse <chat_id> | --new] | off | status [--json]",
       renameUsage: 'Usage: agent-lark rename "<task name>"',
       taskNameTooLong: "task name: over {max} characters (code points), got {n}",
-      setupHandoffStarted: 'The interactive setup is running in herdr pane {pane}: the user enters the App ID and App Secret there (they never pass through this session). When it ends, one line prefixed "[agent-lark] setup:" arrives here.',
+      setupHandoffStarted: 'The interactive setup is running in herdr pane {pane}: the user enters the App ID and App Secret there (they never pass through this session). When it ends, one line prefixed "[agent-lark] setup:" arrives here (that pane has focus now).',
       setupHandoffFailed: "could not open a herdr pane for the interactive setup ({why}). Ask the user to run it in their own terminal:\n  {command}",
       setupReuseNeedsTerminal: "setup --reuse asks for the App ID and App Secret interactively, and there is no terminal here (and no herdr to open one). Ask the user to run it in their own terminal:\n  {command}",
       setupReportOk: "[agent-lark] setup: credentials stored for {appId} ({app}); the scopes must be enabled in the developer console before use",
@@ -136859,7 +136862,7 @@ function findPaneForProject(agents, root) {
   return (focused ?? inProject[0]).pane_id;
 }
 async function splitPane(cwd, pane, run = runHerdr) {
-  const r = await run(["pane", "split", "--pane", pane, "--direction", "down", "--cwd", cwd, "--no-focus"]);
+  const r = await run(["pane", "split", "--pane", pane, "--direction", "down", "--cwd", cwd]);
   if (!r.ok) return null;
   const env = parse(r.stdout);
   const id = env.result?.pane?.pane_id;
@@ -138780,9 +138783,11 @@ function finish(res, onOk) {
 var APP_ID_RE = /^cli_[A-Za-z0-9]+$/;
 var REUSE_ATTEMPTS = 3;
 var SetupExit = class extends Error {
-  constructor(code) {
-    super(`setup exit ${code}`);
+  constructor(code, reason, reported = false) {
+    super(`setup exit ${code}: ${reason}`);
     this.code = code;
+    this.reason = reason;
+    this.reported = reported;
   }
 };
 async function runSetup(args, deps) {
@@ -138791,8 +138796,9 @@ async function runSetup(args, deps) {
   const fail = (code, text) => {
     deps.err(`${msg.prefix}${text}
 `);
-    throw new SetupExit(code);
+    throw new SetupExit(code, text);
   };
+  const typed = { secret: "" };
   const update = flag(args, "update");
   const reuse = flag(args, "reuse");
   const reportTo = opt(args, "report-to");
@@ -138828,7 +138834,7 @@ async function runSetup(args, deps) {
     }
     if (branch === "reuse") {
       if (!deps.io.isTTY) return handOff(deps);
-      await runReuse(deps, store, say, fail, report, closeAfter, scopes);
+      await runReuse(deps, store, say, fail, report, closeAfter, scopes, typed);
       return 0;
     }
     if (deps.offline) fail(3, msg.offline);
@@ -138837,6 +138843,7 @@ async function runSetup(args, deps) {
   } catch (err) {
     if (err instanceof SetupExit) {
       if (err.code === 130) await report(msg.setupReportInterrupted);
+      else if (!err.reported) await report(fill(msg.setupReportFailed, { why: maskSecret(err.reason, typed.secret) }));
       return err.code;
     }
     if (err instanceof InputInterrupted) {
@@ -138844,6 +138851,7 @@ async function runSetup(args, deps) {
       await report(msg.setupReportInterrupted);
       return 130;
     }
+    await report(fill(msg.setupReportFailed, { why: maskSecret(describeError(err), typed.secret) }));
     throw err;
   } finally {
     deps.io.close();
@@ -138874,7 +138882,7 @@ async function handOff(deps) {
 `);
   return 0;
 }
-async function runReuse(deps, store, say, fail, report, closeAfter, scopes) {
+async function runReuse(deps, store, say, fail, report, closeAfter, scopes, typed) {
   for (let attempt = 1; ; attempt++) {
     let appId;
     for (; ; ) {
@@ -138883,6 +138891,7 @@ async function runReuse(deps, store, say, fail, report, closeAfter, scopes) {
       say("setupAppIdBad");
     }
     const appSecret = (await deps.io.questionHidden(both("setupSecretPrompt"))).trim();
+    typed.secret = appSecret;
     if (deps.offline) fail(3, msg.offline);
     say("setupProbing");
     let info;
@@ -138894,7 +138903,9 @@ async function runReuse(deps, store, say, fail, report, closeAfter, scopes) {
       if (attempt >= REUSE_ATTEMPTS) {
         const line = both("setupReuseGaveUp", { n: attempt });
         await report(fill(msg.setupReportFailed, { why: `${attempt} probes refused (${why})` }));
-        fail(1, line);
+        deps.err(`${msg.prefix}${line}
+`);
+        throw new SetupExit(1, line, true);
       }
       continue;
     }

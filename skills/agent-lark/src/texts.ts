@@ -201,7 +201,7 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   renameUsage: 'Usage: agent-lark rename "<task name>"',
   taskNameTooLong: 'task name: over {max} characters (code points), got {n}',
   setupHandoffStarted:
-    'The interactive setup is running in herdr pane {pane}: the user enters the App ID and App Secret there (they never pass through this session). When it ends, one line prefixed "[agent-lark] setup:" arrives here.',
+    'The interactive setup is running in herdr pane {pane}: the user enters the App ID and App Secret there (they never pass through this session). When it ends, one line prefixed "[agent-lark] setup:" arrives here (that pane has focus now).',
   setupHandoffFailed: 'could not open a herdr pane for the interactive setup ({why}). Ask the user to run it in their own terminal:\n  {command}',
   setupReuseNeedsTerminal:
     'setup --reuse asks for the App ID and App Secret interactively, and there is no terminal here (and no herdr to open one). Ask the user to run it in their own terminal:\n  {command}',
@@ -385,5 +385,9 @@ export function both(
   vars: Record<string, string | number> = {},
   varsEn: Record<string, string | number> = vars,
 ): string {
-  return `${fill(zh[key], vars)}　/　${fill(en[key], varsEn)}`;
+  const z = fill(zh[key], vars);
+  const e = fill(en[key], varsEn);
+  // A multi-line value (the setup menu) reads as two blocks, one per
+  // language; joining blocks on one line splices the last zh line onto the first en line.
+  return z.includes('\n') || e.includes('\n') ? `${z}\n${e}` : `${z}　/　${e}`;
 }
