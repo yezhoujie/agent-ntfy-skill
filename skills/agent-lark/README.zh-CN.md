@@ -163,7 +163,7 @@ agent-lark daemon --stop     # 升级前（§9）；有提问挂着时拒绝—�
 
 ## 9. 升级
 
-版本就是 git tag `agent-lark/vX.Y.Z`；改了什么见 [CHANGELOG.md](../../CHANGELOG.md)。装到本机的是仓库内容的一份快照，`npx skills update` 刷新它（全局安装加 `-g`，当前项目加 `-p`）。想停在某个版本，安装时把 tag 当 git ref 带上：`npx skills add 'yezhoujie/agent-remote-communication-skills#agent-lark/v0.1.1' --skill agent-lark`。
+版本就是 git tag `agent-lark/vX.Y.Z`；改了什么见 [CHANGELOG.md](../../CHANGELOG.md)。装到本机的是仓库内容的一份快照，`npx skills update` 刷新它（全局安装加 `-g`，当前项目加 `-p`）。想停在某个版本，安装时把 tag 当 git ref 带上：`npx skills add 'yezhoujie/agent-remote-communication-skills#agent-lark/v0.1.2' --skill agent-lark`。
 
 跑着 daemon 的机器：1. 用手上的 CLI `agent-lark daemon --stop`（有提问挂着时会拒绝——等一等，或 `--stop --force`；文件已经换成新版、旧 daemon 又不应答的话，`kill -TERM <pid>`，pid 在 `~/.agent-lark/daemon.pid` 里）。2. 换文件。3. `agent-lark daemon --detach`。凭据、群绑定、项目级开关都会保留；然后说一声「开启远程交互模式」，让 agent 重新记下它的窗格。
 

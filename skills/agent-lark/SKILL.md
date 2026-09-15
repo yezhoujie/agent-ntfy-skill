@@ -367,7 +367,8 @@ daemon keeps that on the binding.
   the human's call, not yours. `status` shows credentials, herdr, the daemon and every binding, live and
   released.
 - Records of groups that no longer exist in Feishu (dissolved, or the bot removed from them) are
-  forgotten by the daemon once a day and whenever `away on` / `bind` looks for a group to offer back — a
+  forgotten by the daemon once a day, right after its first handshake with Feishu, and whenever `away on` /
+  `bind` looks for a group to offer back — a
   live one included, in which case the project's `state.json` loses its `chatId` (the `away` switch is
   left as it was) and the next `ask` exits 4 as not bound. Nothing is forgotten while Feishu's group list
   cannot be read in full.

@@ -1,6 +1,6 @@
 {
   "name": "agent-lark",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Push the decisions an AI coding agent cannot make on its own to your phone as Feishu/Lark cards, and bring your verdict — or any instruction — straight back into its session",
   "type": "module",
   "bin": {
