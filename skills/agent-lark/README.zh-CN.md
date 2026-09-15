@@ -12,7 +12,7 @@
 1. 工作原理
 2. 前提（2.1 平台支持 · 2.2 herdr 可选）
 3. 安装
-4. 配置（4.1 扫码建应用 · 4.2 用已有的应用 · 4.3 权限清单 · 4.4 凭据从哪读）
+4. 配置：三种方式（4.1 手动 · 4.2 让 agent 帮忙 · 4.3 直接说 · 4.4 权限清单 · 4.5 凭据从哪读）
 5. 第一条提问，从头到尾
 6. 东西放在哪
 7. 日常维护
@@ -44,7 +44,7 @@ agent ──ask（stdin 里的 JSON）──▶ agent-lark ──本机 socket�
 ## 2. 前提
 
 - Node.js 22 或更新。CLI 是一个自包含单文件（`dist/cli.mjs`，飞书 SDK 已打进去）：不用 `npm install`，也不用构建
-- 一个飞书 / Lark 账号——个人版就够。自建应用用手机扫码创建（§4.1）；别人建好的应用也能用（§4.2）
+- 一个飞书 / Lark 账号——个人版就够。自建应用用手机扫码创建（§4.1）；别人建好的应用也能用（§4.1 第 2 种）
 - 跑 daemon 的机器能出站访问飞书服务器
 - 本文与 SKILL.md 里的示例是 POSIX shell 形态（heredoc、`alias`）。Windows 上请在 Git Bash 或 WSL 里跑这些命令；daemon 与 CLI 本身原生可跑
 - [herdr](https://herdr.dev)，可选——见 §2.2
@@ -91,46 +91,81 @@ CLI 就是目录里的 `dist/cli.mjs`。它自己的提示文案里管自己叫 
 alias agent-lark='node "<skills/agent-lark 的路径>/dist/cli.mjs"'
 ```
 
-## 4. 配置
+## 4. 配置：三种方式
 
-每台机器只做一次的事有两件：建（或接管）飞书应用，把凭据存起来。之后的一切——起 daemon、给项目建群、打开开关——都是一条命令 `away on`（§5）。
+每台机器只做一次的事：建一个飞书应用（或复用已有的），把凭据存起来。之后的一切——起 daemon、给项目建群、打开开关——都是一条命令 `away on`（§5）。走到这一步有三种方式，终点相同。
 
-### 4.1 扫码建应用（还没有应用）
+### 4.1 手动：`agent-lark setup` 一步步引导
 
 ```bash
 agent-lark setup
 ```
 
-`setup` 的每一行都中英并排打印。它向飞书申请扫码注册，在终端里画出二维码（ANSI 字符画），并**紧跟着把同一个链接以一行文本打出来**，终端渲染得不好也能点开。用手机飞书扫码；确认页会列出要授权的权限（§4.3）；点同意，应用当场建好。二维码只在几分钟内有效（过期时间会打出来，之后每分钟打一行「还在等你扫……」）；过期了重跑 `setup`（退 4）。等待期间网络抖动会作废这张码：`setup` 会重新申请一张，最多三次。
-
-如果是 agent 替你跑 `setup`、而你看不到它的屏幕，它有两条路：把那行链接贴给你，或者自己把链接渲染成二维码图片打开给你看；没有专门的旗标。
-
-成功时：
+在终端里跑，开头是一个菜单（`setup` 的每一行都中英并排打印，下面只列中文那一半）：
 
 ```
-✅ App linked; credentials saved to macOS Keychain (service: agent-lark) (the secret never appears in any output).
-Next:
+怎么接入飞书？
+  1) 扫码新建一个应用（用飞书扫终端里的二维码）
+  2) 复用一个已有的应用（输入 App ID 与 App Secret）
+选 [1/2]：
+```
+
+输 `1`、`2` 以外的东西会再问一次。stdin 不是终端（管道、脚本）时没有菜单，直接走扫码。
+
+**1——扫码新建应用。** `setup` 向飞书申请扫码注册，在终端里画出二维码（ANSI 字符画），并**紧跟着把同一个链接以一行文本打出来**，终端渲染得不好也能点开。用手机飞书扫码；确认页会列出要授权的权限（§4.4）；同意后应用当场建好。二维码几分钟内有效（会打出过期时间；之后每分钟一行 `还在等你扫……`）；过期就再跑一次 `setup`（退 4）。等待期间网络抖一下会作废这张码：`setup` 自动重新申请，最多三次。成功后：
+
+```
+✅ 应用已绑定，凭据保存到：macOS Keychain (service: agent-lark)（明文不会出现在任何输出里）。
+下一步：
   agent-lark daemon --detach
   cd <project> && agent-lark away on --name "<task>"
 ```
 
-（这里略去了每行的中文那一半）。凭据存哪取决于平台——有钥匙串就存钥匙串，否则存 `0600` 文件——也可以用 `--store keychain|file|none` 强制指定（`none` 只在本次运行的内存里留着）或用 `AGENT_LARK_STORE`（§11）。
+**2——复用一个已有的应用**（`agent-lark setup --reuse` 不出菜单、直接进这一支）。两个提示，然后连一次飞书：
 
-之后再跑 `setup` 会说「已经有凭据了（来自 …）」并退 0。两个旗标能改变这一点：`--update` 重新扫码给**同一个**应用重新授权——补权限就靠它；`--reset` 先删掉存着的凭据，用来换一个应用。
-
-### 4.2 用已有的应用
-
-跳过扫码，直接给 app id。**secret 从环境变量或 env 文件读，永远不走命令行**——argv 对机器上的每个进程都可见：
-
-```bash
-AGENT_LARK_APP_SECRET=... agent-lark setup --app-id cli_xxxxxxxx
+```
+App ID（cli_ 开头）：cli_xxxxxxxx
+App Secret（输入不回显）：
+正在连一次飞书确认这对凭据可用……
+✅ 凭据可用，应用名「我的 agent 应用」
+凭据已保存到：macOS Keychain (service: agent-lark)
+这个应用要在开发者后台手动开通（应用 → 权限管理 → 开通权限）：
+  im:message
+  im:message:send_as_bot
+  im:message.group_msg
+  im:chat
+  im:resource
+  im:message.urgent
+  speech_to_text:speech
+事件订阅：im.message.receive_v1（订阅方式选「使用长连接接收事件」）· 回调：card.action.trigger（同样选长连接）
+开通后发布一个版本，权限才生效。
+下一步：
+  agent-lark daemon --detach
+  cd <project> && agent-lark away on --name "<task>"
 ```
 
-或者把两者写进 `~/.config/agent-lark/.env`（`AGENT_LARK_APP_ID=...` / `AGENT_LARK_APP_SECRET=...`）再跑 `agent-lark setup --app-id cli_xxxxxxxx`。`setup` 会连一次飞书核这对凭据（「✅ 凭据可用，应用名「…」」），记下应用的所有者（建新群时拉的就是这个人），然后按 §4.1 的方式存起来。没给 secret 退 4 并把两种给法都打出来；飞书不认这对凭据退 3。这样的应用得自己在飞书开发者后台把 §4.3 的权限、事件与回调开好。
+- App ID 必须是 `cli_` 加字母数字（开发者后台「凭证与基础信息」里看）；不是就再问一次。Secret 盲打——什么都不回显——之后也不会出现在任何输出里，连错误信息里都会打成 `***`。
+- 飞书不认的一对会打出飞书的错误码和信息，再问一次；连续三次不通过退 1，什么都不存。`setup` 顺带记下应用所有者（新建群时拉进去的那个人）。
+- 复用的应用不是这个工具建的，它的权限、事件订阅和卡片回调要**手动**在开发者后台开通，两者的订阅方式都选长连接，然后发布一个版本（§4.4）。`setup` 把清单打出来，照着勾。
 
-### 4.3 权限清单
+**不论哪种方式：** 凭据存哪取决于平台——有钥匙串就存钥匙串，否则存 `0600` 文件——也可以用 `AGENT_LARK_STORE` 强制指定（§11）。之后再跑 `setup`，它只报 `已经有凭据了（来自 …）` 退 0，`--reuse` 也一样。两个旗标能改变这一点：`--update` 对**同一个**应用重新扫码授权（终端上先出菜单，选 1）——扫码建的应用补权限就靠它；`--reset` 先删掉存着的凭据，所以换应用是 `agent-lark setup --reset --reuse`（或只带 `--reset`，走扫码）。
 
-确认页申请的是这些权限（用 `setup --scopes a,b,c` 可覆盖）：
+### 4.2 让 agent 帮忙：`/agent-lark setup`、`on`、`off`
+
+agent 认三个参数（SKILL.md「Invoked with an argument」）：`/agent-lark setup` 跑引导式设置、只报结果；`/agent-lark on` 给当前项目打开远程模式（§5），没有凭据就先走设置；`/agent-lark off` 关闭。
+
+`setup` 时 agent 先问你走哪条路——扫码新建、还是复用已有——不会替你选。
+
+- **扫码**：agent 替你跑 `agent-lark setup`。它一般没法把屏幕给你看，就把二维码下面那行链接交给你（或者把链接自己渲成二维码图片打开）；你扫完，它报结果。
+- **复用**：App ID、尤其是 App Secret 不能经 agent 的手。在 [herdr](https://herdr.dev) 里，agent 跑 `agent-lark setup --reuse` 会在它自己的窗格下方开一个新终端窗格、在那里跑交互式设置；**你在那个窗格里输入 App ID 与 Secret**。结束时会有一行注入回 agent 的会话，它才能接着干——`[agent-lark] setup: credentials stored for cli_xxxxxxxx (我的 agent 应用); the scopes must be enabled in the developer console before use`（或 `… failed: <原因>`、`… interrupted before any credentials were stored`、`… credentials already stored (…); nothing changed. …`）——成功时那个窗格再问一句 `关掉这个窗格？[Y/n]`（失败则留着不关，原因还看得到）。herdr 外开不了窗格：`setup --reuse` 退 4，agent 把要在你自己终端里跑的那条命令原样给你（`node …/dist/cli.mjs --home … setup --reuse`）；跑完告诉 agent 一声。
+
+### 4.3 直接跟 agent 说
+
+「开启远程交互模式」「我走了，有事发手机」——§14 的规则生效着，这一句就够：agent 跑 `away on --name "<任务名>"`，还没有凭据就先走 4.2。这是日常的路；4.1 和 4.2 是第一次在一台机器上用、或换应用时才要的。
+
+### 4.4 权限清单
+
+扫码新建时确认页会请求这些权限（可用 `setup --scopes a,b,c` 覆盖）；复用的应用要在开发者后台手动开通同样这些：
 
 ```
 im:message
@@ -142,19 +177,17 @@ im:message.urgent
 speech_to_text:speech
 ```
 
-外加事件 `im.message.receive_v1` 与卡片回调 `card.action.trigger`。`im:message.urgent` 是 `ask --urgent` 要的；`speech_to_text:speech` 是语音转文字要的（而且还得是飞书付费版租户，§8）。之后发现少了哪个？`agent-lark setup --update` 重新扫码补到同一个应用上。
+外加事件 `im.message.receive_v1` 和卡片回调 `card.action.trigger`，两者都走飞书的**长连接**投递（不需要公网 URL）。`im:message.urgent` 是 `ask --urgent` 要的；`speech_to_text:speech` 是转写语音要的（另外还要付费版租户，§8）。后来发现缺一项？扫码建的应用跑 `agent-lark setup --update` 重新扫码补到同一个应用上；复用的应用去开发者后台改（改完发布一个版本）。
 
-### 4.4 凭据从哪读
+### 4.5 凭据从哪读
 
-解析顺序，高到低——共用一台机器时你得知道哪层说了算：
+解析顺序，高的优先——共用的机器上你得知道哪一层赢：
 
-1. 环境变量 `AGENT_LARK_APP_ID` / `AGENT_LARK_APP_SECRET`（外加 `AGENT_LARK_OWNER_OPEN_ID`，见 §11）
-2. env 文件 `~/.config/agent-lark/.env`（`AGENT_LARK_ENV_FILE` 可改位置）；同样这三个名字，或下面那对通用名
-3. **系统钥匙串**——macOS `security`、Linux `secret-tool`、Windows 上是 DPAPI 加密文件。`setup` 默认写这里
-4. `~/.config/agent-lark/credentials.json`，权限 `0600`（`setup --store file` 写这里）；权限过宽会警告
-5. 通用的 `LARK_APP_ID` / `LARK_APP_SECRET`——故意压在最后：好几个飞书工具都读这对名字，同一台机器跑两个会串
+1. 环境变量 `AGENT_LARK_APP_ID` / `AGENT_LARK_APP_SECRET`（外加 `AGENT_LARK_OWNER_OPEN_ID`，见 §11）——运行时覆盖，不写进任何地方
+2. **系统钥匙串**——macOS `security`、Linux `secret-tool`，Windows 上是 DPAPI 加密文件。`setup` 默认写这里
+3. `~/.config/agent-lark/credentials.json`，权限 `0600`（`AGENT_LARK_STORE=file`、或没有钥匙串的平台写这里）；权限过宽会警告
 
-`~/.config/agent-lark` 在设了 `XDG_CONFIG_HOME` 时是 `$XDG_CONFIG_HOME/agent-lark`，Windows 上是 `~/AppData/Roaming/agent-lark`。`agent-lark status` 会把五层逐行列出并标出命中的那层——**但不会打印任何值**。
+别的都不读——没有 env 文件，也没有别的变量名。`~/.config/agent-lark` 在设了 `XDG_CONFIG_HOME` 时是 `$XDG_CONFIG_HOME/agent-lark`，Windows 上是 `~/AppData/Roaming/agent-lark`。`agent-lark status` 把三层都列出来并标出命中的那层——**永远不打印值**。
 
 ## 5. 第一条提问，从头到尾
 
@@ -233,7 +266,7 @@ JSON
 | `~/.agent-lark/daemon.pid`、`daemon.log` | 运行中 daemon 的 pid；只记 id 和状态变化的日志——**从不记消息内容**（但会出现项目路径与群 id） |
 | `~/.agent-lark/bindings.json` | 项目 ↔ 群：`root`、`label`、`chatId`、`name`、`paneId`（手机消息注入到哪个窗格）、`away`、`lang`（这个项目最近一张卡的语言，daemon 自己发的卡照它）、`boundAt`、`releasedAt`（群是项目当前活跃群时为 `null`；之后是 `unbind` 的时间，留着以便下次提出来） |
 | `~/.agent-lark/media/<hash>/` | 手机发来的图片、文件、语音，每个群一个子目录。daemon 启动时和之后每 24 小时清一次：早于 `AGENT_LARK_MEDIA_TTL_DAYS`（默认 7；`0` 关闭清理）的文件删掉；`daemon --status` 显示还留着多少 |
-| 钥匙串 / `~/.config/agent-lark/` | 应用凭据（§4.4） |
+| 钥匙串 / `~/.config/agent-lark/` | 应用凭据（§4.5） |
 | `<项目根>/.agent-lark/state.json` | 项目级开关，旁边有一个自我忽略的 `.gitignore`（内容 `*`，你项目自己的 `.gitignore` 不会被动）。由第一次 `away on` 或 `bind` 创建；没用过 skill 的项目不会被建目录 |
 
 `state.json` 只有四个字段——注入目标留在 `bindings.json` 里：
@@ -264,6 +297,7 @@ agent-lark send-file shot.png --caption "现在的版式"
 - `bind` 收和 `away on` 一样的 `--name` / `--reuse` / `--new`，但不碰开关；`--chat <id>` 直接绑那个群、放掉当前这个（那个群是别的项目的活跃群退 1；有提问挂着退 4）。群描述会被改写成标记本项目。
 - `status` 列出活跃绑定（`*` 标当前项目：路径、群名、群 id、`away=`、`pane=`），下面是能拿回来的已放掉的群。
 - 换任务、换群、上下文重置都不用停 daemon；它同时管着所有项目的群。升级（§13）或要腾出机器时才停。
+- **不要这个飞书应用了**：`setup` 建的是你租户里一个真实的自建应用。要删，先到飞书管理后台（工作台管理 → 应用管理）**停用**它，再到开发者后台删除；只停用的应用凭据还留在本机，换应用时跑 `agent-lark setup --reset`（或 `--reset --reuse`）。
 
 ## 8. 出问题了怎么办
 
@@ -281,9 +315,10 @@ agent-lark send-file shot.png --caption "现在的版式"
 | `daemon --status` | 没在跑 | | |
 | `daemon --stop` | | 发了停止请求 10 秒后还在应答 | 有提问挂着（用 `--force`） |
 | `daemon --detach`、`daemon` | | 已经在跑；10 秒内没应答 | 没有凭据；`bindings.json` 读不了 |
-| `setup` | `--store` 取值不对 | 飞书不认这对凭据；注册失败 | `--app-id` 没给 secret；二维码过期 |
+| `setup` | App ID / Secret 连续三次不通过 | 注册失败；`--reuse` 在 herdr 里但开不出窗格；设了 `AGENT_LARK_OFFLINE=1` | 二维码过期；herdr 外没有终端时的 `--reuse`（stderr 给出你自己跑的命令） |
+| 任何命令 | 它不认识的选项（`unknown option --xyz`）——早先版本的选项也算，`--name=x` 这种写法也算（值要用空格分开） | | |
 
-每次失败都在 stderr 打一行、前缀 `agent-lark: `；意外崩溃退 3 并打出栈。没有 daemon 在跑时 `daemon --stop` 退 0（`daemon: was not running`，并顺手删掉残留的 pid 文件）。`ask` 超时打 `agent-lark: no answer after 43200 s` 退 2；手机上那张卡变灰。
+每次失败都在 stderr 打一行、前缀 `agent-lark: `；意外崩溃退 3 并打出栈。没有 daemon 在跑时 `daemon --stop` 退 0（`daemon: was not running`，并顺手删掉残留的 pid 文件）；`away off` 同样退 0，本地把项目的 `state.json` 关掉并说一声（`daemon is not running; local state cleared`）。`ask` 超时打 `agent-lark: no answer after 43200 s` 退 2；手机上那张卡变灰。
 
 - **`away on` 退 3、报 `daemon is up but not connected to Feishu: …`。** daemon 起来了，但 15 秒内没和飞书握手成功——凭据不对、没网、飞书挂了。`agent-lark daemon --status` 会显示最后一次错误；daemon 会带退避不断重连（5 秒起、翻倍、最长一分钟），原因排除后再跑一次 `away on` 就行。对一个掉了连接的 daemon 跑 `ask` / `notify` / `send-file` 退 3，报 `not connected to Feishu (…); the daemon keeps retrying, try again shortly`。
 - **语音存下来了但没转成文字。** 转写需要 `speech_to_text:speech` 权限**且飞书付费版租户**：飞书官方的语音识别 API 文档注明免费版不支持调用，免费 / 个人版租户即使已开通权限，调用也会返回 HTTP 400 `{"code":99991400,"msg":"request trigger frequency limit"}`。语音文件照常保存、路径照常注入，另附一行说明没能转写、并带上飞书返回的错误码；改打字即可。飞书官方「识别语音文件」文档写明「接口适合 60 秒以内音频识别」，语音请控制在一分钟内。
@@ -293,7 +328,7 @@ agent-lark send-file shot.png --caption "现在的版式"
 
 ## 9. 安全须知
 
-- **凭据存在系统钥匙串里**（macOS `security`、Linux `secret-tool`），Windows 上是 DPAPI 加密文件；`setup --store file` 则存成 `0600` 的 JSON 文件。**App secret 永远不走 argv**（`setup --app-id` 从环境变量或 env 文件读），除上述存储外不写进 skill 自己创建的任何文件，也不出现在任何输出里——`status` 只标出命中了哪层、不打印值。
+- **凭据存在系统钥匙串里**（macOS `security`、Linux `secret-tool`），Windows 上是 DPAPI 加密文件；`AGENT_LARK_STORE=file` 则存成 `0600` 的 JSON 文件。**App secret 永远不走 argv**（`setup --reuse` 在终端里读、不回显），除上述存储外不写进 skill 自己创建的任何文件，也不出现在任何输出里——碰巧含有它的错误文本会打成 `***`，`status` 只标出命中了哪层、不打印值。
 - **群里的任何人都能操纵你的 agent。** 点一下就是答复；打一句话就是注入 agent 会话的指令（有 herdr 时）。建群时群里只有你；保持这样。通路不过滤内容。
 - **内容经过飞书服务器**：提问描述你的项目，图片与文件从飞书下载，群描述带着项目的绝对路径（§6）。别往提问里放密钥。
 - **`send-file` 有围栏**：只有真实路径（解析符号链接后）在项目根、`~/.agent-lark/media` 或系统临时目录下的文件才会发出；其余一律拒绝并列出这三个目录。这防止 agent 把机器上的任意文件寄出去。
@@ -311,23 +346,23 @@ agent-lark send-file shot.png --caption "现在的版式"
 - 手机 → agent 的注入需要 herdr（§2.2）。daemon 不判断 agent 忙不忙（你的 CLI 自己排队）；herdr 报告 agent 卡在提示上时改发回执。
 - 语音：每条 60 秒以内（飞书「识别语音文件」接口文档给的上限），转写只在付费版租户上可用（§8）。
 - 🔔「等你输入」卡每个项目每分钟最多推一次，且只在 `away` 开着时推。
+- `setup --reuse` 里 App Secret 的盲打（终端 raw 模式）只在 macOS 上验证过；Windows 真实控制台上没试过。
 
 ## 11. 环境变量
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `AGENT_LARK_HOME` | `~/.agent-lark` | daemon 的状态目录（§6）。命令行的 `--home <目录>` 覆盖它，并会传给用 `--detach` 起的 daemon。用 unix socket 传输时路径别太深：socket 路径超过系统上限会让每条命令都报 `connect EINVAL …/daemon.sock` |
-| `AGENT_LARK_APP_ID`、`AGENT_LARK_APP_SECRET` | | 应用凭据，解析顺序第一层（§4.4）。环境变量里的这对压过钥匙串 |
-| `AGENT_LARK_OWNER_OPEN_ID` | | 应用所有者的 `open_id`；凭据来自环境变量或 env 文件时，建群要靠它（`setup` 写进钥匙串的条目自带）。没有它，在没有群的项目里 `away on` 退 4（`nobody to invite into a new group`）——改用 `--chat` 绑一个已有的群 |
-| `AGENT_LARK_ENV_FILE` | `~/.config/agent-lark/.env` | env 文件位置（§4.4） |
-| `AGENT_LARK_STORE` | 有钥匙串可用时 `keychain`，否则 `file` | `setup` 写哪：`keychain`、`file`（`~/.config/agent-lark/credentials.json`，`0600`）或 `none`（只留在本次运行的内存里）。`setup --store` 优先 |
+| `AGENT_LARK_APP_ID`、`AGENT_LARK_APP_SECRET` | | 应用凭据，解析顺序第一层（§4.5）。环境变量里的这对压过钥匙串 |
+| `AGENT_LARK_OWNER_OPEN_ID` | | 应用所有者的 `open_id`；凭据来自环境变量时，建群要靠它（`setup` 写进钥匙串的条目自带）。没有它，在没有群的项目里 `away on` 退 4（`nobody to invite into a new group`）——改用 `--chat` 绑一个已有的群 |
+| `AGENT_LARK_STORE` | 有钥匙串可用时 `keychain`，否则 `file` | `setup` 写哪：`keychain`、`file`（`~/.config/agent-lark/credentials.json`，`0600`）或 `none`（只留在本次运行的内存里） |
 | `AGENT_LARK_KEYCHAIN` | `agent-lark` | 钥匙串 service 名（macOS 与 Linux；账户名固定为 `app`） |
 | `AGENT_LARK_MEDIA_TTL_DAYS` | `7` | 手机发来的图片、文件、语音在 `~/.agent-lark/media` 下保留几天；`0` 关闭清理。不是整数的值会被拒绝并打警告，改用默认值 |
-| `XDG_CONFIG_HOME` | | 和任何遵守 XDG 的工具一样，改变 `~/.config/agent-lark`（env 文件与凭据文件）的位置 |
-| `LARK_APP_ID`、`LARK_APP_SECRET` | | 通用的那对名字，解析顺序最后一层（§4.4） |
+| `AGENT_LARK_OFFLINE` | | 设为 `1` 时 `setup` 拒绝它的两次联网（扫码注册、凭据校验），退 3——给测试套件和离线机器的护栏；测试 runner 会设它。别的命令不读它 |
+| `XDG_CONFIG_HOME` | | 和任何遵守 XDG 的工具一样，改变 `~/.config/agent-lark`（凭据文件）的位置 |
 | `HERDR_ENV`、`HERDR_PANE_ID` | herdr 设置 | 自动检测，不用你配：在 herdr 里，`away on` / `away off`、`bind`、`rename`、`ask`、`notify`、`send-file` 会把当前窗格记到项目的绑定上，手机消息就注入到它（`unbind`、`status`、`away status`、`daemon` 不碰它） |
 
-没有语言变量：卡片的固定文案跟着产生它的那条提问或通知的 `lang` 字段走（缺省 `zh`）；daemon 自己发的卡（回执卡、🔔 卡）跟着这个项目最近一次的 `lang` 走，之前没有就是英文；agent 读的一切——stdout、stderr、`help`——都是英文；`setup` 两种都打。
+没有语言变量：卡片的固定文案跟着产生它的那条提问或通知的 `lang` 字段走（缺省 `en`）；daemon 自己发的卡（回执卡、🔔 卡）跟着这个项目最近一次的 `lang` 走，之前没有就是英文；agent 读的一切——stdout、stderr、`help`——都是英文；`setup` 两种都打。
 
 ## 12. CLI 参考
 
@@ -336,9 +371,12 @@ agent-lark send-file shot.png --caption "现在的版式"
 ```
 agent-lark — reach the agent session running in your terminal from Feishu/Lark
 
-  setup [--update] [--scopes a,b]  Create or update the Feishu app by QR code; credentials go to the keychain
-  setup --app-id cli_xxx [--store]  Use an existing app; the secret is read from the environment / env file, never argv
-  setup --reset                      Forget the stored credentials and set up again from scratch in the same run (QR code or --app-id)
+  setup [--update] [--reset] [--scopes a,b]
+                                     On a terminal: a menu, create the app by QR code or reuse one; piped: QR code straight away.
+                                     Credentials go to the keychain (--update re-authorizes, --reset forgets them first)
+  setup --reuse                      Reuse an app you already have: asks for the App ID and the App Secret (not echoed) on the terminal
+  setup --reuse --report-to <pane> [--close-pane]
+                                     What the agent runs for you in a herdr pane: the result comes back to <pane> as one "[agent-lark] setup:" line
   daemon [--detach|--status|--stop]  Resident process holding the Feishu connection (--stop is refused while a question is pending, unless --force)
   away on [--name <task>] [--reuse <chat_id> | --new]
                                      Remote mode on: daemon up, this project bound to a Feishu group named "<task> [<dir>]"
@@ -359,27 +397,29 @@ Global: --home <dir>  state directory (same as AGENT_LARK_HOME; default ~/.agent
 Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel failure · 4 a human must act
 ```
 
-`--home <目录>`（或 `--home=<目录>`）放在命令行任何位置都行。逐条说明：
+`--home <目录>`（或 `--home=<目录>`）放在命令行任何位置都行；其余选项的值都用空格分开（`--name x`，不是 `--name=x`），命令不认识的选项退 1（`unknown option --xyz`），什么都不做。逐条说明：
 
-- **`setup [--update] [--reset] [--scopes a,b] [--store keychain|file|none]`**——扫码建应用（§4.1）。`--update` 对已存的那个应用重新扫码（补权限或重新授权）；`--reset` 先删掉存着的凭据；`--scopes` 替换默认权限清单（§4.3）。每一行中英并排打印。
-- **`setup --app-id cli_xxxxxxxx [--store …]`**——接管已有应用；secret 来自 `AGENT_LARK_APP_SECRET`（或 `LARK_APP_SECRET`，或 env 文件）（§4.2）。
+- **`setup [--update] [--reset] [--scopes a,b]`**——在终端里是 §4.1 的菜单（扫码或复用）；管道里直接扫码。`--update` 对已存的那个应用重新扫码（补权限或重新授权；终端上先出菜单，选 1）；`--reset` 先删掉存着的凭据；`--scopes` 替换默认权限清单（§4.4）。每一行中英并排打印。
+- **`setup --reuse [--report-to <pane>] [--close-pane]`**——不出菜单、直接走复用：在终端里问 App ID 与 App Secret（§4.1 第 2 种）。没有终端时它不问：herdr 里自己开一个窗格、在里面带 `--report-to <调用方窗格> --close-pane` 跑自己，结果以一行 `[agent-lark] setup:` 回来；herdr 外退 4 并打出让你手动跑的命令（§4.2）。
 - **`daemon`**——前台跑 daemon（`agent-lark daemon: pid 12345, listening at ~/.agent-lark/daemon.sock, connecting to Feishu in the background`）；Ctrl-C 停。**`--detach`** 在后台起并最多等 10 秒它应答；**`--status`** 打印 §7 里那两行（连接失败时多一行 `last error: …`）；**`--stop [--force]`** 请它停下并最多等 10 秒。绝不要把 daemon 当作 agent 自己 shell 的后台任务起：agent 一退出它就没了。
-- **`away on [--name "<任务名>"] [--reuse <chat_id> | --new]`**——§5 第 1 步。**`away off`** 关开关。**`away status [--json]`** 打印项目的 `state.json`（§6），不和 daemon 说话。
+- **`away on [--name "<任务名>"] [--reuse <chat_id> | --new]`**——§5 第 1 步。**`away off`** 关开关（daemon 没跑也照样写项目的 `state.json`，退 0）。**`away status [--json]`** 打印项目的 `state.json`（§6），不和 daemon 说话。
 - **`rename "<任务名>"`**、**`unbind`**、**`bind [--chat <id>] [--name "<任务名>"] [--reuse <chat_id> | --new]`**——§7。
 - **`ask [--timeout <秒>] [--urgent]`**——从 stdin 读一个 JSON 对象（用 heredoc；stdin 是终端时拒绝），发出去之前先校验，推卡片并阻塞。回复打到 stdout：点中的 label、勾中的 label 用「、」拼接、或打字的原文。默认超时 43 200 秒（12 小时）。字段契约见 [SKILL.md](SKILL.md) 与 [references/message-spec.md](references/message-spec.md)。
 - **`notify`**——从 stdin 读 `{"title", "body", "lang"}`；正文是 Markdown。打印 `Notification sent (…)`。
 - **`send-file <路径> [--caption <文字>]`**——§5「文件」。
-- **`status`**——凭据（五层里命中了哪层）、`herdr: inside herdr, pane wG:p3` / `not inside herdr`、daemon 那一行，然后是每个项目的活跃群和已放掉的群。
+- **`status`**——凭据（三层里命中了哪层）、`herdr: inside herdr, pane wG:p3` / `not inside herdr`、daemon 那一行，然后是每个项目的活跃群和已放掉的群。
 
 各种失败的 stderr 原文见 [references/failures.md](references/failures.md)；daemon 的行为见 [references/daemon.md](references/daemon.md)（都是英文）。
 
 ## 13. 版本与升级
 
-版本就是 git tag `agent-lark/vX.Y.Z`（仓库里有两个 skill，各打各的 tag）；改了什么见 [CHANGELOG.md](../../CHANGELOG.md)。0.1.0 是首个版本，眼下还没有更早的版本可升；下面的步骤是给之后的版本用的。`skills` CLI 与 skills.sh 都不读版本号——装到本机的是仓库内容的一份快照，`npx skills update` 刷新它（全局安装加 `-g`，当前项目加 `-p`）。想停在某个版本，安装时把 tag 当 git ref 带上，按 `skills` CLI 的文档，之后 `update` 会停在那个 ref 上：
+版本就是 git tag `agent-lark/vX.Y.Z`（仓库里有两个 skill，各打各的 tag）；改了什么见 [CHANGELOG.md](../../CHANGELOG.md)。`skills` CLI 与 skills.sh 都不读版本号——装到本机的是仓库内容的一份快照，`npx skills update` 刷新它（全局安装加 `-g`，当前项目加 `-p`）。想停在某个版本，安装时把 tag 当 git ref 带上，按 `skills` CLI 的文档，之后 `update` 会停在那个 ref 上：
 
 ```bash
 npx skills add 'yezhoujie/agent-remote-communication-skills#agent-lark/v0.1.0' --skill agent-lark
 ```
+
+**从 0.1.0 升到 0.1.1**：`setup --app-id` 与 `--store`、env 文件（`~/.config/agent-lark/.env`、`AGENT_LARK_ENV_FILE`）、`LARK_APP_ID` / `LARK_APP_SECRET` 这对名字都没了。`setup` 存下的凭据（钥匙串或 `credentials.json`）照常可用；如果你的凭据只写在 env 文件或那对变量里，跑一次 `agent-lark setup --reuse`（§4.1 第 2 种）或导出 `AGENT_LARK_APP_ID` / `AGENT_LARK_APP_SECRET`。选项现在会被检查：命令行里有不认识的选项退 1，不再默默忽略。
 
 **给一台已经跑着 daemon 的机器升级**——按这个顺序：
 

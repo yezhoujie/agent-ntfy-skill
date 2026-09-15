@@ -17,7 +17,7 @@ two compare is in the [repository README](../../README.md).
 1. How it works
 2. Requirements (2.1 platform support · 2.2 herdr is optional)
 3. Install
-4. Setup (4.1 scan a QR code · 4.2 use an app you already have · 4.3 scopes · 4.4 where credentials are read from)
+4. Setup: three ways (4.1 by hand · 4.2 through your agent · 4.3 just tell it · 4.4 scopes · 4.5 where credentials are read from)
 5. First question, end to end
 6. Where things live
 7. Day-to-day
@@ -49,7 +49,7 @@ agent ──ask (JSON on stdin)──▶ agent-lark ──local socket──▶ 
 ## 2. Requirements
 
 - Node.js 22 or newer. The CLI ships as one self-contained file (`dist/cli.mjs`, the Feishu SDK bundled in): nothing to `npm install`, nothing to build
-- A Feishu / Lark account — a personal one is enough. The custom app is created from your phone by scanning a QR code (§4.1); an app someone else created works too (§4.2)
+- A Feishu / Lark account — a personal one is enough. The custom app is created from your phone by scanning a QR code (§4.1); an app someone else created works too (§4.1, way 2)
 - Outbound access to Feishu's servers from the machine the daemon runs on
 - A POSIX shell for the examples in this file and in SKILL.md (heredocs, `alias`). On Windows that means Git Bash or WSL; the daemon and the CLI themselves run natively
 - [herdr](https://herdr.dev), optional — see §2.2
@@ -96,21 +96,28 @@ The CLI is `dist/cli.mjs` inside that directory. Its own messages call it `agent
 alias agent-lark='node "<path to skills/agent-lark>/dist/cli.mjs"'
 ```
 
-## 4. Setup
+## 4. Setup: three ways
 
-Two things happen once per machine: the Feishu app is created (or adopted) and its credentials are stored. Everything after that — starting the daemon, creating the project's group, flipping the switch — is one command, `away on` (§5).
+Once per machine the Feishu app is created (or an existing one is reused) and its credentials are stored. Everything after that — starting the daemon, creating the project's group, flipping the switch — is one command, `away on` (§5). Three ways lead there; they end in the same place.
 
-### 4.1 Scan a QR code (no app yet)
+### 4.1 By hand: `agent-lark setup` walks you through it
 
 ```bash
 agent-lark setup
 ```
 
-Every line of `setup` is printed in Chinese and English side by side. It asks Feishu for a QR-code registration, draws the code in the terminal (as ANSI art) and prints the **same link as a line of text right under it**, so it can be opened even where the drawing renders badly. Scan the code with Feishu on your phone; the confirmation page lists the permissions being requested (§4.3); approve, and the app is created on the spot. The code is valid for a few minutes (the expiry time is printed; a `still waiting for the scan…` line follows once a minute); if it expires, run `setup` again (exit 4). A network hiccup while waiting costs the code: `setup` asks for a fresh one, up to three times.
+Run on a terminal, it opens with a menu (every line of `setup` is printed in Chinese and English side by side; the English half is shown here):
 
-If your agent runs `setup` for you and cannot show you its screen, it has two ways out: paste you the link line, or render that link into a QR image itself and open it for you; there is no flag for this.
+```
+How do you want to connect to Feishu?
+  1) Create a new app by QR code (scan it with Feishu)
+  2) Reuse an app you already have (enter its App ID and App Secret)
+Choose [1/2]:
+```
 
-On success:
+Anything but `1` or `2` is asked again. Piped or scripted (no terminal), `setup` skips the menu and goes straight to the QR code.
+
+**1 — create a new app by QR code.** `setup` asks Feishu for a QR-code registration, draws the code in the terminal (as ANSI art) and prints the **same link as a line of text right under it**, so it can be opened even where the drawing renders badly. Scan the code with Feishu on your phone; the confirmation page lists the permissions being requested (§4.4); approve, and the app is created on the spot. The code is valid for a few minutes (the expiry time is printed; a `still waiting for the scan…` line follows once a minute); if it expires, run `setup` again (exit 4). A network hiccup while waiting costs the code: `setup` asks for a fresh one, up to three times. On success:
 
 ```
 ✅ App linked; credentials saved to macOS Keychain (service: agent-lark) (the secret never appears in any output).
@@ -119,23 +126,51 @@ Next:
   cd <project> && agent-lark away on --name "<task>"
 ```
 
-(the Chinese half of each line is omitted here). Where the credentials go depends on the platform — the OS keychain where one is reachable, else a `0600` file — and can be forced with `--store keychain|file|none` (`none` keeps them in memory for this run only) or `AGENT_LARK_STORE` (§11).
+**2 — reuse an app you already have** (`agent-lark setup --reuse` goes here directly, without the menu). Two prompts, then one round trip to Feishu:
 
-Run `setup` again later and it says `Credentials already exist (from …)` and exits 0. Two flags change that: `--update` rescans to re-authorize the **same** app — that is how a missing scope is added — and `--reset` deletes the stored credentials first, for switching to another app.
-
-### 4.2 Use an app you already have
-
-Skip the QR code and hand over the app id. **The secret is read from the environment or an env file, never from the command line** — argv is visible to every process on the machine:
-
-```bash
-AGENT_LARK_APP_SECRET=... agent-lark setup --app-id cli_xxxxxxxx
+```
+App ID (starts with cli_): cli_xxxxxxxx
+App Secret (not echoed):
+Checking these credentials against Feishu once…
+✅ Credentials work; app name "My agent app"
+Credentials saved to: macOS Keychain (service: agent-lark)
+Enable these scopes for the app by hand in the developer console (app → Permissions & Scopes):
+  im:message
+  im:message:send_as_bot
+  im:message.group_msg
+  im:chat
+  im:resource
+  im:message.urgent
+  speech_to_text:speech
+Event subscription: im.message.receive_v1 (delivery: long connection) · callback: card.action.trigger (long connection as well)
+Publish a version afterwards; scopes take effect only then.
+Next:
+  agent-lark daemon --detach
+  cd <project> && agent-lark away on --name "<task>"
 ```
 
-or write both into `~/.config/agent-lark/.env` (`AGENT_LARK_APP_ID=...` / `AGENT_LARK_APP_SECRET=...`) and run `agent-lark setup --app-id cli_xxxxxxxx`. `setup` connects once to check the pair (`✅ Credentials work; app name "…"`), records the app's owner (the person a new group is created for), and stores everything the same way as §4.1. Without a secret it exits 4 and prints both ways; a pair Feishu rejects exits 3. Such an app must have the scopes of §4.3 and the event / callback subscriptions enabled in the Feishu developer console by hand.
+- The App ID must look like `cli_` followed by letters and digits (Developer console → Credentials & Basic Info); anything else is asked again. The secret is typed blind — nothing is echoed — and never appears in any output afterwards, not even inside an error message (it is masked as `***`).
+- A pair Feishu rejects is reported with Feishu's code and message and asked again; three refusals exit 1 with nothing stored. `setup` records the app's owner from the check (the person a new group is created for).
+- A reused app was not created by this tool, so its scopes, the event subscription and the card callback have to be enabled **by hand** in the developer console, with *long connection* as the delivery mode for both, and a version published afterwards (§4.4). `setup` prints that list so it can be ticked off.
 
-### 4.3 Scopes
+**Whichever way:** where the credentials go depends on the platform — the OS keychain where one is reachable, else a `0600` file — and can be forced with `AGENT_LARK_STORE` (§11). Run `setup` again later and it says `Credentials already exist (from …)` and exits 0, `--reuse` included. Two flags change that: `--update` rescans to re-authorize the **same** app (on a terminal the menu comes first; pick 1) — that is how a missing scope is added after a QR-code setup — and `--reset` deletes the stored credentials first, so `agent-lark setup --reset --reuse` (or `--reset` alone, for the QR code) switches to another app.
 
-The confirmation page asks for these scopes (override with `setup --scopes a,b,c`):
+### 4.2 Through your agent: `/agent-lark setup`, `on`, `off`
+
+The agent knows three arguments (SKILL.md, "Invoked with an argument"): `/agent-lark setup` runs the guided setup and only reports the result; `/agent-lark on` switches remote mode on for the current project (§5), going through setup first when no credentials exist; `/agent-lark off` switches it off.
+
+For `setup`, the agent first asks you which way — a new app by QR code, or one you already have — and never picks for you.
+
+- **QR code**: the agent runs `agent-lark setup` for you. Since it usually cannot show you its screen, it hands you the link line printed under the code (or renders the link into a QR image and opens it); you scan, and it reports the outcome.
+- **Reuse**: the App ID and, above all, the App Secret must not pass through the agent. Inside [herdr](https://herdr.dev), `agent-lark setup --reuse` run by an agent opens a new terminal pane below the agent's own and runs the interactive setup there; **you type the App ID and the Secret in that pane**. When it ends, one line is injected into the agent's session so it can carry on — `[agent-lark] setup: credentials stored for cli_xxxxxxxx (My agent app); the scopes must be enabled in the developer console before use` (or `… failed: <why>`, `… interrupted before any credentials were stored`, `… credentials already stored (…); nothing changed. …`) — and, on success, the pane asks `Close this pane? [Y/n]` (after a failure it stays open, so the reason can be read). Outside herdr there is no pane to open: `setup --reuse` exits 4 and the agent gives you the exact command to run in your own terminal (`node …/dist/cli.mjs --home … setup --reuse`); run it, then tell the agent you are done.
+
+### 4.3 Just tell your agent
+
+"Enable remote mode", "I'm leaving, send it to my phone" — with the rule from §14 in force, that sentence is enough: the agent runs `away on --name "<task>"`, and when there are no credentials yet it goes through 4.2 first. This is the everyday path; 4.1 and 4.2 exist for the first time on a machine and for switching apps.
+
+### 4.4 Scopes
+
+A QR-code setup asks for these scopes on the confirmation page (override with `setup --scopes a,b,c`); a reused app must have the same ones enabled by hand in the developer console:
 
 ```
 im:message
@@ -147,19 +182,17 @@ im:message.urgent
 speech_to_text:speech
 ```
 
-plus the event `im.message.receive_v1` and the card callback `card.action.trigger`. `im:message.urgent` is what `ask --urgent` needs; `speech_to_text:speech` is what transcribing voice notes needs (and that also needs a paid Feishu tenant, §8). Missing one later? `agent-lark setup --update` rescans and adds it to the same app.
+plus the event `im.message.receive_v1` and the card callback `card.action.trigger`, both delivered over Feishu's *long connection* (no public URL). `im:message.urgent` is what `ask --urgent` needs; `speech_to_text:speech` is what transcribing voice notes needs (and that also needs a paid Feishu tenant, §8). Missing one later? After a QR-code setup, `agent-lark setup --update` rescans and adds it to the same app; a reused app is edited in the developer console (then publish a version).
 
-### 4.4 Where credentials are read from
+### 4.5 Where credentials are read from
 
 Resolution order, highest first — on a shared machine you want to know which layer wins:
 
-1. `AGENT_LARK_APP_ID` / `AGENT_LARK_APP_SECRET` in the environment (plus `AGENT_LARK_OWNER_OPEN_ID`, see §11)
-2. the env file, `~/.config/agent-lark/.env` (`AGENT_LARK_ENV_FILE` to move it); the same three names, or the generic pair below
-3. the **OS keychain** — macOS `security`, Linux `secret-tool`, on Windows a DPAPI-encrypted file. This is where `setup` writes by default
-4. `~/.config/agent-lark/credentials.json`, mode `0600` (what `setup --store file` writes); a looser mode gets a warning
-5. the generic `LARK_APP_ID` / `LARK_APP_SECRET` — last on purpose: several Feishu tools read those names, and a machine running more than one would otherwise cross-wire
+1. `AGENT_LARK_APP_ID` / `AGENT_LARK_APP_SECRET` in the environment (plus `AGENT_LARK_OWNER_OPEN_ID`, see §11) — a runtime override, never written anywhere
+2. the **OS keychain** — macOS `security`, Linux `secret-tool`, on Windows a DPAPI-encrypted file. This is where `setup` writes by default
+3. `~/.config/agent-lark/credentials.json`, mode `0600` (what `AGENT_LARK_STORE=file`, or a platform without a keychain, writes); a looser mode gets a warning
 
-`~/.config/agent-lark` is `$XDG_CONFIG_HOME/agent-lark` when that variable is set, and `~/AppData/Roaming/agent-lark` on Windows. `agent-lark status` prints all five layers and marks the one that matched — **and never prints a value**.
+Nothing else is read — no env file, no other variable names. `~/.config/agent-lark` is `$XDG_CONFIG_HOME/agent-lark` when that variable is set, and `~/AppData/Roaming/agent-lark` on Windows. `agent-lark status` prints all three layers and marks the one that matched — **and never prints a value**.
 
 ## 5. First question, end to end
 
@@ -238,7 +271,7 @@ It prints `Notification sent (a reply from the phone is injected into this pane 
 | `~/.agent-lark/daemon.pid`, `daemon.log` | pid of the running daemon; a log of ids and state transitions — **never message content** (it does contain project paths and group ids) |
 | `~/.agent-lark/bindings.json` | project ↔ group: `root`, `label`, `chatId`, `name`, `paneId` (where phone messages are injected), `away`, `lang` (of the project's last card, used for the daemon's own cards), `boundAt`, `releasedAt` (`null` while the group is the project's live one; the `unbind` time afterwards, kept so it can be offered back) |
 | `~/.agent-lark/media/<hash>/` | photos, files and voice notes from the phone, one directory per group. Swept when the daemon starts and every 24 h: files older than `AGENT_LARK_MEDIA_TTL_DAYS` (default 7; `0` switches the sweep off) are deleted; `daemon --status` shows what is kept |
-| keychain / `~/.config/agent-lark/` | the app credentials (§4.4) |
+| keychain / `~/.config/agent-lark/` | the app credentials (§4.5) |
 | `<project root>/.agent-lark/state.json` | the per-project switch, with a self-ignoring `.gitignore` next to it (content `*`, so your project's own `.gitignore` is never touched). Created by the first `away on` or `bind`; never planted in a project that has not used the skill |
 
 `state.json` holds four fields and nothing else — the injection target stays in `bindings.json`:
@@ -269,6 +302,7 @@ agent-lark send-file shot.png --caption "current layout"
 - `bind` takes the same `--name` / `--reuse` / `--new` as `away on` but does not touch the switch; `--chat <id>` binds that group outright, letting go of the current one (exit 1 if the group is another project's live group; exit 4 while a question is pending). The group's description is rewritten to mark it as this project's.
 - `status` shows live bindings (`* marks this project`: root, name, group id, `away=`, `pane=`) and, below them, released groups that could be taken back.
 - The daemon does not have to be stopped for a new task, a new group or a context reset; it holds every project's groups at once. Stop it for an upgrade (§13) or to free the machine.
+- **Getting rid of the Feishu app**: an app created by `setup` is a real custom app in your tenant. To remove it, first *disable* it in the Feishu admin console (workspace admin → app management), then delete it in the developer console; a merely disabled app keeps its credentials on record here, so run `agent-lark setup --reset` (or `--reset --reuse`) when you switch to another one.
 
 ## 8. If something goes wrong
 
@@ -286,9 +320,10 @@ agent-lark send-file shot.png --caption "current layout"
 | `daemon --status` | not running | | |
 | `daemon --stop` | | the daemon did not stop within 10 s | a question is pending (use `--force`) |
 | `daemon --detach`, `daemon` | | already running; did not answer within 10 s | no credentials; `bindings.json` unreadable |
-| `setup` | bad `--store` | Feishu rejected the pair; registration failed | no secret for `--app-id`; the QR code expired |
+| `setup` | three refused App ID / Secret pairs in a row | registration failed; `--reuse` inside herdr but no pane could be opened; `AGENT_LARK_OFFLINE=1` is set | the QR code expired; `--reuse` without a terminal outside herdr (stderr carries the command to run yourself) |
+| any command | an option it does not know (`unknown option --xyz`) — options of earlier versions included, and `--name=x` (values take a space) | | |
 
-Every failure prints one line on stderr prefixed `agent-lark: `; an unexpected crash exits 3 with its stack trace. `daemon --stop` when nothing runs exits 0 (`daemon: was not running`, removing a stale pid file). `ask` timing out prints `agent-lark: no answer after 43200 s` and exits 2; the card on the phone turns grey.
+Every failure prints one line on stderr prefixed `agent-lark: `; an unexpected crash exits 3 with its stack trace. `daemon --stop` when nothing runs exits 0 (`daemon: was not running`, removing a stale pid file); `away off` when nothing runs exits 0 too, switching the project's `state.json` off locally and saying so (`daemon is not running; local state cleared`). `ask` timing out prints `agent-lark: no answer after 43200 s` and exits 2; the card on the phone turns grey.
 
 - **`away on` exits 3 with `daemon is up but not connected to Feishu: …`.** The daemon started but the Feishu handshake failed within 15 s — wrong credentials, no network, Feishu down. `agent-lark daemon --status` shows the last error; the daemon keeps retrying with backoff (5 s doubling up to a minute), so once the cause is fixed simply run `away on` again. `ask` / `notify` / `send-file` against a daemon that has lost its connection exit 3 with `not connected to Feishu (…); the daemon keeps retrying, try again shortly`.
 - **Voice notes are saved but not transcribed.** Transcription needs the `speech_to_text:speech` scope **and a paid Feishu tenant**: Feishu's own documentation for the speech-recognition API says the free edition may not call it, and on a free / personal tenant the call fails with HTTP 400 `{"code":99991400,"msg":"request trigger frequency limit"}` even with the scope granted. The voice file is still saved and its path injected, together with a line saying it could not be transcribed and quoting Feishu's error code; type instead. Feishu's documentation for the speech-file recognition API states it is meant for audio of 60 s or less, so keep a voice note under a minute.
@@ -298,7 +333,7 @@ Every failure prints one line on stderr prefixed `agent-lark: `; an unexpected c
 
 ## 9. Security
 
-- **Credentials live in the OS keychain** (macOS `security`, Linux `secret-tool`) or a DPAPI-encrypted file on Windows; `setup --store file` puts them in a `0600` JSON file instead. **The app secret never travels through argv** (`setup --app-id` reads it from the environment or the env file), is never written to any file the skill creates other than those stores, and never appears in any output — `status` marks which layer matched without printing a value.
+- **Credentials live in the OS keychain** (macOS `security`, Linux `secret-tool`) or a DPAPI-encrypted file on Windows; `AGENT_LARK_STORE=file` puts them in a `0600` JSON file instead. **The app secret never travels through argv** (`setup --reuse` reads it from the terminal, not echoed), is never written to any file the skill creates other than those stores, and never appears in any output — an error text that happened to contain it is masked as `***`, and `status` marks which layer matched without printing a value.
 - **Anyone in the project's group can drive your agent.** A tap answers the question; a typed message becomes an instruction in the agent's session (with herdr). Groups are created with only you in them; keep them that way. The channel does not filter content.
 - **Content travels through Feishu's servers**: questions describe your project, photos and files are downloaded from Feishu, and the group's description carries the project's absolute path (§6). Do not put secrets in a question.
 - **`send-file` is fenced**: a file is sent only if its real path (symlinks resolved) is under the project root, `~/.agent-lark/media` or the system temp directory; anything else is refused with the three directories listed. This keeps the agent from mailing arbitrary files off the machine.
@@ -316,23 +351,23 @@ Every failure prints one line on stderr prefixed `agent-lark: `; an unexpected c
 - Phone → agent injection needs herdr (§2.2). The daemon does not check whether the agent is busy (your CLI queues the input); when herdr reports the agent as stuck on a prompt it sends a receipt instead.
 - Voice notes: 60 s per note (the limit Feishu's speech-file recognition API documents), and transcription only on paid tenants (§8).
 - The 🔔 *waiting for you* card is pushed at most once a minute per project and only while `away` is on.
+- The blind input of the App Secret in `setup --reuse` (raw terminal mode) is verified on macOS only; on Windows it has not been tried on a real console.
 
 ## 11. Environment variables
 
 | variable | default | effect |
 |---|---|---|
 | `AGENT_LARK_HOME` | `~/.agent-lark` | the daemon's state directory (§6). `--home <dir>` on the command line overrides it and is handed to a daemon started with `--detach`. With the Unix-socket transport keep the path short: a socket path over the system limit makes every command fail with `connect EINVAL …/daemon.sock` |
-| `AGENT_LARK_APP_ID`, `AGENT_LARK_APP_SECRET` | | the app credentials, first in the resolution order (§4.4). The pair in the environment wins over the keychain |
-| `AGENT_LARK_OWNER_OPEN_ID` | | the app owner's `open_id`, needed to create a group when the credentials come from the environment or the env file (the keychain entry written by `setup` records it). Without it `away on` in a project with no group exits 4 (`nobody to invite into a new group`) — bind an existing group with `--chat` instead |
-| `AGENT_LARK_ENV_FILE` | `~/.config/agent-lark/.env` | the env file (§4.4) |
-| `AGENT_LARK_STORE` | `keychain` where one is reachable, else `file` | where `setup` writes: `keychain`, `file` (`~/.config/agent-lark/credentials.json`, `0600`) or `none` (memory only for that run). `setup --store` overrides |
+| `AGENT_LARK_APP_ID`, `AGENT_LARK_APP_SECRET` | | the app credentials, first in the resolution order (§4.5). The pair in the environment wins over the keychain |
+| `AGENT_LARK_OWNER_OPEN_ID` | | the app owner's `open_id`, needed to create a group when the credentials come from the environment (the keychain entry written by `setup` records it). Without it `away on` in a project with no group exits 4 (`nobody to invite into a new group`) — bind an existing group with `--chat` instead |
+| `AGENT_LARK_STORE` | `keychain` where one is reachable, else `file` | where `setup` writes: `keychain`, `file` (`~/.config/agent-lark/credentials.json`, `0600`) or `none` (memory only for that run) |
 | `AGENT_LARK_KEYCHAIN` | `agent-lark` | keychain service name (macOS and Linux; the account is `app`) |
 | `AGENT_LARK_MEDIA_TTL_DAYS` | `7` | how many days inbound photos, files and voice notes are kept under `~/.agent-lark/media`; `0` switches the sweep off. A value that is not a whole number is refused with a warning and the default is used |
-| `XDG_CONFIG_HOME` | | moves `~/.config/agent-lark` (env file and credentials file) as on any XDG-aware tool |
-| `LARK_APP_ID`, `LARK_APP_SECRET` | | the generic pair, last in the resolution order (§4.4) |
+| `AGENT_LARK_OFFLINE` | | `1` makes `setup` refuse both of its network calls (the QR-code registration and the credential check) with exit 3 — a guard for test suites and offline machines; the test runner sets it. Nothing else reads it |
+| `XDG_CONFIG_HOME` | | moves `~/.config/agent-lark` (the credentials file) as on any XDG-aware tool |
 | `HERDR_ENV`, `HERDR_PANE_ID` | set by herdr | detected, never set by you: inside herdr, `away on` / `away off`, `bind`, `rename`, `ask`, `notify` and `send-file` record the current pane on the project's binding, and phone messages are injected there (`unbind`, `status`, `away status` and `daemon` do not touch it) |
 
-There is no language variable: the fixed wording of a card follows the `lang` field of the question or notification that produced it (`zh` by default); the daemon's own cards (receipts, the 🔔 card) follow the project's last `lang`, English before any; everything the agent reads — stdout, stderr, `help` — is English; `setup` prints both.
+There is no language variable: the fixed wording of a card follows the `lang` field of the question or notification that produced it (`en` by default); the daemon's own cards (receipts, the 🔔 card) follow the project's last `lang`, English before any; everything the agent reads — stdout, stderr, `help` — is English; `setup` prints both.
 
 ## 12. CLI reference
 
@@ -341,9 +376,12 @@ Output of `agent-lark help` (also `--help`, `-h`, or no arguments):
 ```
 agent-lark — reach the agent session running in your terminal from Feishu/Lark
 
-  setup [--update] [--scopes a,b]  Create or update the Feishu app by QR code; credentials go to the keychain
-  setup --app-id cli_xxx [--store]  Use an existing app; the secret is read from the environment / env file, never argv
-  setup --reset                      Forget the stored credentials and set up again from scratch in the same run (QR code or --app-id)
+  setup [--update] [--reset] [--scopes a,b]
+                                     On a terminal: a menu, create the app by QR code or reuse one; piped: QR code straight away.
+                                     Credentials go to the keychain (--update re-authorizes, --reset forgets them first)
+  setup --reuse                      Reuse an app you already have: asks for the App ID and the App Secret (not echoed) on the terminal
+  setup --reuse --report-to <pane> [--close-pane]
+                                     What the agent runs for you in a herdr pane: the result comes back to <pane> as one "[agent-lark] setup:" line
   daemon [--detach|--status|--stop]  Resident process holding the Feishu connection (--stop is refused while a question is pending, unless --force)
   away on [--name <task>] [--reuse <chat_id> | --new]
                                      Remote mode on: daemon up, this project bound to a Feishu group named "<task> [<dir>]"
@@ -364,27 +402,29 @@ Global: --home <dir>  state directory (same as AGENT_LARK_HOME; default ~/.agent
 Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel failure · 4 a human must act
 ```
 
-`--home <dir>` (or `--home=<dir>`) goes anywhere on the command line. Command by command:
+`--home <dir>` (or `--home=<dir>`) goes anywhere on the command line; every other option takes its value after a space (`--name x`, not `--name=x`), and an option a command does not know exits 1 (`unknown option --xyz`) before anything else happens. Command by command:
 
-- **`setup [--update] [--reset] [--scopes a,b] [--store keychain|file|none]`** — create the app by QR code (§4.1). `--update` rescans for the app already stored (to add scopes or re-authorize); `--reset` deletes the stored credentials first; `--scopes` replaces the default list (§4.3). Prints every line in Chinese and English.
-- **`setup --app-id cli_xxxxxxxx [--store …]`** — adopt an existing app; the secret comes from `AGENT_LARK_APP_SECRET` (or `LARK_APP_SECRET`, or the env file) (§4.2).
+- **`setup [--update] [--reset] [--scopes a,b]`** — on a terminal, the menu of §4.1 (QR code or reuse); piped, the QR code. `--update` rescans for the app already stored (to add scopes or re-authorize; on a terminal the menu comes first — pick 1); `--reset` deletes the stored credentials first; `--scopes` replaces the default list (§4.4). Prints every line in Chinese and English.
+- **`setup --reuse [--report-to <pane>] [--close-pane]`** — the reuse branch without the menu: App ID and App Secret are asked on the terminal (§4.1, way 2). Without a terminal it does not ask: inside herdr it opens a pane and runs itself there with `--report-to <the caller's pane> --close-pane`, so the result comes back as one `[agent-lark] setup:` line; outside herdr it exits 4 and prints the command to run by hand (§4.2).
 - **`daemon`** — run the daemon in the foreground (`agent-lark daemon: pid 12345, listening at ~/.agent-lark/daemon.sock, connecting to Feishu in the background`); Ctrl-C stops it. **`--detach`** starts it in the background and waits up to 10 s for it to answer; **`--status`** prints the two lines shown in §7 (plus `last error: …` when the connection failed); **`--stop [--force]`** asks it to stop and waits up to 10 s. Never start the daemon as a background job of the agent's own shell: it would die with the agent.
-- **`away on [--name "<task>"] [--reuse <chat_id> | --new]`** — §5 step 1. **`away off`** flips the switch off. **`away status [--json]`** prints the project's `state.json` (§6) without talking to the daemon.
+- **`away on [--name "<task>"] [--reuse <chat_id> | --new]`** — §5 step 1. **`away off`** flips the switch off (with no daemon running it still writes the project's `state.json`, exit 0). **`away status [--json]`** prints the project's `state.json` (§6) without talking to the daemon.
 - **`rename "<task>"`**, **`unbind`**, **`bind [--chat <id>] [--name "<task>"] [--reuse <chat_id> | --new]`** — §7.
 - **`ask [--timeout <seconds>] [--urgent]`** — reads one JSON object from stdin (a heredoc; a terminal on stdin is refused), validates it before anything is sent, pushes the card and blocks. The reply is printed on stdout: the tapped label, the ticked labels joined with `、`, or the typed message verbatim. The default timeout is 43 200 s (12 hours). The field contract is in [SKILL.md](SKILL.md) and [references/message-spec.md](references/message-spec.md).
 - **`notify`** — reads `{"title", "body", "lang"}` from stdin; body is Markdown. Prints `Notification sent (…)`.
 - **`send-file <path> [--caption <text>]`** — §5 *Files*.
-- **`status`** — credentials (which of the five layers matched), `herdr: inside herdr, pane wG:p3` / `not inside herdr`, the daemon line, then every project's live group and the released ones.
+- **`status`** — credentials (which of the three layers matched), `herdr: inside herdr, pane wG:p3` / `not inside herdr`, the daemon line, then every project's live group and the released ones.
 
 The stderr text of each failure is in [references/failures.md](references/failures.md); how the daemon behaves, in [references/daemon.md](references/daemon.md).
 
 ## 13. Versions and upgrading
 
-Versions are git tags `agent-lark/vX.Y.Z` (the repository holds two skills; each has its own tags); what changed is in [CHANGELOG.md](../../CHANGELOG.md). 0.1.0 is the first release, so there is nothing older to upgrade from yet; the procedure below is for the releases after it. The `skills` CLI and skills.sh do not read a version number — an install is a snapshot of the repository content, and `npx skills update` refreshes it (`-g` for global installs, `-p` for the current project). To stay on a release, install with the tag as git ref; per the `skills` CLI documentation `update` then stays on that ref:
+Versions are git tags `agent-lark/vX.Y.Z` (the repository holds two skills; each has its own tags); what changed is in [CHANGELOG.md](../../CHANGELOG.md). The `skills` CLI and skills.sh do not read a version number — an install is a snapshot of the repository content, and `npx skills update` refreshes it (`-g` for global installs, `-p` for the current project). To stay on a release, install with the tag as git ref; per the `skills` CLI documentation `update` then stays on that ref:
 
 ```bash
 npx skills add 'yezhoujie/agent-remote-communication-skills#agent-lark/v0.1.0' --skill agent-lark
 ```
+
+**From 0.1.0 to 0.1.1**: `setup --app-id` and `--store`, the env file (`~/.config/agent-lark/.env`, `AGENT_LARK_ENV_FILE`) and the `LARK_APP_ID` / `LARK_APP_SECRET` names are gone. Credentials stored by `setup` (keychain or `credentials.json`) keep working; if yours lived only in an env file or in those variables, run `agent-lark setup --reuse` once (§4.1, way 2) or export `AGENT_LARK_APP_ID` / `AGENT_LARK_APP_SECRET`. Options are now checked: a command line with an unknown option exits 1 instead of ignoring it.
 
 **Upgrading a machine that already runs a daemon** — do the steps in this order:
 

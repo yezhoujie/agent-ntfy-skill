@@ -11,6 +11,44 @@ pin (`npx skills add 'yezhoujie/agent-remote-communication-skills#v0.1.2' --skil
 
 ### [Unreleased][agent-lark-unreleased]
 
+### [0.1.1][agent-lark-0.1.1] - 2026-09-15
+
+#### Added
+
+- `setup` is guided: on a terminal it opens with a menu — create a new app by QR code, or reuse an app you
+  already have. The reuse branch asks for the App ID and the App Secret (typed blind, never echoed), checks
+  the pair against Feishu once (Feishu's code and message are shown on a refusal; three refusals exit 1),
+  stores it like a QR-code setup does, and prints the scopes, the event subscription and the card callback
+  that must be enabled by hand in the developer console. `setup --reuse` goes there without the menu.
+- `setup --reuse` without a terminal (an agent running it) hands the typing over: inside herdr it opens a pane
+  below the caller's and runs the interactive setup there, then injects one `[agent-lark] setup: …` line back
+  into the caller's session (`--report-to <pane>`; success, failure, interruption and "credentials already
+  stored" each have their line) and offers to close the pane (`--close-pane`); outside herdr it exits 4 and
+  prints the command for the human to run in their own terminal.
+- `/agent-lark setup`, `/agent-lark on`, `/agent-lark off`: three arguments the agent understands
+  (SKILL.md, "Invoked with an argument") — guided setup, remote mode on (through setup when there are no
+  credentials yet), remote mode off. The README opens with the three ways to set up.
+- `AGENT_LARK_OFFLINE=1` makes `setup` refuse both of its network calls (exit 3); the test runner sets it, so
+  no test can register an app or probe credentials by accident.
+
+#### Changed
+
+- Every subcommand refuses an option it does not know (`unknown option --xyz`, exit 1) instead of ignoring
+  it; option values take a space (`--name x`), `--home=<dir>` remains the one `=` form.
+- `away off` no longer needs the daemon: with none running it still switches the project's `state.json` off
+  and exits 0, saying `daemon is not running; local state cleared`.
+- The App Secret is masked as `***` in every error text, log line and report line that could otherwise
+  quote it.
+- `npm test` rebuilds `dist/cli.mjs` after the type check, so the CLI tests always run the current sources.
+
+#### Removed
+
+- `setup --app-id` and `setup --store` (the reuse branch and `AGENT_LARK_STORE` replace them).
+- The env file (`~/.config/agent-lark/.env`, `AGENT_LARK_ENV_FILE`) and the unprefixed `LARK_APP_ID` /
+  `LARK_APP_SECRET` names: credentials come from `AGENT_LARK_APP_ID` / `AGENT_LARK_APP_SECRET`, the OS
+  keychain, or `credentials.json`, and from nowhere else. Credentials that lived only in an env file need one
+  `setup --reuse`.
+
 ### [0.1.0][agent-lark-0.1.0] - 2026-09-15
 
 First release of the Feishu / Lark channel: the same ask-and-block contract as agent-ntfy, carried by a
@@ -182,7 +220,8 @@ relative to those untagged versions.
 - A missing `security` command (the keychain exists only on macOS) is reported as such, with the
   `AGENT_NTFY_STORE` alternatives, instead of as a socket error.
 
-[agent-lark-unreleased]: https://github.com/yezhoujie/agent-remote-communication-skills/compare/agent-lark/v0.1.0...HEAD
+[agent-lark-unreleased]: https://github.com/yezhoujie/agent-remote-communication-skills/compare/agent-lark/v0.1.1...HEAD
+[agent-lark-0.1.1]: https://github.com/yezhoujie/agent-remote-communication-skills/compare/agent-lark/v0.1.0...agent-lark/v0.1.1
 [agent-lark-0.1.0]: https://github.com/yezhoujie/agent-remote-communication-skills/releases/tag/agent-lark/v0.1.0
 [Unreleased]: https://github.com/yezhoujie/agent-remote-communication-skills/compare/v0.1.2...HEAD
 [0.1.2]: https://github.com/yezhoujie/agent-remote-communication-skills/compare/v0.1.1...v0.1.2
