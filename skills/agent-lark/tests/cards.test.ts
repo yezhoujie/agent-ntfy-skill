@@ -174,6 +174,16 @@ test('receipt card: orange, shell wording follows the language it is asked for',
   assert.match(String(en.body.elements[0]!.content), /never reached the terminal: nowhere to go/);
 });
 
+test('an ask card with no lang renders the English shell, like the receipt and status cards', () => {
+  const { lang: _omitted, ...noLang } = single;
+  const c = asCard(askCard({ payload: noLang as AskPayload, projectLabel: 'proj', reqId: 'r1', state: 'pending' }));
+  assert.match(String(c.body.elements[0]!.content), /^\*\*Doing\*\*/);
+  // `single` carries a danger option, so the hint is the danger variant — in English.
+  assert.match(String(c.body.elements.at(-1)!.content), /Red buttons ask for confirmation/);
+  const done = asCard(askCard({ payload: noLang as AskPayload, projectLabel: 'proj', reqId: 'r1', state: 'answered', reply: 'Keep' }));
+  assert.equal(done.header.title.content, '✅ [proj] Keep the scratch dir? · Answered');
+});
+
 test('receipt and status cards default to English when no language is given', () => {
   assert.equal(asCard(receiptCard('proj', 'why')).header.title.content, '⚠️ [proj] Not delivered');
   assert.equal(asCard(statusCard('proj', 'pane w1:p1')).header.title.content, '🔔 [proj] waiting for you');

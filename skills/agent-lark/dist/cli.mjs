@@ -136467,7 +136467,7 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       bindReuseUnknown: "--reuse {chatId}: not one of the groups this project could take back",
       bindChatTaken: "group {chatId} is the live group of another project ({root}); unbind it there first",
       bindScanFailed: "could not look through the Feishu groups for earlier ones of this project ({error}); only local records were considered",
-      bindRenameFailed: "bound, but renaming the group failed: {error}",
+      bindRenameFailed: "bound, but {error}",
       bindingsTwoActive: "bindings: {root} already has one active group ({chatId})",
       bindingsFileBad: "cannot read the bindings file {path}: {error}\nFix or move it; it is left untouched.",
       bindModeIgnored: "this project already has a live group; --reuse / --new were ignored (unbind first to pick another group)",
@@ -137478,7 +137478,7 @@ function optionForm(p, reqId, attempt, recommended, T) {
 }
 function askCard(ctx2) {
   const { payload: p, state } = ctx2;
-  const lang = p.lang ?? "zh";
+  const lang = p.lang ?? "en";
   const T = t(lang);
   const head = HEADER[state];
   const template = state === "pending" && ctx2.urgent ? "red" : head.template;
@@ -137923,7 +137923,7 @@ ${text}`;
       }
       return { toast: { type: "info", content: t(closed.get(value.reqId)?.lang ?? langOf(b)).toastClosed } };
     }
-    const T = t(p.payload.lang ?? "zh");
+    const T = t(p.payload.lang ?? "en");
     let reply;
     let via;
     if (form) {

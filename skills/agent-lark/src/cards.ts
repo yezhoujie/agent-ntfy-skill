@@ -148,7 +148,7 @@ function optionForm(p: AskPayload, reqId: string, attempt: number, recommended: 
 
 export function askCard(ctx: AskCardContext): object {
   const { payload: p, state } = ctx;
-  const lang = p.lang ?? 'zh';
+  const lang = p.lang ?? 'en';
   const T = t(lang);
   const head = HEADER[state];
   const template = state === 'pending' && ctx.urgent ? 'red' : head.template;

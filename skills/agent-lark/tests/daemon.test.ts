@@ -289,6 +289,7 @@ test('bind with a live group: a rename the bot is not allowed to make still bind
   assert.equal(notes.length, 1);
   assert.match(notes[0]!, /232002/);
   assert.match(notes[0]!, /owner only/);
+  assert.equal(notes[0]!.split('renaming the group failed').length - 1, 1, `phrase repeated: ${notes[0]}`);
   assert.deepEqual(fake.renames.at(-1), { chatId: 'oc_x', name: 'new task [p]', description: undefined });
   await daemon.stop();
 });
@@ -723,7 +724,8 @@ test('multi-choice: an empty submit is an error toast and the question stays ope
     card?: { type: string; data: Card };
   };
   assert.equal(empty.toast.type, 'error');
-  assert.equal(empty.toast.content, t('zh').pickAtLeastOne);
+  // multiPayload carries no lang: the toast, like the card, falls back to English.
+  assert.equal(empty.toast.content, t('en').pickAtLeastOne);
   assert.equal(empty.card?.type, 'raw');
   assert.equal(empty.card?.data.header.template, 'blue');
   assert.deepEqual(submitValue(empty.card!.data), { reqId, attempt: 1 });

@@ -583,7 +583,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
       }
       return { toast: { type: 'info', content: t(closed.get(value.reqId)?.lang ?? langOf(b)).toastClosed } };
     }
-    const T = t(p.payload.lang ?? 'zh');
+    const T = t(p.payload.lang ?? 'en');
     let reply: string;
     let via: 'button' | 'form';
     if (form) {

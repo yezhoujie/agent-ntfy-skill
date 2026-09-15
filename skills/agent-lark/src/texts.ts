@@ -215,7 +215,7 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   bindReuseUnknown: '--reuse {chatId}: not one of the groups this project could take back',
   bindChatTaken: 'group {chatId} is the live group of another project ({root}); unbind it there first',
   bindScanFailed: 'could not look through the Feishu groups for earlier ones of this project ({error}); only local records were considered',
-  bindRenameFailed: 'bound, but renaming the group failed: {error}',
+  bindRenameFailed: 'bound, but {error}',
   bindingsTwoActive: 'bindings: {root} already has one active group ({chatId})',
   bindingsFileBad: 'cannot read the bindings file {path}: {error}\nFix or move it; it is left untouched.',
   bindModeIgnored: 'this project already has a live group; --reuse / --new were ignored (unbind first to pick another group)',
