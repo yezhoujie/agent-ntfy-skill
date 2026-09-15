@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { HerdrRun, PromptOutcome } from '../src/herdr.js';
@@ -133,7 +133,8 @@ test('menu: choosing 2 goes to the reuse branch; the secret is read hidden, prob
   assert.deepEqual(f.probes, [['cli_abc123', 'the-secret']]);
   assert.equal(io.hidden.length, 1, 'the secret prompt must go through questionHidden');
   assert.doesNotMatch(text(f.out) + text(f.err), /the-secret/, 'the secret must never be printed');
-  assert.equal(statSync(credsFile(dir)).mode & 0o777, 0o600);
+  // POSIX mode bits mean nothing on Windows (the file reads 0666 there); the same split as the warning in creds.ts.
+  if (platform() !== 'win32') assert.equal(statSync(credsFile(dir)).mode & 0o777, 0o600);
   const stored = JSON.parse(readFileSync(credsFile(dir), 'utf8')) as { appId: string; appSecret: string; ownerOpenId: string };
   assert.deepEqual(stored, { appId: 'cli_abc123', appSecret: 'the-secret', ownerOpenId: 'ou_owner' });
   const out = text(f.out);

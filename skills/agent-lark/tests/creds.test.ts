@@ -2,7 +2,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 // The keychain service name is read once at import time: point it at a
@@ -43,7 +43,8 @@ test('the environment pair wins over the file store; the file store is 0600 and 
   const dir = isolated();
   const where = writeCreds({ appId: 'cli_stored', appSecret: 'stored-secret', ownerOpenId: 'ou_1' }, 'file');
   assert.equal(where, join(dir, 'agent-lark', 'credentials.json'));
-  assert.equal(statSync(where).mode & 0o777, 0o600);
+  // POSIX mode bits mean nothing on Windows (the file reads 0666 there); the same split as the warning in creds.ts.
+  if (platform() !== 'win32') assert.equal(statSync(where).mode & 0o777, 0o600);
   assert.equal(resolveCreds()?.appId, 'cli_stored');
   assert.equal(resolveCreds()?.source, 'file');
   process.env.AGENT_LARK_APP_ID = 'cli_env';
