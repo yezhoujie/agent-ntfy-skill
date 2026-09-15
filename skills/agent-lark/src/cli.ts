@@ -363,7 +363,6 @@ async function runReuse(
     say('setupManualEvents');
     say('setupManualPublish');
     say('setupNext');
-    deps.out(msg.setupNextLines);
     await report(fill(msg.setupReportOk, { appId, app: app || en.setupUnnamedApp }));
     if (closeAfter) await offerClosePane(deps, say);
     return;
@@ -475,7 +474,6 @@ async function runQr(
   deps.out('\n');
   say('setupSavedQr', { where });
   say('setupNext');
-  deps.out(msg.setupNextLines);
 }
 
 /** The CLI entry: the real terminal, the real Feishu SDK, the real herdr. */

@@ -116,9 +116,7 @@ agent-lark setup
 
 ```
 ✅ 应用已绑定，凭据保存到：macOS Keychain (service: agent-lark)（明文不会出现在任何输出里）。
-下一步：
-  agent-lark daemon --detach
-  cd <project> && agent-lark away on --name "<task>"
+下一步：回到 agent 会话，说「开启远程交互模式」或输入 /agent-lark on——daemon 与群绑定由 agent 从它自己的窗格完成，不用你手动跑。
 ```
 
 **2——复用一个已有的应用**（`agent-lark setup --reuse` 不出菜单、直接进这一支）。两个提示，然后连一次飞书：
@@ -139,9 +137,7 @@ App Secret（输入不回显）：
   speech_to_text:speech
 事件订阅：im.message.receive_v1（订阅方式选「使用长连接接收事件」）· 回调：card.action.trigger（同样选长连接）
 开通后发布一个版本，权限才生效。
-下一步：
-  agent-lark daemon --detach
-  cd <project> && agent-lark away on --name "<task>"
+下一步：回到 agent 会话，说「开启远程交互模式」或输入 /agent-lark on——daemon 与群绑定由 agent 从它自己的窗格完成，不用你手动跑。
 ```
 
 - App ID 必须是 `cli_` 加字母数字（开发者后台「凭证与基础信息」里看）；不是就再问一次。Secret 盲打——什么都不回显——之后也不会出现在任何输出里，连错误信息里都会打成 `***`。

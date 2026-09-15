@@ -136325,7 +136325,7 @@ var init_texts = __esm({
       setupProbeFailed: "\u8FD9\u5BF9\u51ED\u636E\u8FDE\u4E0D\u4E0A\u98DE\u4E66\uFF1A{error}",
       setupSaved: "\u51ED\u636E\u5DF2\u4FDD\u5B58\u5230\uFF1A{where}",
       setupSavedQr: "\u2705 \u5E94\u7528\u5DF2\u7ED1\u5B9A\uFF0C\u51ED\u636E\u4FDD\u5B58\u5230\uFF1A{where}\uFF08\u660E\u6587\u4E0D\u4F1A\u51FA\u73B0\u5728\u4EFB\u4F55\u8F93\u51FA\u91CC\uFF09\u3002",
-      setupNext: "\u4E0B\u4E00\u6B65\uFF1A",
+      setupNext: "\u4E0B\u4E00\u6B65\uFF1A\u56DE\u5230 agent \u4F1A\u8BDD\uFF0C\u8BF4\u300C\u5F00\u542F\u8FDC\u7A0B\u4EA4\u4E92\u6A21\u5F0F\u300D\u6216\u8F93\u5165 /agent-lark on\u2014\u2014daemon \u4E0E\u7FA4\u7ED1\u5B9A\u7531 agent \u4ECE\u5B83\u81EA\u5DF1\u7684\u7A97\u683C\u5B8C\u6210\uFF0C\u4E0D\u7528\u4F60\u624B\u52A8\u8DD1\u3002",
       setupReuseGaveUp: "\u8FDE\u7EED {n} \u6B21\u6CA1\u901A\u8FC7\uFF0C\u5148\u5230\u5F00\u53D1\u8005\u540E\u53F0\u6838\u5BF9 App ID / App Secret\uFF0C\u518D\u8DD1\u4E00\u6B21 agent-lark setup --reuse\u3002",
       setupManualScopes: "\u8FD9\u4E2A\u5E94\u7528\u8981\u5728\u5F00\u53D1\u8005\u540E\u53F0\u624B\u52A8\u5F00\u901A\uFF08\u5E94\u7528 \u2192 \u6743\u9650\u7BA1\u7406 \u2192 \u5F00\u901A\u6743\u9650\uFF09\uFF1A",
       setupManualEvents: "\u4E8B\u4EF6\u8BA2\u9605\uFF1Aim.message.receive_v1\uFF08\u8BA2\u9605\u65B9\u5F0F\u9009\u300C\u4F7F\u7528\u957F\u8FDE\u63A5\u63A5\u6536\u4E8B\u4EF6\u300D\uFF09\xB7 \u56DE\u8C03\uFF1Acard.action.trigger\uFF08\u540C\u6837\u9009\u957F\u8FDE\u63A5\uFF09",
@@ -136392,7 +136392,7 @@ var init_texts = __esm({
       setupProbeFailed: "These credentials cannot reach Feishu: {error}",
       setupSaved: "Credentials saved to: {where}",
       setupSavedQr: "\u2705 App linked; credentials saved to {where} (the secret never appears in any output).",
-      setupNext: "Next:",
+      setupNext: 'Next: back in your agent session, say "turn remote mode on" or type /agent-lark on \u2014 the agent starts the daemon and binds the group from its own pane; nothing to run by hand.',
       setupReuseGaveUp: "{n} attempts failed; check the App ID / App Secret in the developer console, then run agent-lark setup --reuse again.",
       setupManualScopes: "Enable these scopes for the app by hand in the developer console (app \u2192 Permissions & Scopes):",
       setupManualEvents: "Event subscription: im.message.receive_v1 (delivery: long connection) \xB7 callback: card.action.trigger (long connection as well)",
@@ -136454,7 +136454,6 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       awayUsage: "Usage: agent-lark away on [--name <task>] [--reuse <chat_id> | --new] | off | status [--json]",
       renameUsage: 'Usage: agent-lark rename "<task name>"',
       taskNameTooLong: "task name: over {max} characters (code points), got {n}",
-      setupNextLines: '  agent-lark daemon --detach\n  cd <project> && agent-lark away on --name "<task>"\n',
       setupHandoffStarted: 'The interactive setup is running in herdr pane {pane}: the user enters the App ID and App Secret there (they never pass through this session). When it ends, one line prefixed "[agent-lark] setup:" arrives here.',
       setupHandoffFailed: "could not open a herdr pane for the interactive setup ({why}). Ask the user to run it in their own terminal:\n  {command}",
       setupReuseNeedsTerminal: "setup --reuse asks for the App ID and App Secret interactively, and there is no terminal here (and no herdr to open one). Ask the user to run it in their own terminal:\n  {command}",
@@ -138909,7 +138908,6 @@ async function runReuse(deps, store, say, fail, report, closeAfter, scopes) {
     say("setupManualEvents");
     say("setupManualPublish");
     say("setupNext");
-    deps.out(msg.setupNextLines);
     await report(fill(msg.setupReportOk, { appId, app: app || en.setupUnnamedApp }));
     if (closeAfter) await offerClosePane(deps, say);
     return;
@@ -139004,7 +139002,6 @@ ${s}
   deps.out("\n");
   say("setupSavedQr", { where });
   say("setupNext");
-  deps.out(msg.setupNextLines);
 }
 async function cmdSetup(args) {
   const io = process.stdin.isTTY ? terminalIO() : {

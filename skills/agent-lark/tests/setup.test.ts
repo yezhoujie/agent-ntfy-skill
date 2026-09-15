@@ -121,6 +121,8 @@ test('menu: choosing 1 goes to the QR-code registration and stores what came bac
   assert.equal(f.probes.length, 0);
   assert.equal(JSON.parse(readFileSync(credsFile(dir), 'utf8')).appId, 'cli_scanned');
   assert.match(text(f.out), /1\) /);
+  assert.match(text(f.out), /\/agent-lark on/);
+  assert.doesNotMatch(text(f.out), /daemon --detach|away on --name/);
 });
 
 test('menu: choosing 2 goes to the reuse branch; the secret is read hidden, probed, stored 0600, and the scope list is printed', async () => {
@@ -143,6 +145,9 @@ test('menu: choosing 2 goes to the reuse branch; the secret is read hidden, prob
   assert.match(out, /im\.message\.receive_v1/);
   assert.match(out, /card\.action\.trigger/);
   assert.match(out, /Test App/);
+  // The closing line speaks to the human: the agent runs the daemon and the binding from its own pane.
+  assert.match(out, /\/agent-lark on/);
+  assert.doesNotMatch(out, /daemon --detach|away on --name/);
   assert.equal(io.closed, 1);
 });
 

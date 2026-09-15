@@ -121,9 +121,7 @@ Anything but `1` or `2` is asked again. Piped or scripted (no terminal), `setup`
 
 ```
 ✅ App linked; credentials saved to macOS Keychain (service: agent-lark) (the secret never appears in any output).
-Next:
-  agent-lark daemon --detach
-  cd <project> && agent-lark away on --name "<task>"
+Next: back in your agent session, say "turn remote mode on" or type /agent-lark on — the agent starts the daemon and binds the group from its own pane; nothing to run by hand.
 ```
 
 **2 — reuse an app you already have** (`agent-lark setup --reuse` goes here directly, without the menu). Two prompts, then one round trip to Feishu:
@@ -144,9 +142,7 @@ Enable these scopes for the app by hand in the developer console (app → Permis
   speech_to_text:speech
 Event subscription: im.message.receive_v1 (delivery: long connection) · callback: card.action.trigger (long connection as well)
 Publish a version afterwards; scopes take effect only then.
-Next:
-  agent-lark daemon --detach
-  cd <project> && agent-lark away on --name "<task>"
+Next: back in your agent session, say "turn remote mode on" or type /agent-lark on — the agent starts the daemon and binds the group from its own pane; nothing to run by hand.
 ```
 
 - The App ID must look like `cli_` followed by letters and digits (Developer console → Credentials & Basic Info); anything else is asked again. The secret is typed blind — nothing is echoed — and never appears in any output afterwards, not even inside an error message (it is masked as `***`).
