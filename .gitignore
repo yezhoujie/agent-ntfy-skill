@@ -12,3 +12,6 @@ __pycache__/
 *.pyc
 .DS_Store
 .venv/
+
+# 编辑器本地配置
+.vscode/
