@@ -140,6 +140,8 @@ interface Pending {
   /** Carries `select` and the option order the reply of a form submit follows. */
   payload: AskPayload;
   urgent: boolean;
+  /** Times the pending card was re-rendered after a refused submit (see the submit button's value). */
+  attempt: number;
   settle: (r: Response) => void;
   timer: NodeJS.Timeout;
   done: boolean;
@@ -344,14 +346,17 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
       const text = res.data?.recognition_text?.trim();
       return text || null;
     } catch (err) {
-      log('transcribe.failed', { err: String(err).slice(0, 200) });
+      // The Feishu code and message live in the response body, not in the error text.
+      const res = (err as { response?: { status?: number; data?: unknown } } | null)?.response;
+      const refused = feishuError(res?.data) ?? feishuError(err);
+      log('transcribe.failed', { status: res?.status, code: refused?.code, msg: refused?.msg, err: String(err).slice(0, 200) });
       return null;
     }
   };
 
   /** Save an inbound attachment next to the daemon's state, never in the repo. */
-  const saveResources = async (incoming: NormalizedMessage): Promise<{ files: string[]; spoken: string[]; unheard: number }> => {
-    const out = { files: [] as string[], spoken: [] as string[], unheard: 0 };
+  const saveResources = async (incoming: NormalizedMessage): Promise<{ saved: string[]; spoken: string[]; unheard: number }> => {
+    const out = { saved: [] as string[], spoken: [] as string[], unheard: 0 };
     if (!incoming.resources.length) return out;
     const dir = join(homeDir(), 'media', createHash('sha1').update(incoming.chatId).digest('hex').slice(0, 12));
     mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -368,13 +373,12 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
         log('download.failed', { messageId: incoming.messageId, type: res.type, err: String(err).slice(0, 200) });
         continue;
       }
+      out.saved.push(dest);
       if (res.type === 'audio') {
         const text = await transcribe(dest);
         if (text) out.spoken.push(text);
         else out.unheard += 1;
-        continue;
       }
-      out.files.push(dest);
     }
     return out;
   };
@@ -408,9 +412,10 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
       const why = fill(msg.injectUnheard, { n: got.unheard });
       text = text ? `${text}\n${why}` : why;
     }
-    if (got.files.length) {
-      const list = got.files.map((f) => `  ${f}`).join('\n');
-      text = text ? `${text}\n${msg.injectFilesWithText}\n${list}` : `${msg.injectFilesOnly}\n${list}`;
+    if (got.saved.length) {
+      // One line per file with its absolute path, so the agent can open it as is.
+      const list = got.saved.map((f) => fill(msg.injectSaved, { path: f })).join('\n');
+      text = text ? `${text}\n${list}\n${msg.injectFilesWithText}` : `${list}\n${msg.injectFilesOnly}`;
     }
     if (!text) return;
     const p = pendingFor(b.root);
@@ -458,7 +463,14 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
     let via: 'button' | 'form';
     if (form) {
       const picked = p.payload.options.filter((o) => isTicked(form[checkerName(o.id)]));
-      if (!picked.length) return { toast: { type: 'error', content: T.pickAtLeastOne } };
+      if (!picked.length) {
+        // Refused, and the card is rewritten with the next attempt so the
+        // human's corrected submit is not deduplicated away by the SDK.
+        p.attempt += 1;
+        const retry = askCard({ payload: p.payload, projectLabel: p.label, reqId: p.reqId, state: 'pending', urgent: p.urgent, attempt: p.attempt });
+        void channel.updateCard(p.messageId, retry).catch((err) => log('ask.update-failed', { reqId: p.reqId, err: String(err).slice(0, 200) }));
+        return { toast: { type: 'error', content: T.pickAtLeastOne }, card: { type: 'raw', data: retry } };
+      }
       reply = picked.map((o) => o.label).join('、');
       via = 'form';
     } else {
@@ -1060,6 +1072,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
             label: b.label,
             payload,
             urgent,
+            attempt: 0,
             settle,
             done: false,
             timer: setTimeout(() => {

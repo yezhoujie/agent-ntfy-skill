@@ -22,6 +22,7 @@ export const zh = {
   recommend: '我的判断',
   question: '你的判断',
   recommended: '← 我推荐',
+  optionSep: '：',
   yourReply: '你的回复',
   theQuestion: '（原问题）',
   hint: '想说别的？直接在本群发消息就行，第一条消息就是答复。',
@@ -71,6 +72,7 @@ export const zh = {
   setupStatus: '  状态：{status}',
   setupExpired: '二维码过期了，没等到扫码。重跑一次：agent-lark setup（原始错误：{error}）',
   setupRegisterFailed: '扫码注册失败：{error}',
+  setupRetry: '网络抖动（{error}），重新申请一张二维码（第 {n}/{max} 次）……',
   setupSourceFlag: '--app-id + 环境变量',
   appDesc: '把终端里 agent 的提问推到手机，答复注入回终端',
 } as const;
@@ -83,6 +85,7 @@ export const en: Record<keyof typeof zh, string> = {
   recommend: 'My recommendation',
   question: 'Your call',
   recommended: '← recommended',
+  optionSep: ' — ',
   yourReply: 'Your reply',
   theQuestion: '(the question as asked)',
   hint: 'Want to say something else? Just send a message in this group — the first one is the answer.',
@@ -131,6 +134,7 @@ export const en: Record<keyof typeof zh, string> = {
   setupStatus: '  status: {status}',
   setupExpired: 'The QR code expired before it was scanned. Run again: agent-lark setup (original error: {error})',
   setupRegisterFailed: 'QR-code registration failed: {error}',
+  setupRetry: 'Network hiccup ({error}); asking for a fresh QR code (attempt {n}/{max})…',
   setupSourceFlag: '--app-id + environment',
   appDesc: 'Agent questions pushed to your phone, answers back to the terminal',
 };
@@ -279,6 +283,7 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   injectVoice: '(voice transcript) {text}',
   injectUnheard:
     '({n} voice message(s) received but transcription failed — most likely the app lacks the speech_to_text:speech scope. Tell the user: run agent-lark setup --update to rescan and add that scope, or type instead this time.)',
+  injectSaved: '[saved: {path}]',
   injectFilesWithText: '(attachments saved locally)',
   injectFilesOnly: '(I sent attachments; they are saved locally)',
   lateTapNoOption: '(follow-up) I tapped the card above again',

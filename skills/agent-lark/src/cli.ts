@@ -57,6 +57,27 @@ export function describeError(err: unknown): string {
   return String(err);
 }
 
+/** Socket-level errno codes: the request never reached Feishu, or the connection died under it. */
+const TRANSIENT_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'ETIMEDOUT', 'EAI_AGAIN', 'ENOTFOUND', 'ENETUNREACH', 'EHOSTUNREACH', 'EPIPE']);
+
+/**
+ * Was a failed registration call the network's doing rather than Feishu's?
+ * Anything Feishu itself answered (a business `code` in the body) and
+ * anything that is not a socket error is final; only those are worth a
+ * fresh QR code.
+ */
+export function isTransientNetworkError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const e = err as { code?: unknown; message?: unknown; response?: { data?: { code?: unknown } } };
+  if (typeof e.response?.data?.code === 'number') return false;
+  if (typeof e.code === 'string' && TRANSIENT_CODES.has(e.code)) return true;
+  const message = typeof e.message === 'string' ? e.message : '';
+  return /socket disconnected|socket hang up|ECONNRESET|ETIMEDOUT|EAI_AGAIN|network error/i.test(message);
+}
+
+/** A network hiccup while waiting for the scan costs the QR code; this many are asked for before giving up. */
+const SETUP_ATTEMPTS = 3;
+
 function die(code: number, text: string): never {
   process.stderr.write(`${msg.prefix}${text}\n`);
   process.exit(code);
@@ -170,9 +191,10 @@ async function cmdSetup(args: string[]): Promise<void> {
   let lastStatus = '';
   let heartbeat: NodeJS.Timeout | undefined;
 
-  let result;
-  try {
-    result = await registerApp({
+  // The SDK polls for the scan itself and cannot resume a user code after a
+  // dropped connection, so a network failure mid-wait means a fresh QR code.
+  const register = () =>
+    registerApp({
       source: 'agent-lark',
       appId: update && existing ? existing.appId : undefined,
       appPreset: {
@@ -211,14 +233,22 @@ async function cmdSetup(args: string[]): Promise<void> {
         bilingual('setupStatus', { status: s.status });
       },
     });
-  } catch (err) {
-    clearInterval(heartbeat);
-    const detail = describeError(err);
-    if (deadline && Date.now() >= deadline - 5000)
-      die(4, both('setupExpired', { error: detail }));
-    die(3, both('setupRegisterFailed', { error: detail }));
+
+  let result: Awaited<ReturnType<typeof registerApp>> | undefined;
+  for (let attempt = 1; !result; attempt++) {
+    try {
+      result = await register();
+    } catch (err) {
+      const detail = describeError(err);
+      if (deadline && Date.now() >= deadline - 5000) die(4, both('setupExpired', { error: detail }));
+      if (attempt >= SETUP_ATTEMPTS || !isTransientNetworkError(err)) die(3, both('setupRegisterFailed', { error: detail }));
+      bilingual('setupRetry', { error: detail, n: attempt + 1, max: SETUP_ATTEMPTS });
+      deadline = 0;
+      lastStatus = '';
+    } finally {
+      clearInterval(heartbeat);
+    }
   }
-  clearInterval(heartbeat);
 
   const where = writeCreds(
     {

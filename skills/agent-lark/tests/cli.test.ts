@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { waitConnected } from '../src/cli.js';
+import { isTransientNetworkError, waitConnected } from '../src/cli.js';
 import type { Response } from '../src/ipc.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -322,4 +322,27 @@ test('waitConnected returns as soon as a ping says connected', async () => {
   const r = await waitConnected(async () => (pings += 1, pong(pings >= 3, pings >= 3 ? null : 'not yet')), 5000, 10);
   assert.deepEqual(r, { connected: true });
   assert.equal(pings, 3);
+});
+
+// ---- setup: which registration failures are worth a fresh QR code -----------
+
+test('isTransientNetworkError: socket-level trouble is transient; expiry and Feishu refusals are not', () => {
+  for (const err of [
+    Object.assign(new Error('read ECONNRESET'), { code: 'ECONNRESET' }),
+    Object.assign(new Error('connect ETIMEDOUT 1.2.3.4:443'), { code: 'ETIMEDOUT' }),
+    Object.assign(new Error('getaddrinfo EAI_AGAIN open.feishu.cn'), { code: 'EAI_AGAIN' }),
+    new Error('Client network socket disconnected before secure TLS connection was established'),
+    new Error('socket hang up'),
+    { code: 'ECONNREFUSED', message: 'connect ECONNREFUSED' },
+  ])
+    assert.equal(isTransientNetworkError(err), true, String((err as Error).message));
+  for (const err of [
+    new Error('QR code expired'),
+    Object.assign(new Error('Request failed with status code 400'), { response: { data: { code: 99991663, msg: 'app not found' } } }),
+    { code: 20001, msg: 'invalid param' },
+    new Error('boom'),
+    undefined,
+    'a string',
+  ])
+    assert.equal(isTransientNetworkError(err), false, String(err));
 });

@@ -48,8 +48,10 @@ test('pending single-choice: blue header, one button per option (primary = recom
     ],
   );
   const options = c.body.elements[4]!.content as string;
-  assert.match(options, /1\. \*\*Keep\*\*　← 我推荐/);
-  assert.match(options, /3\. \*\*Wipe\*\*　⚠️/);
+  // the label / consequence separator is a plain colon (Feishu drops U+3000); the recommendation mark closes the line
+  assert.match(options, /^1\. \*\*Keep\*\*：stays　← 我推荐$/m);
+  assert.match(options, /^2\. \*\*Drop\*\*：gone$/m);
+  assert.match(options, /^3\. \*\*Wipe\*\*　⚠️：all gone$/m);
   const hint = c.body.elements.at(-1)!;
   assert.match(String(hint.content), /红色按钮会二次确认/);
 });
@@ -59,24 +61,24 @@ test('pending multi-choice with a danger option: one form of checkers plus a sub
   assert.equal(c.header.template, 'blue');
   assert.deepEqual(tags(c), ['markdown', 'markdown', 'markdown', 'hr', 'markdown', 'hr', 'markdown', 'markdown', 'form', 'markdown']);
   const options = c.body.elements[4]!.content as string;
-  assert.match(options, /1\. \*\*Keep\*\*　← 我推荐/);
-  assert.match(options, /2\. \*\*Drop\*\*　← 我推荐/);
-  assert.match(options, /3\. \*\*Wipe\*\*　⚠️/);
+  assert.match(options, /^1\. \*\*Keep\*\*：stays　← 我推荐$/m);
+  assert.match(options, /^2\. \*\*Drop\*\*：gone　← 我推荐$/m);
+  assert.match(options, /^3\. \*\*Wipe\*\*　⚠️：all gone$/m);
   const form = c.body.elements[8]!;
   assert.deepEqual(form, {
     tag: 'form',
     name: 'ask',
     elements: [
-      { tag: 'checker', name: 'opt:keep', checked: true, text: { tag: 'lark_md', content: '**Keep**　stays' } },
-      { tag: 'checker', name: 'opt:drop', checked: true, text: { tag: 'lark_md', content: '**Drop**　gone' } },
-      { tag: 'checker', name: 'opt:wipe', checked: false, text: { tag: 'lark_md', content: '**Wipe**　all gone' } },
+      { tag: 'checker', name: 'opt:keep', checked: true, text: { tag: 'lark_md', content: '**Keep**：stays' } },
+      { tag: 'checker', name: 'opt:drop', checked: true, text: { tag: 'lark_md', content: '**Drop**：gone' } },
+      { tag: 'checker', name: 'opt:wipe', checked: false, text: { tag: 'lark_md', content: '**Wipe**：all gone' } },
       {
         tag: 'button',
         name: 'submit',
         form_action_type: 'submit',
         type: 'primary',
         text: { tag: 'plain_text', content: '提交' },
-        behaviors: [{ type: 'callback', value: { reqId: 'r2' } }],
+        behaviors: [{ type: 'callback', value: { reqId: 'r2', attempt: 0 } }],
         confirm: {
           title: { tag: 'plain_text', content: '确认执行' },
           text: { tag: 'plain_text', content: '所选项里有不可逆或高代价的操作。确定提交？' },
@@ -115,6 +117,17 @@ test('pending multi-choice without danger: the submit button carries no confirm;
   assert.equal((submit.text as { content: string }).content, 'Submit');
   assert.equal('confirm' in submit, false);
   assert.match(String(c.body.elements.at(-1)!.content), /Tick what applies, then Submit/);
+  // en: an em dash separates label and consequence, the recommendation mark closes the line
+  const options = c.body.elements[4]!.content as string;
+  assert.match(options, /^1\. \*\*Keep\*\* — stays　← recommended$/m);
+  assert.match(options, /^2\. \*\*Drop\*\* — gone　← recommended$/m);
+});
+
+test('a re-rendered pending multi-choice card carries the attempt in the submit value, so a second submit is a new action', () => {
+  const c = asCard(askCard({ payload: multi, projectLabel: 'proj', reqId: 'r2', state: 'pending', attempt: 2 }));
+  const form = c.body.elements.find((e) => e.tag === 'form') as { elements: Array<Record<string, unknown>> };
+  const submit = form.elements.at(-1) as { behaviors: Array<{ value: unknown }> };
+  assert.deepEqual(submit.behaviors[0]!.value, { reqId: 'r2', attempt: 2 });
 });
 
 test('pending --urgent: red header; the same card without urgent is blue', () => {

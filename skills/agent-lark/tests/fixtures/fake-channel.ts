@@ -14,6 +14,8 @@ export interface FakeChannelOptions {
   getChatInfo?: ChannelLike['getChatInfo'];
   createChat?: ChannelLike['createChat'];
   addReaction?: ChannelLike['addReaction'];
+  /** Replaces the attachment download; a test can make it succeed without a file or fail. */
+  downloadResourceToFile?: ChannelLike['downloadResourceToFile'];
   /** Answers `rawClient.im.v1.chat.update`; every call is also recorded in `renames`. */
   chatUpdate?: (req: ChatUpdateRequest) => Promise<ChatUpdateResult>;
   /** Answers `rawClient.im.v1.message.urgentApp`; every call is also recorded in `urgents`. */
@@ -158,7 +160,7 @@ export function createFakeChannel(opts: FakeChannelOptions = {}): FakeChannel {
         fake.reactions.push({ messageId, emoji });
         return `rid_${fake.reactions.length}`;
       }),
-    downloadResourceToFile: notImplemented('downloadResourceToFile'),
+    downloadResourceToFile: opts.downloadResourceToFile ?? notImplemented('downloadResourceToFile'),
     rawClient,
   };
   fake.channel = channel as unknown as ChannelLike;

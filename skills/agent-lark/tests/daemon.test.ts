@@ -665,17 +665,21 @@ type Card = { header: { template: string; title: { content: string } }; body: { 
 const sentCard = (fake: { sent: Array<{ chatId?: string; input?: unknown; update?: string; card?: object }> }, i: number): Card =>
   (fake.sent[i] as { input: { card: Card } }).input.card;
 // What Feishu sends back: the form values keyed by checker name, i.e. `opt:<id>`.
-const formSubmit = (reqId: string, ticks: Record<string, unknown>, chatId = 'oc_x') => ({
+const formSubmit = (reqId: string, ticks: Record<string, unknown>, chatId = 'oc_x', attempt = 0) => ({
   messageId: 'om_1',
   chatId,
   operator: { openId: 'ou_human' },
   action: {
-    value: { reqId },
+    value: { reqId, attempt },
     tag: 'button',
     name: 'submit',
     formValue: Object.fromEntries(Object.entries(ticks).map(([id, v]) => [`opt:${id}`, v])),
   },
 });
+const submitValue = (card: Card): { reqId: string; attempt: number } => {
+  const form = card.body.elements.find((e) => e.tag === 'form') as { elements: Array<Record<string, unknown>> };
+  return (form.elements.at(-1) as { behaviors: Array<{ value: { reqId: string; attempt: number } }> }).behaviors[0]!.value;
+};
 const reqIdOf = (card: Card): string => {
   const form = card.body.elements.find((e) => e.tag === 'form') as { elements: Array<Record<string, unknown>> };
   const submit = form.elements.at(-1) as { behaviors: Array<{ value: { reqId: string } }> };
@@ -712,15 +716,38 @@ test('multi-choice: an empty submit is an error toast and the question stays ope
   const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: null, payload: multiPayload, timeoutMs: 5000 });
   await waitFor(() => fake.sent.length === 1, 'the question card to be sent');
   const reqId = reqIdOf(sentCard(fake, 0));
-  const empty = (await fake.cardAction(formSubmit(reqId, { a: false, b: 'false', c: 0 }))) as { toast: { type: string; content: string }; card?: unknown };
+  // The SDK drops a second identical action on the same card for 12 h, so the
+  // refusal rewrites the card with a new submit value (attempt + 1).
+  const empty = (await fake.cardAction(formSubmit(reqId, { a: false, b: 'false', c: 0 }))) as {
+    toast: { type: string; content: string };
+    card?: { type: string; data: Card };
+  };
   assert.equal(empty.toast.type, 'error');
   assert.equal(empty.toast.content, t('zh').pickAtLeastOne);
-  assert.equal(empty.card, undefined);
+  assert.equal(empty.card?.type, 'raw');
+  assert.equal(empty.card?.data.header.template, 'blue');
+  assert.deepEqual(submitValue(empty.card!.data), { reqId, attempt: 1 });
   assert.equal((await ping())?.pendingAsks, 1);
   const again = await request({ type: 'ask', root: '/p', label: 'p', paneId: null, payload: multiPayload, timeoutMs: 1000 });
   assert.equal(again.ok, false);
-  await fake.cardAction(formSubmit(reqId, { c: true }));
+  const twice = (await fake.cardAction(formSubmit(reqId, {}, 'oc_x', 1))) as { card?: { data: Card } };
+  assert.deepEqual(submitValue(twice.card!.data), { reqId, attempt: 2 });
+  await fake.cardAction(formSubmit(reqId, { c: true }, 'oc_x', 2));
   assert.deepEqual(await asking, { ok: true, kind: 'ask', reply: 'Wipe', via: 'form' });
+  await daemon.stop();
+});
+
+test('multi-choice: a submit carrying an older attempt still answers the open question (attempts only defeat the SDK dedup)', PER_TEST, async () => {
+  const { daemon, fake } = await start();
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: null, payload: multiPayload, timeoutMs: 5000 });
+  await waitFor(() => fake.sent.length === 1, 'the question card to be sent');
+  const reqId = reqIdOf(sentCard(fake, 0));
+  await fake.cardAction(formSubmit(reqId, {}));
+  const stale = (await fake.cardAction(formSubmit(reqId, { b: true }, 'oc_x', 0))) as { toast: { type: string } };
+  assert.equal(stale.toast.type, 'success');
+  assert.deepEqual(await asking, { ok: true, kind: 'ask', reply: 'Drop', via: 'form' });
   await daemon.stop();
 });
 
@@ -984,5 +1011,38 @@ test('single-choice: a tap after the question closed is injected with the label,
   assert.equal(late.toast.type, 'info');
   await waitFor(() => herdr.prompts.length === 1, 'the follow-up injection');
   assert.equal(herdr.prompts[0]!.text, `[agent-lark remote] ${fill(msg.latePick, { labels: 'Drop' })}`);
+  await daemon.stop();
+});
+
+test('attachments: the injected text names where each one was saved, before the closing note', PER_TEST, async () => {
+  const downloads: string[] = [];
+  const { daemon, fake, herdr, home } = await start({
+    downloadResourceToFile: async (_messageId, _fileKey, _type, dest) => {
+      downloads.push(dest);
+      return { path: dest, bytes: 0 } as never;
+    },
+  });
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  await fake.message({
+    chatId: 'oc_x',
+    content: '![image](img_v3_x)',
+    messageId: 'om_human_1',
+    resources: [
+      { type: 'image', fileKey: 'img_v3_x' },
+      { type: 'file', fileKey: 'file_y', fileName: 'notes.txt' },
+    ],
+  });
+  await waitFor(() => herdr.prompts.length === 1, 'the injection');
+  assert.equal(downloads.length, 2);
+  const text = herdr.prompts[0]!.text;
+  const lines = text.split('\n');
+  assert.equal(lines[0], '[agent-lark remote] ![image](img_v3_x)');
+  assert.equal(lines[1], `[saved: ${downloads[0]}]`);
+  assert.equal(lines[2], `[saved: ${downloads[1]}]`);
+  assert.equal(lines[3], msg.injectFilesWithText);
+  assert.equal(lines.length, 4);
+  for (const d of downloads) assert.ok(d.startsWith(join(home, 'media')), d);
+  assert.match(downloads[1]!, /notes\.txt$/);
   await daemon.stop();
 });

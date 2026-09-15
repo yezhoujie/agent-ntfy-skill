@@ -44,12 +44,20 @@ export function recommendedIds(p: AskPayload): string[] {
   return Array.isArray(p.recommend) ? p.recommend : [p.recommend];
 }
 
+/**
+ * One line per option. Observed on the desktop client: inside a numbered
+ * list item, an ideographic space (U+3000) right after a bold run renders
+ * with no gap at all; the field lines above (`**label**　value`) are not
+ * affected. So label and consequence are joined by a real separator here,
+ * and the recommendation mark closes the line.
+ */
 function optionLines(options: AskOption[], recommended: string[], lang: Lang): string {
   const T = t(lang);
   return options
     .map((o, i) => {
-      const flag = recommended.includes(o.id) ? `　${T.recommended}` : o.danger ? '　⚠️' : '';
-      return `${i + 1}. **${o.label}**${flag}\n   ${o.consequence}`;
+      const danger = o.danger ? '　⚠️' : '';
+      const tail = recommended.includes(o.id) ? `　${T.recommended}` : '';
+      return `${i + 1}. **${o.label}**${danger}${T.optionSep}${o.consequence}${tail}`;
     })
     .join('\n');
 }
@@ -62,6 +70,8 @@ export interface AskCardContext {
   reply?: string;
   /** Flagged in-app to the owner; the pending header turns red. */
   urgent?: boolean;
+  /** How many times the pending card has been re-rendered after a refused submit; part of the submit action's value. */
+  attempt?: number;
 }
 
 const HEADER: Record<AskState, { template: string; icon: string }> = {
@@ -108,14 +118,17 @@ export const optionIdOf = (checkerName: string): string | null => (checkerName.s
  * dialog inside a form, so the dialog sits on the submit button whenever the
  * card holds one.
  */
-function optionForm(p: AskPayload, reqId: string, recommended: string[], T: ReturnType<typeof t>): object {
+function optionForm(p: AskPayload, reqId: string, attempt: number, recommended: string[], T: ReturnType<typeof t>): object {
+  // The channel SDK drops a repeat of the same action on the same card for
+  // twelve hours, keyed on the button's value; a refused submit re-renders
+  // the card with the next attempt so the human's retry is a new action.
   const submit: Record<string, unknown> = {
     tag: 'button',
     name: 'submit',
     form_action_type: 'submit',
     type: 'primary',
     text: { tag: 'plain_text', content: T.submit },
-    behaviors: [{ type: 'callback', value: { reqId } }],
+    behaviors: [{ type: 'callback', value: { reqId, attempt } }],
   };
   if (p.options.some((o) => o.danger)) submit.confirm = confirm(T, T.confirmMultiText);
   return {
@@ -126,7 +139,7 @@ function optionForm(p: AskPayload, reqId: string, recommended: string[], T: Retu
         tag: 'checker',
         name: checkerName(o.id),
         checked: recommended.includes(o.id),
-        text: { tag: 'lark_md', content: `**${o.label}**　${o.consequence}` },
+        text: { tag: 'lark_md', content: `**${o.label}**${T.optionSep}${o.consequence}` },
       })),
       submit,
     ],
@@ -161,7 +174,7 @@ export function askCard(ctx: AskCardContext): object {
 
   if (state === 'pending') {
     if (p.select === 'multi') {
-      elements.push(optionForm(p, ctx.reqId, recommended, T), note(T.hintMulti));
+      elements.push(optionForm(p, ctx.reqId, ctx.attempt ?? 0, recommended, T), note(T.hintMulti));
     } else {
       elements.push(...optionButtons(p, ctx.reqId, recommended, T));
       elements.push(note(p.options.some((o) => o.danger) ? T.hintDanger : T.hint));

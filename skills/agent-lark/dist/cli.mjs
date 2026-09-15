@@ -136282,6 +136282,7 @@ var init_texts = __esm({
       recommend: "\u6211\u7684\u5224\u65AD",
       question: "\u4F60\u7684\u5224\u65AD",
       recommended: "\u2190 \u6211\u63A8\u8350",
+      optionSep: "\uFF1A",
       yourReply: "\u4F60\u7684\u56DE\u590D",
       theQuestion: "\uFF08\u539F\u95EE\u9898\uFF09",
       hint: "\u60F3\u8BF4\u522B\u7684\uFF1F\u76F4\u63A5\u5728\u672C\u7FA4\u53D1\u6D88\u606F\u5C31\u884C\uFF0C\u7B2C\u4E00\u6761\u6D88\u606F\u5C31\u662F\u7B54\u590D\u3002",
@@ -136331,6 +136332,7 @@ var init_texts = __esm({
       setupStatus: "  \u72B6\u6001\uFF1A{status}",
       setupExpired: "\u4E8C\u7EF4\u7801\u8FC7\u671F\u4E86\uFF0C\u6CA1\u7B49\u5230\u626B\u7801\u3002\u91CD\u8DD1\u4E00\u6B21\uFF1Aagent-lark setup\uFF08\u539F\u59CB\u9519\u8BEF\uFF1A{error}\uFF09",
       setupRegisterFailed: "\u626B\u7801\u6CE8\u518C\u5931\u8D25\uFF1A{error}",
+      setupRetry: "\u7F51\u7EDC\u6296\u52A8\uFF08{error}\uFF09\uFF0C\u91CD\u65B0\u7533\u8BF7\u4E00\u5F20\u4E8C\u7EF4\u7801\uFF08\u7B2C {n}/{max} \u6B21\uFF09\u2026\u2026",
       setupSourceFlag: "--app-id + \u73AF\u5883\u53D8\u91CF",
       appDesc: "\u628A\u7EC8\u7AEF\u91CC agent \u7684\u63D0\u95EE\u63A8\u5230\u624B\u673A\uFF0C\u7B54\u590D\u6CE8\u5165\u56DE\u7EC8\u7AEF"
     };
@@ -136342,6 +136344,7 @@ var init_texts = __esm({
       recommend: "My recommendation",
       question: "Your call",
       recommended: "\u2190 recommended",
+      optionSep: " \u2014 ",
       yourReply: "Your reply",
       theQuestion: "(the question as asked)",
       hint: "Want to say something else? Just send a message in this group \u2014 the first one is the answer.",
@@ -136387,6 +136390,7 @@ var init_texts = __esm({
       setupStatus: "  status: {status}",
       setupExpired: "The QR code expired before it was scanned. Run again: agent-lark setup (original error: {error})",
       setupRegisterFailed: "QR-code registration failed: {error}",
+      setupRetry: "Network hiccup ({error}); asking for a fresh QR code (attempt {n}/{max})\u2026",
       setupSourceFlag: "--app-id + environment",
       appDesc: "Agent questions pushed to your phone, answers back to the terminal"
     };
@@ -136527,6 +136531,7 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       // text synthesized into the pane
       injectVoice: "(voice transcript) {text}",
       injectUnheard: "({n} voice message(s) received but transcription failed \u2014 most likely the app lacks the speech_to_text:speech scope. Tell the user: run agent-lark setup --update to rescan and add that scope, or type instead this time.)",
+      injectSaved: "[saved: {path}]",
       injectFilesWithText: "(attachments saved locally)",
       injectFilesOnly: "(I sent attachments; they are saved locally)",
       lateTapNoOption: "(follow-up) I tapped the card above again",
@@ -137417,9 +137422,9 @@ function recommendedIds(p) {
 function optionLines(options, recommended, lang) {
   const T = t(lang);
   return options.map((o, i) => {
-    const flag2 = recommended.includes(o.id) ? `\u3000${T.recommended}` : o.danger ? "\u3000\u26A0\uFE0F" : "";
-    return `${i + 1}. **${o.label}**${flag2}
-   ${o.consequence}`;
+    const danger = o.danger ? "\u3000\u26A0\uFE0F" : "";
+    const tail = recommended.includes(o.id) ? `\u3000${T.recommended}` : "";
+    return `${i + 1}. **${o.label}**${danger}${T.optionSep}${o.consequence}${tail}`;
   }).join("\n");
 }
 function confirm(T, text) {
@@ -137440,14 +137445,14 @@ function optionButtons(p, reqId, recommended, T) {
     return button;
   });
 }
-function optionForm(p, reqId, recommended, T) {
+function optionForm(p, reqId, attempt, recommended, T) {
   const submit = {
     tag: "button",
     name: "submit",
     form_action_type: "submit",
     type: "primary",
     text: { tag: "plain_text", content: T.submit },
-    behaviors: [{ type: "callback", value: { reqId } }]
+    behaviors: [{ type: "callback", value: { reqId, attempt } }]
   };
   if (p.options.some((o) => o.danger)) submit.confirm = confirm(T, T.confirmMultiText);
   return {
@@ -137458,7 +137463,7 @@ function optionForm(p, reqId, recommended, T) {
         tag: "checker",
         name: checkerName(o.id),
         checked: recommended.includes(o.id),
-        text: { tag: "lark_md", content: `**${o.label}**\u3000${o.consequence}` }
+        text: { tag: "lark_md", content: `**${o.label}**${T.optionSep}${o.consequence}` }
       })),
       submit
     ]
@@ -137490,7 +137495,7 @@ ${optionLines(p.options, recommended, lang)}`),
   );
   if (state === "pending") {
     if (p.select === "multi") {
-      elements.push(optionForm(p, ctx2.reqId, recommended, T), note(T.hintMulti));
+      elements.push(optionForm(p, ctx2.reqId, ctx2.attempt ?? 0, recommended, T), note(T.hintMulti));
     } else {
       elements.push(...optionButtons(p, ctx2.reqId, recommended, T));
       elements.push(note(p.options.some((o) => o.danger) ? T.hintDanger : T.hint));
@@ -137726,12 +137731,14 @@ async function runDaemon(deps = {}) {
       const text = res.data?.recognition_text?.trim();
       return text || null;
     } catch (err) {
-      log("transcribe.failed", { err: String(err).slice(0, 200) });
+      const res = err?.response;
+      const refused = feishuError(res?.data) ?? feishuError(err);
+      log("transcribe.failed", { status: res?.status, code: refused?.code, msg: refused?.msg, err: String(err).slice(0, 200) });
       return null;
     }
   };
   const saveResources = async (incoming) => {
-    const out = { files: [], spoken: [], unheard: 0 };
+    const out = { saved: [], spoken: [], unheard: 0 };
     if (!incoming.resources.length) return out;
     const dir = join3(homeDir(), "media", createHash3("sha1").update(incoming.chatId).digest("hex").slice(0, 12));
     mkdirSync3(dir, { recursive: true, mode: 448 });
@@ -137746,13 +137753,12 @@ async function runDaemon(deps = {}) {
         log("download.failed", { messageId: incoming.messageId, type: res.type, err: String(err).slice(0, 200) });
         continue;
       }
+      out.saved.push(dest);
       if (res.type === "audio") {
         const text = await transcribe(dest);
         if (text) out.spoken.push(text);
         else out.unheard += 1;
-        continue;
       }
-      out.files.push(dest);
     }
     return out;
   };
@@ -137780,12 +137786,12 @@ ${fill(msg.injectVoice, { text: said })}` : said;
       text = text ? `${text}
 ${why}` : why;
     }
-    if (got.files.length) {
-      const list = got.files.map((f) => `  ${f}`).join("\n");
+    if (got.saved.length) {
+      const list = got.saved.map((f) => fill(msg.injectSaved, { path: f })).join("\n");
       text = text ? `${text}
-${msg.injectFilesWithText}
-${list}` : `${msg.injectFilesOnly}
-${list}`;
+${list}
+${msg.injectFilesWithText}` : `${list}
+${msg.injectFilesOnly}`;
     }
     if (!text) return;
     const p = pendingFor(b.root);
@@ -137823,7 +137829,12 @@ ${list}`;
     let via;
     if (form) {
       const picked = p.payload.options.filter((o) => isTicked(form[checkerName(o.id)]));
-      if (!picked.length) return { toast: { type: "error", content: T.pickAtLeastOne } };
+      if (!picked.length) {
+        p.attempt += 1;
+        const retry2 = askCard({ payload: p.payload, projectLabel: p.label, reqId: p.reqId, state: "pending", urgent: p.urgent, attempt: p.attempt });
+        void channel.updateCard(p.messageId, retry2).catch((err) => log("ask.update-failed", { reqId: p.reqId, err: String(err).slice(0, 200) }));
+        return { toast: { type: "error", content: T.pickAtLeastOne }, card: { type: "raw", data: retry2 } };
+      }
       reply = picked.map((o) => o.label).join("\u3001");
       via = "form";
     } else {
@@ -138332,6 +138343,7 @@ ${msg.renamePermissionHint}` : text;
             label: b.label,
             payload,
             urgent,
+            attempt: 0,
             settle,
             done: false,
             timer: setTimeout(() => {
@@ -138450,6 +138462,16 @@ function describeError(err) {
   }
   return String(err);
 }
+var TRANSIENT_CODES = /* @__PURE__ */ new Set(["ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "ETIMEDOUT", "EAI_AGAIN", "ENOTFOUND", "ENETUNREACH", "EHOSTUNREACH", "EPIPE"]);
+function isTransientNetworkError(err) {
+  if (!err || typeof err !== "object") return false;
+  const e = err;
+  if (typeof e.response?.data?.code === "number") return false;
+  if (typeof e.code === "string" && TRANSIENT_CODES.has(e.code)) return true;
+  const message = typeof e.message === "string" ? e.message : "";
+  return /socket disconnected|socket hang up|ECONNRESET|ETIMEDOUT|EAI_AGAIN|network error/i.test(message);
+}
+var SETUP_ATTEMPTS = 3;
 function die(code, text) {
   process.stderr.write(`${msg.prefix}${text}
 `);
@@ -138537,58 +138559,63 @@ async function cmdSetup(args) {
   let deadline = 0;
   let lastStatus = "";
   let heartbeat;
-  let result;
-  try {
-    result = await (0, import_node_sdk.registerApp)({
-      source: "agent-lark",
-      appId: update && existing ? existing.appId : void 0,
-      appPreset: {
-        name: "agent-lark",
-        desc: both("appDesc")
-      },
-      addons: {
-        scopes: { tenant: scopes },
-        events: { items: { tenant: ["im.message.receive_v1"] } },
-        callbacks: { items: ["card.action.trigger"] }
-      },
-      onQRCodeReady: ({ url, expireIn }) => {
-        deadline = Date.now() + expireIn * 1e3;
-        const art = import_qrcode.default.toString(url, { type: "terminal", small: true });
-        void art.then((s) => process.stdout.write(`
+  const register = () => (0, import_node_sdk.registerApp)({
+    source: "agent-lark",
+    appId: update && existing ? existing.appId : void 0,
+    appPreset: {
+      name: "agent-lark",
+      desc: both("appDesc")
+    },
+    addons: {
+      scopes: { tenant: scopes },
+      events: { items: { tenant: ["im.message.receive_v1"] } },
+      callbacks: { items: ["card.action.trigger"] }
+    },
+    onQRCodeReady: ({ url, expireIn }) => {
+      deadline = Date.now() + expireIn * 1e3;
+      const art = import_qrcode.default.toString(url, { type: "terminal", small: true });
+      void art.then((s) => process.stdout.write(`
 ${s}
 `)).catch(() => void 0).finally(() => {
-          bilingual("setupScan");
-          process.stdout.write(`${url}
+        bilingual("setupScan");
+        process.stdout.write(`${url}
 
 `);
-          bilingual("setupScopes");
-          process.stdout.write(`  ${scopes.join("\n  ")}
+        bilingual("setupScopes");
+        process.stdout.write(`  ${scopes.join("\n  ")}
   ${both("setupEvents")}
 
 `);
-          bilingual("setupExpiry", { minutes: Math.round(expireIn / 60), time: new Date(deadline).toLocaleTimeString() });
-        });
-        heartbeat = setInterval(() => {
-          const left = Math.max(0, Math.round((deadline - Date.now()) / 1e3));
-          bilingual("setupWaiting", { seconds: left });
-        }, 6e4);
-        heartbeat.unref();
-      },
-      // 'polling' repeats every couple of seconds; only report real changes.
-      onStatusChange: (s) => {
-        if (s.status === lastStatus) return;
-        lastStatus = s.status;
-        bilingual("setupStatus", { status: s.status });
-      }
-    });
-  } catch (err) {
-    clearInterval(heartbeat);
-    const detail = describeError(err);
-    if (deadline && Date.now() >= deadline - 5e3)
-      die(4, both("setupExpired", { error: detail }));
-    die(3, both("setupRegisterFailed", { error: detail }));
+        bilingual("setupExpiry", { minutes: Math.round(expireIn / 60), time: new Date(deadline).toLocaleTimeString() });
+      });
+      heartbeat = setInterval(() => {
+        const left = Math.max(0, Math.round((deadline - Date.now()) / 1e3));
+        bilingual("setupWaiting", { seconds: left });
+      }, 6e4);
+      heartbeat.unref();
+    },
+    // 'polling' repeats every couple of seconds; only report real changes.
+    onStatusChange: (s) => {
+      if (s.status === lastStatus) return;
+      lastStatus = s.status;
+      bilingual("setupStatus", { status: s.status });
+    }
+  });
+  let result;
+  for (let attempt = 1; !result; attempt++) {
+    try {
+      result = await register();
+    } catch (err) {
+      const detail = describeError(err);
+      if (deadline && Date.now() >= deadline - 5e3) die(4, both("setupExpired", { error: detail }));
+      if (attempt >= SETUP_ATTEMPTS || !isTransientNetworkError(err)) die(3, both("setupRegisterFailed", { error: detail }));
+      bilingual("setupRetry", { error: detail, n: attempt + 1, max: SETUP_ATTEMPTS });
+      deadline = 0;
+      lastStatus = "";
+    } finally {
+      clearInterval(heartbeat);
+    }
   }
-  clearInterval(heartbeat);
   const where = writeCreds(
     {
       appId: result.client_id,
@@ -138961,6 +138988,7 @@ if (isEntry)
   });
 export {
   describeError,
+  isTransientNetworkError,
   waitConnected
 };
 /*! Bundled license information:
