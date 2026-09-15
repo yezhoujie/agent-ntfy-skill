@@ -2,7 +2,7 @@
 
 English · [中文](README.zh-CN.md)
 
-[![skills.sh](https://skills.sh/b/yezhoujie/agent-ntfy-skill)](https://skills.sh/yezhoujie/agent-ntfy-skill)
+[![skills.sh](https://skills.sh/b/yezhoujie/agent-remote-communication-skills)](https://skills.sh/yezhoujie/agent-remote-communication-skills)
 
 Let any AI coding CLI push the decisions it cannot make on its own to your phone through
 [ntfy](https://ntfy.sh), and send your verdict — or any instruction — straight back into the agent's session.
@@ -99,14 +99,14 @@ Android users keep the regular ntfy app; it has the reply box.
 Into the current project (by default the skill lands in `./.agents/skills/agent-ntfy`, with a symlink from `./.claude/skills/agent-ntfy`; with a single non-universal agent selected via `-a <agent>` the CLI copies it into that agent's directory instead):
 
 ```bash
-npx skills add yezhoujie/agent-ntfy-skill --skill agent-ntfy
+npx skills add yezhoujie/agent-remote-communication-skills --skill agent-ntfy
 ```
 
 For all projects at once, add `-g`: the files go to `~/.agents/skills/agent-ntfy` and `~/.claude/skills/agent-ntfy` becomes a symlink to them.
 
 > **Warning about `-g`.** If `~/.claude/skills/agent-ntfy` already exists as a real directory (a copy you put there by hand), the `skills` CLI deletes it and replaces it with the symlink. Back it up first. (Read from the CLI's source; not something to try on a directory you care about.)
 
-Any other way of putting `skills/agent-ntfy/` where your agent loads skills works just as well (`git clone` and copy the folder). To pin a version, install with a git ref: `npx skills add 'yezhoujie/agent-ntfy-skill#v0.1.0' --skill agent-ntfy` (§12).
+Any other way of putting `skills/agent-ntfy/` where your agent loads skills works just as well (`git clone` and copy the folder). To pin a version, install with a git ref: `npx skills add 'yezhoujie/agent-remote-communication-skills#v0.1.0' --skill agent-ntfy` (§12).
 
 The CLI is `scripts/agent_ntfy.py` inside that directory. Its own messages call it `agent-ntfy`; an alias
 makes the commands below shorter:
@@ -401,7 +401,7 @@ Set `AGENT_NTFY_LANG=zh` to get the same help and messages in Chinese. The daemo
 Versions are git tags `vX.Y.Z`; what changed is in [CHANGELOG.md](../../CHANGELOG.md). The `skills` CLI and skills.sh do not read a version number — an install is a snapshot of the repository content, and `npx skills update` refreshes it (`-g` for global installs, `-p` for the current project). To stay on a release, install with the tag as git ref; per the `skills` CLI documentation `update` then stays on that ref:
 
 ```bash
-npx skills add 'yezhoujie/agent-ntfy-skill#v0.1.0' --skill agent-ntfy
+npx skills add 'yezhoujie/agent-remote-communication-skills#v0.1.0' --skill agent-ntfy
 ```
 
 **Upgrading a machine that already runs a daemon** — do the steps in this order:

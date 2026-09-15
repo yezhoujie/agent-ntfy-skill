@@ -2,7 +2,7 @@
 
 [English](README.md) · 中文
 
-[![skills.sh](https://skills.sh/b/yezhoujie/agent-ntfy-skill)](https://skills.sh/yezhoujie/agent-ntfy-skill)
+[![skills.sh](https://skills.sh/b/yezhoujie/agent-remote-communication-skills)](https://skills.sh/yezhoujie/agent-remote-communication-skills)
 
 让任意 AI coding CLI 把它自己拿不定的事经 [ntfy](https://ntfy.sh) 推到你的手机，再把你的裁决——或任何一句指令——直接送回 agent 的会话；也能往同一部手机推单向通知。
 不需要服务器、不需要固定 IP、不需要付费服务，除 Python 3 外零依赖。
@@ -94,14 +94,14 @@ Android 用户照常用 ntfy app，它有输入框。
 装进当前项目（缺省 skill 落在 `./.agents/skills/agent-ntfy`，并从 `./.claude/skills/agent-ntfy` 打一个符号链接过去；用 `-a <agent>` 只指定一个非 universal 的 agent 时 CLI 会改为拷进那个 agent 自己的目录）：
 
 ```bash
-npx skills add yezhoujie/agent-ntfy-skill --skill agent-ntfy
+npx skills add yezhoujie/agent-remote-communication-skills --skill agent-ntfy
 ```
 
 要给所有项目用，加 `-g`：文件放到 `~/.agents/skills/agent-ntfy`，`~/.claude/skills/agent-ntfy` 变成指向它的符号链接。
 
 > **`-g` 的警告。** 如果 `~/.claude/skills/agent-ntfy` 已经是一个真实目录（你手动拷进去的副本），`skills` CLI 会把它删掉、换成符号链接。先备份。（这是读 CLI 源码得出的，没有在真实目录上试过。）
 
-任何能把 `skills/agent-ntfy/` 放到 agent 加载 skill 位置的办法都行（`git clone` 后拷目录也一样）。要钉住某个版本，安装时带 git ref：`npx skills add 'yezhoujie/agent-ntfy-skill#v0.1.0' --skill agent-ntfy`（§12）。
+任何能把 `skills/agent-ntfy/` 放到 agent 加载 skill 位置的办法都行（`git clone` 后拷目录也一样）。要钉住某个版本，安装时带 git ref：`npx skills add 'yezhoujie/agent-remote-communication-skills#v0.1.0' --skill agent-ntfy`（§12）。
 
 CLI 就是目录里的 `scripts/agent_ntfy.py`。它自己的提示文案里管自己叫 `agent-ntfy`；配一个 alias 下面的命令会短很多：
 
@@ -366,7 +366,7 @@ options:
 版本就是 git tag `vX.Y.Z`；改了什么见 [CHANGELOG.md](../../CHANGELOG.md)。`skills` CLI 与 skills.sh 都不读版本号——装到本机的是仓库内容的一份快照，`npx skills update` 刷新它（全局安装加 `-g`，当前项目加 `-p`）。想停在某个版本，安装时把 tag 当 git ref 带上，按 `skills` CLI 的文档，之后 `update` 会停在那个 ref 上：
 
 ```bash
-npx skills add 'yezhoujie/agent-ntfy-skill#v0.1.0' --skill agent-ntfy
+npx skills add 'yezhoujie/agent-remote-communication-skills#v0.1.0' --skill agent-ntfy
 ```
 
 **给一台已经跑着 daemon 的机器升级**——按这个顺序：

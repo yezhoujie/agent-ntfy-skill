@@ -1,7 +1,7 @@
-# agent-ntfy-skill
+# agent-remote-communication-skills
 
-[![skills.sh](https://skills.sh/b/yezhoujie/agent-ntfy-skill)](https://skills.sh/yezhoujie/agent-ntfy-skill)
-[![test](https://github.com/yezhoujie/agent-ntfy-skill/actions/workflows/test.yml/badge.svg)](https://github.com/yezhoujie/agent-ntfy-skill/actions/workflows/test.yml)
+[![skills.sh](https://skills.sh/b/yezhoujie/agent-remote-communication-skills)](https://skills.sh/yezhoujie/agent-remote-communication-skills)
+[![test](https://github.com/yezhoujie/agent-remote-communication-skills/actions/workflows/test.yml/badge.svg)](https://github.com/yezhoujie/agent-remote-communication-skills/actions/workflows/test.yml)
 
 Two skills that let any AI coding CLI push the decisions it cannot make on its own to your phone, and bring
 your verdict — or any instruction — straight back into the agent's session. Same idea, two channels:
@@ -20,8 +20,8 @@ Pushes each question as an ntfy notification with one button; you tap or type in
 fixed IP, no account, no paid service; Python 3 standard library only.
 
 ```bash
-npx skills add yezhoujie/agent-ntfy-skill --skill agent-ntfy       # into the current project
-npx skills add yezhoujie/agent-ntfy-skill --skill agent-ntfy -g    # for all projects (see the README before using -g on a machine that already has a hand-made copy)
+npx skills add yezhoujie/agent-remote-communication-skills --skill agent-ntfy       # into the current project
+npx skills add yezhoujie/agent-remote-communication-skills --skill agent-ntfy -g    # for all projects (see the README before using -g on a machine that already has a hand-made copy)
 ```
 
 The skill lives in [`skills/agent-ntfy/`](skills/agent-ntfy/). macOS is tested end to end on real machines; Linux and Windows
@@ -39,8 +39,8 @@ too. Needs a Feishu custom app, created by scanning a QR code with your own acco
 Node.js 22 or newer, one self-contained file.
 
 ```bash
-npx skills add yezhoujie/agent-ntfy-skill --skill agent-lark       # into the current project
-npx skills add yezhoujie/agent-ntfy-skill --skill agent-lark -g    # for all projects
+npx skills add yezhoujie/agent-remote-communication-skills --skill agent-lark       # into the current project
+npx skills add yezhoujie/agent-remote-communication-skills --skill agent-lark -g    # for all projects
 ```
 
 The skill lives in [`skills/agent-lark/`](skills/agent-lark/). macOS is tested end to end on real machines, inside herdr; Linux and Windows

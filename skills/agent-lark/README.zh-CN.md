@@ -76,7 +76,7 @@ agent ──ask（stdin 里的 JSON）──▶ agent-lark ──本机 socket�
 装进当前项目（缺省 skill 落在 `./.agents/skills/agent-lark`，并从 `./.claude/skills/agent-lark` 打一个符号链接过去；用 `-a <agent>` 只指定一个非 universal 的 agent 时 CLI 会改为拷进那个 agent 自己的目录）：
 
 ```bash
-npx skills add yezhoujie/agent-ntfy-skill --skill agent-lark
+npx skills add yezhoujie/agent-remote-communication-skills --skill agent-lark
 ```
 
 要给所有项目用，加 `-g`：文件放到 `~/.agents/skills/agent-lark`，`~/.claude/skills/agent-lark` 变成指向它的符号链接。
@@ -378,7 +378,7 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
 版本就是 git tag `agent-lark/vX.Y.Z`（仓库里有两个 skill，各打各的 tag）；改了什么见 [CHANGELOG.md](../../CHANGELOG.md)。0.1.0 是首个版本，眼下还没有更早的版本可升；下面的步骤是给之后的版本用的。`skills` CLI 与 skills.sh 都不读版本号——装到本机的是仓库内容的一份快照，`npx skills update` 刷新它（全局安装加 `-g`，当前项目加 `-p`）。想停在某个版本，安装时把 tag 当 git ref 带上，按 `skills` CLI 的文档，之后 `update` 会停在那个 ref 上：
 
 ```bash
-npx skills add 'yezhoujie/agent-ntfy-skill#agent-lark/v0.1.0' --skill agent-lark
+npx skills add 'yezhoujie/agent-remote-communication-skills#agent-lark/v0.1.0' --skill agent-lark
 ```
 
 **给一台已经跑着 daemon 的机器升级**——按这个顺序：

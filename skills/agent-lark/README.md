@@ -81,7 +81,7 @@ Why herdr and nothing else: injecting means writing a line of text into the targ
 Into the current project (by default the skill lands in `./.agents/skills/agent-lark`, with a symlink from `./.claude/skills/agent-lark`; with a single non-universal agent selected via `-a <agent>` the CLI copies it into that agent's directory instead):
 
 ```bash
-npx skills add yezhoujie/agent-ntfy-skill --skill agent-lark
+npx skills add yezhoujie/agent-remote-communication-skills --skill agent-lark
 ```
 
 For all projects at once, add `-g`: the files go to `~/.agents/skills/agent-lark` and `~/.claude/skills/agent-lark` becomes a symlink to them.
@@ -383,7 +383,7 @@ The stderr text of each failure is in [references/failures.md](references/failur
 Versions are git tags `agent-lark/vX.Y.Z` (the repository holds two skills; each has its own tags); what changed is in [CHANGELOG.md](../../CHANGELOG.md). 0.1.0 is the first release, so there is nothing older to upgrade from yet; the procedure below is for the releases after it. The `skills` CLI and skills.sh do not read a version number — an install is a snapshot of the repository content, and `npx skills update` refreshes it (`-g` for global installs, `-p` for the current project). To stay on a release, install with the tag as git ref; per the `skills` CLI documentation `update` then stays on that ref:
 
 ```bash
-npx skills add 'yezhoujie/agent-ntfy-skill#agent-lark/v0.1.0' --skill agent-lark
+npx skills add 'yezhoujie/agent-remote-communication-skills#agent-lark/v0.1.0' --skill agent-lark
 ```
 
 **Upgrading a machine that already runs a daemon** — do the steps in this order:
