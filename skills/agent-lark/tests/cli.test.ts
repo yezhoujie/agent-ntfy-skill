@@ -4,12 +4,14 @@ import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { argv, isTransientNetworkError, waitConnected } from '../src/cli.js';
 import { serve, type Response } from '../src/ipc.js';
+import { SOCK_PATH_LIMIT } from '../src/paths.js';
+import { homeOfSockBytes } from './fixtures/long-home.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cli = resolve(here, '..', '..', 'dist', 'cli.mjs');
@@ -432,6 +434,77 @@ describe('with a fake daemon whose first handshakes fail', () => {
     assert.equal(s.away, false);
     assert.equal(s.chatId, null);
     assert.doesNotMatch(cmd(['status']).stdout, /oc_old/);
+  });
+});
+
+// ---- a state directory too deep for a Unix socket -----------------------------
+// Every entry that would start or reach the daemon says so at once, with the
+// same sentence, instead of spawning a daemon that dies or waiting 10 s.
+
+describe('with AGENT_LARK_HOME over the socket path limit', { skip: platform() === 'win32' ? 'named pipes have no sun_path' : false }, () => {
+  const home = homeOfSockBytes(SOCK_PATH_LIMIT + 1, 'al-cli-long-');
+  const project = realpathSync(tmp('agent-lark-long-proj-'));
+  after(() => rmSync(dirname(home), { recursive: true, force: true }));
+  const long = (args: string[], extra: NodeJS.ProcessEnv = {}) => {
+    const started = Date.now();
+    const r = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8', env: { ...isolatedEnv(), AGENT_LARK_HOME: home, ...extra }, input: '', cwd: project, timeout: 20_000 });
+    return { status: r.status, stdout: r.stdout, stderr: r.stderr, ms: Date.now() - started };
+  };
+  const sentence = /over this platform's limit of \d+; set AGENT_LARK_HOME to a shorter directory/;
+
+  test('daemon (foreground) exits 4 with the path sentence even with no credentials, and creates nothing', () => {
+    const r = long(['daemon']);
+    assert.equal(r.status, 4, r.stdout + r.stderr);
+    assert.match(r.stderr, sentence);
+    assert.doesNotMatch(r.stderr, /credentials/);
+    assert.equal(existsSync(join(home, 'daemon.pid')), false);
+  });
+
+  test('daemon --detach exits 4 at once: nothing spawned, no log, no 10 s wait', () => {
+    const r = long(['daemon', '--detach']);
+    assert.equal(r.status, 4, r.stdout + r.stderr);
+    assert.match(r.stderr, sentence);
+    assert.equal(existsSync(join(home, 'daemon.log')), false, 'a daemon was spawned (its log exists)');
+    assert.ok(r.ms < 8000, `took ${r.ms} ms`);
+  });
+
+  test('away on exits 4 with the path sentence before any daemon is started', () => {
+    const r = long(['away', 'on', '--name', 'x'], { AGENT_LARK_APP_ID: 'cli_fake', AGENT_LARK_APP_SECRET: 'fake-secret' });
+    assert.equal(r.status, 4, r.stdout + r.stderr);
+    assert.match(r.stderr, sentence);
+    assert.equal(existsSync(join(home, 'daemon.log')), false, 'a daemon was spawned (its log exists)');
+    assert.equal(existsSync(join(project, '.agent-lark')), false, 'state was written although nothing was bound');
+  });
+
+  test('away on with no credentials still reports the path first', () => {
+    const r = long(['away', 'on', '--name', 'x']);
+    assert.equal(r.status, 4, r.stdout + r.stderr);
+    assert.match(r.stderr, sentence);
+    assert.doesNotMatch(r.stderr, /credentials/);
+  });
+
+  test('status names the path problem instead of suggesting daemon --detach', () => {
+    const r = long(['status']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, sentence);
+    assert.doesNotMatch(r.stdout, /daemon --detach/);
+  });
+
+  test('away off still switches the local state off and exits 0', () => {
+    mkdirSync(join(project, '.agent-lark'));
+    writeFileSync(join(project, '.agent-lark', 'state.json'), JSON.stringify({ away: true, chatId: 'oc_x', target: project, updated: '' }));
+    const r = long(['away', 'off']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /^Remote mode is off\.$/m);
+    assert.match(r.stdout, /daemon is not running; local state cleared/);
+    const s = JSON.parse(readFileSync(join(project, '.agent-lark', 'state.json'), 'utf8')) as { away: boolean; chatId: string | null };
+    assert.deepEqual([s.away, s.chatId], [false, 'oc_x']);
+  });
+
+  test('daemon --status exits 1 with the path sentence', () => {
+    const r = long(['daemon', '--status']);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.match(r.stderr, sentence);
   });
 });
 

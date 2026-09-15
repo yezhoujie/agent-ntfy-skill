@@ -286,6 +286,7 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   statusHerdrIn: 'herdr: inside herdr, pane {pane}',
   statusHerdrOut: 'herdr: not inside herdr',
   statusDaemonDown: 'daemon: not running (agent-lark daemon --detach)',
+  statusDaemonPath: 'daemon: cannot run here ({problem})',
   statusDaemonLine: 'daemon: pid {pid}, connected {connected}, connection {connection}, pending questions {pending}',
   statusNoBindings: 'bindings: none yet',
   statusBindings: 'bindings:',
@@ -299,6 +300,8 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   ipcTimeout: 'the daemon did not respond in time',
   ipcBadRequest: 'unparseable request',
   ipcUnknownRequest: 'unknown request',
+  // the state directory
+  sockPathTooLong: "socket path {path} is {bytes} bytes, over this platform's limit of {limit}; set AGENT_LARK_HOME to a shorter directory",
   // daemon replies
   notBound: 'this project is not bound yet; run agent-lark away on first',
   askPending: 'this project already has a question pending on the phone; one at a time',

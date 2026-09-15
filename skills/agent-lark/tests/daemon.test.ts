@@ -2,12 +2,13 @@
 import { after, test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, lstatSync, lutimesSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, truncateSync, utimesSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { platform, tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createFakeChannel, pageOf, type FakeChannelOptions } from './fixtures/fake-channel.js';
 import { createFakeHerdr } from './fixtures/fake-herdr.js';
+import { homeOfSockBytes } from './fixtures/long-home.js';
 
 process.env.AGENT_LARK_APP_ID = 'cli_fake';
 process.env.AGENT_LARK_APP_SECRET = 'fake-secret';
@@ -15,7 +16,7 @@ process.env.AGENT_LARK_APP_SECRET = 'fake-secret';
 const { runDaemon, DaemonStartError } = await import('../src/daemon.js');
 const { request } = await import('../src/ipc.js');
 const { fill, msg, t } = await import('../src/texts.js');
-const { readProjectState, writeProjectState } = await import('../src/paths.js');
+const { readProjectState, writeProjectState, SOCK_PATH_LIMIT, sockPathProblem } = await import('../src/paths.js');
 
 type Daemon = Awaited<ReturnType<typeof runDaemon>>;
 const homes: string[] = [];
@@ -889,6 +890,25 @@ test('setAway false with no live group is a no-op ack; setAway true still needs 
   assert.equal(on.ok, false);
   if (!on.ok) assert.equal(on.code, 4);
   await daemon.stop();
+});
+
+test('a state directory whose socket path is over the limit stops the daemon with code 4 and the path sentence, before credentials are looked at', { ...PER_TEST, skip: platform() === 'win32' ? 'named pipes have no sun_path' : false }, async () => {
+  const long = homeOfSockBytes(SOCK_PATH_LIMIT + 1, 'al-daemon-long-');
+  homes.push(dirname(long));
+  process.env.AGENT_LARK_HOME = long;
+  const creds = { id: process.env.AGENT_LARK_APP_ID, secret: process.env.AGENT_LARK_APP_SECRET };
+  delete process.env.AGENT_LARK_APP_ID;
+  delete process.env.AGENT_LARK_APP_SECRET;
+  try {
+    await assert.rejects(
+      runDaemon({ createChannel: () => createFakeChannel().channel, herdr: createFakeHerdr().deps, connectRetryMs: 50 }),
+      (err: unknown) => err instanceof DaemonStartError && err.code === 4 && err.message === sockPathProblem() && /over this platform's limit/.test(err.message),
+    );
+    assert.equal(existsSync(join(long, 'daemon.pid')), false);
+  } finally {
+    process.env.AGENT_LARK_APP_ID = creds.id;
+    process.env.AGENT_LARK_APP_SECRET = creds.secret;
+  }
 });
 
 test('a damaged bindings.json stops the daemon from starting with code 4 and the file path', PER_TEST, async () => {

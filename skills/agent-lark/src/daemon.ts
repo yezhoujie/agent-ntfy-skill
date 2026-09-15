@@ -9,7 +9,7 @@ import { askCard, checkerName, notifyCard, optionIdOf, receiptCard, statusCard }
 import { resolveCreds } from './creds.js';
 import { agentList, findPaneForProject, promptPane } from './herdr.js';
 import { isDaemonListening, serve, type Candidate, type Request, type Response } from './ipc.js';
-import { ensureHomeDir, homeDir, ipcEndpoint, logPath, mediaDir, pidPath, sockPath, writeProjectState } from './paths.js';
+import { ensureHomeDir, homeDir, ipcEndpoint, logPath, mediaDir, pidPath, sockPath, sockPathProblem, writeProjectState } from './paths.js';
 import { fill, msg, t } from './texts.js';
 import { validateAsk, validateNotify, ValidationError, type AskPayload, type Lang } from './validate.js';
 
@@ -263,6 +263,10 @@ function isTicked(v: unknown): boolean {
 }
 
 export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
+  // Checked before anything else: a state directory too deep for a Unix
+  // socket cannot be listened on at all, whatever the credentials.
+  const pathProblem = sockPathProblem();
+  if (pathProblem) throw new DaemonStartError(4, pathProblem);
   const creds = resolveCreds();
   if (!creds) throw new DaemonStartError(4, msg.daemonNoCreds);
   ensureHomeDir();

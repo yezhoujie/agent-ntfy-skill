@@ -1,7 +1,7 @@
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
 import { unlinkSync } from 'node:fs';
 import { platform } from 'node:os';
-import { ensureHomeDir, ipcEndpoint, sockPath } from './paths.js';
+import { ensureHomeDir, ipcEndpoint, sockPath, sockPathProblem } from './paths.js';
 import { fill, msg } from './texts.js';
 
 /** Every request a thin client can make of the daemon. */
@@ -79,8 +79,12 @@ export interface Candidate {
   releasedAt: string | null;
 }
 
-/** down: nothing listening · connect: other connect error · closed: dropped before the result · timeout: client-side timeoutMs · parse: the daemon could not parse the request */
-export type FailureReason = 'down' | 'connect' | 'closed' | 'timeout' | 'parse';
+/**
+ * down: nothing listening · connect: other connect error · closed: dropped before the result ·
+ * timeout: client-side timeoutMs · parse: the daemon could not parse the request ·
+ * path: the socket path is over the platform's limit, so no daemon can listen there (`sockPathProblem`).
+ */
+export type FailureReason = 'down' | 'connect' | 'closed' | 'timeout' | 'parse' | 'path';
 
 /**
  * Frames the daemon may push before the final one. The wrapper uses `frame`,
@@ -117,6 +121,8 @@ export function request(
       resolve(r);
     };
 
+    // Judged on the path being dialed, before anything can change it.
+    const pathProblem = sockPathProblem();
     const sock = createConnection(ipcEndpoint());
     let buf = '';
 
@@ -144,6 +150,12 @@ export function request(
       }
     });
     sock.on('error', (err: NodeJS.ErrnoException) => {
+      // A path the platform cannot bind fails with EINVAL on both sides; the
+      // fix is the directory, not the daemon, so say that instead.
+      if (pathProblem) {
+        done({ ok: false, code: 3, message: pathProblem, reason: 'path' });
+        return;
+      }
       const down = err.code === 'ENOENT' || err.code === 'ECONNREFUSED';
       done({
         ok: false,

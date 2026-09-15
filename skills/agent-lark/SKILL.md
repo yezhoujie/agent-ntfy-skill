@@ -195,7 +195,7 @@ agent-lark send-file ./shot.png --caption "Current layout"
 | 1 | Input rejected; stderr lists every problem | **no** | fix the JSON (or the argument) and call again |
 | 2 | No reply within the timeout | yes | decide yourself or ask again; a late reply still reaches you as an instruction |
 | 3 | Channel failure: daemon not running, not connected to Feishu, send failed, daemon stopping; stderr says which | see stderr | start the daemon or wait for the connection (below), retry once; still 3 → stop and tell the user |
-| 4 | A human must act: no credentials, project not bound, a question already pending, earlier groups to choose from; for `unbind --dissolve`, Feishu refused to dissolve the group | no | relay stderr to the user in your own conversation, then retry (after `unbind --dissolve` there is nothing to retry: the record is gone, the group is the human's to dissolve) |
+| 4 | A human must act: no credentials, project not bound, a question already pending, earlier groups to choose from, a state directory too deep for a Unix socket (`daemon` / `away on`: `set AGENT_LARK_HOME to a shorter directory`); for `unbind --dissolve`, Feishu refused to dissolve the group | no | relay stderr to the user in your own conversation, then retry (after `unbind --dissolve` there is nothing to retry: the record is gone, the group is the human's to dissolve) |
 | 130 | The `ask` client itself was interrupted (Ctrl-C); the card is cancelled, the daemon is unaffected — do not restart it | yes | call again |
 
 `notify` and `send-file` use 0 / 1 / 3 / 4 with the same meanings and never 2. Stderr text per case, what

@@ -10,7 +10,7 @@ import { closePane, currentPaneId, insideHerdr, promptPane, quoteForPaneShell, r
 import { InputInterrupted, terminalIO, type SetupIO } from './tty.js';
 import { taskNameProblem } from './bindings.js';
 import { isDaemonListening, request, type Request, type Response } from './ipc.js';
-import { ensureHomeDir, homeDir, ipcEndpoint, logPath, pidPath, projectLabel, projectRoot, readProjectState, writeProjectState } from './paths.js';
+import { ensureHomeDir, homeDir, ipcEndpoint, logPath, pidPath, projectLabel, projectRoot, readProjectState, sockPathProblem, writeProjectState } from './paths.js';
 import { both, en, fill, msg, zh } from './texts.js';
 import { validateAsk, validateNotify, ValidationError } from './validate.js';
 
@@ -554,7 +554,11 @@ const daemonAlive = (): Promise<boolean> => isDaemonListening(2000);
  * a child of a shell command it would die with it, and every message the human
  * sends afterwards would be lost with no error on their side.
  */
-async function startDaemonDetached(): Promise<{ ok: boolean; message: string }> {
+async function startDaemonDetached(): Promise<{ ok: true; message: string } | { ok: false; code: 3 | 4; message: string }> {
+  // A daemon cannot listen on a path over the limit: say so now, rather than
+  // spawn one that dies and wait 10 s for an answer that never comes.
+  const problem = sockPathProblem();
+  if (problem) return { ok: false, code: 4, message: problem };
   if (await daemonAlive()) return { ok: true, message: msg.daemonAlready };
   ensureHomeDir();
   const out = openSync(logPath(), 'a');
@@ -566,7 +570,7 @@ async function startDaemonDetached(): Promise<{ ok: boolean; message: string }> 
     await new Promise((r) => setTimeout(r, 250));
     if (await isDaemonListening(1000)) return { ok: true, message: fill(msg.daemonStarted, { pid: child.pid ?? '?', log: logPath() }) };
   }
-  return { ok: false, message: fill(msg.daemonNoReply, { log: logPath() }) };
+  return { ok: false, code: 3, message: fill(msg.daemonNoReply, { log: logPath() }) };
 }
 
 
@@ -615,7 +619,7 @@ async function cmdDaemon(args: string[]): Promise<void> {
   }
   if (a.flag('detach')) {
     const r = await startDaemonDetached();
-    if (!r.ok) die(3, r.message);
+    if (!r.ok) die(r.code, r.message);
     process.stdout.write(`${r.message}\n`);
     return;
   }
@@ -837,9 +841,13 @@ async function cmdAway(args: string[]): Promise<void> {
     // user to run three commands in order is how a channel ends up switched
     // half-on.
     const choice = bindArgs(a);
+    // The path is checked ahead of the credentials: on a fresh install it is
+    // the one thing setup cannot fix.
+    const pathProblem = sockPathProblem();
+    if (pathProblem) die(4, pathProblem);
     if (!resolveCreds()) die(4, msg.awayNoCreds);
     const d = await startDaemonDetached();
-    if (!d.ok) die(3, d.message);
+    if (!d.ok) die(d.code, d.message);
     process.stdout.write(`${d.message}\n`);
     const link = await waitConnected(() => request({ type: 'ping' }, { timeoutMs: 2000 }), CONNECT_WAIT_MS);
     if (!link.connected) die(3, fill(msg.awayNotConnected, { error: link.error }));
@@ -859,9 +867,10 @@ async function cmdAway(args: string[]): Promise<void> {
     }
   }
   const res = await request({ type: 'setAway', root, away, paneId });
-  if (!away && !res.ok && res.reason === 'down') {
+  if (!away && !res.ok && (res.reason === 'down' || res.reason === 'path')) {
     // Switching off must not need the daemon: the file is what the agent's
     // rule reads, and the daemon's own copy is realigned by the next away on / off.
+    // A path no daemon can listen on is the same as no daemon.
     const state = writeProjectState(root, { away: false });
     if (!state) process.stdout.write(`${msg.awayNeverUsed}\n`);
     else process.stdout.write(`${msg.awayOff}\n${msg.awayOffLocal}\n`);
@@ -881,7 +890,7 @@ async function cmdStatus(): Promise<void> {
   process.stdout.write(`${insideHerdr() ? fill(msg.statusHerdrIn, { pane: currentPaneId() ?? '?' }) : msg.statusHerdrOut}\n`);
   const ping = await request({ type: 'ping' }, { timeoutMs: 5000 });
   if (!ping.ok) {
-    process.stdout.write(`${msg.statusDaemonDown}\n`);
+    process.stdout.write(`${ping.reason === 'path' ? fill(msg.statusDaemonPath, { problem: ping.message }) : msg.statusDaemonDown}\n`);
     return;
   }
   if (ping.kind === 'pong') {

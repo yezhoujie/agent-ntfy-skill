@@ -123,6 +123,17 @@ agent-lark: daemon is not running. Start it first: agent-lark daemon --detach
 Start it as described in [daemon.md](daemon.md) §2, then call again. A different connect error reads
 `cannot connect to the daemon: <message>`.
 
+**State directory too deep for a Unix socket** (not sent; every command that talks to the daemon, `away off` excepted):
+
+```
+agent-lark: socket path /very/deep/…/.agent-lark/daemon.sock is 112 bytes, over this platform's limit of 104; set AGENT_LARK_HOME to a shorter directory
+```
+
+No daemon can listen there, so starting one does not help: the user has to point `AGENT_LARK_HOME` (or
+`--home`) at a shorter directory (macOS and the BSDs allow 104 bytes for the socket path, Linux 108;
+Windows has no limit). `daemon` / `daemon --detach` / `away on` exit 4 with the same sentence (§5); `daemon --status`
+exits 1 with it; `status` prints `daemon: cannot run here (<the sentence>)` (rc 0); `away off` still switches the local state off (rc 0, `daemon is not running; local state cleared`).
+
 **Daemon up, Feishu not reached yet** (not sent):
 
 ```
@@ -183,6 +194,11 @@ agent-lark: this project is not bound yet; run agent-lark away on first
 ```
 
 Run `away on` in the project (SKILL.md, "Remote mode"); it may itself exit 4 with one of the next two.
+
+**State directory too deep for a Unix socket** (`daemon`, `daemon --detach`, `away on`; nothing started, no 10 s wait):
+`agent-lark: socket path <home>/daemon.sock is N bytes, over this platform's limit of M; set AGENT_LARK_HOME to a shorter directory`
+— checked before the credentials, so it is the first thing a fresh install on a deep path sees. The user
+sets `AGENT_LARK_HOME` (or passes `--home <dir>`) to a shorter directory; §4 has the client-side form.
 
 **No credentials** (`away on`): `agent-lark: No Feishu app credentials yet. Run once: agent-lark setup`
 — ask the user whether to scan a QR code for a new app or reuse an app they already have, then follow
@@ -275,16 +291,16 @@ Lines starting `note: ` on stderr while a command blocks are informational; the 
 | `setup` | on a terminal: the menu (`1) … QR code / 2) reuse …`), then the chosen branch; piped (an agent running it): the QR code straight away — app registered, credentials saved (`✅ …`), next steps printed. Credentials already stored and neither `--update` nor `--reset` given ⇒ only `Credentials already exist (from <origin>). Add --update … --reset …` (rc 0) | – | the scan-code registration failed (after up to 3 retries on network errors) · `AGENT_LARK_OFFLINE=1` | the QR code expired before it was scanned |
 | `setup --reuse` | on a terminal: App ID asked (must be `cli_` + letters and digits, asked again otherwise), App Secret asked with echo off, one probe against Feishu, `✅ Credentials work; app name "…"`, saved, the scopes / event / callback to enable by hand and `Publish a version afterwards` printed. Without a terminal: inside herdr, hands off to a new pane and prints `The interactive setup is running in herdr pane <id>: …` (rc 0) | three probes refused | `AGENT_LARK_OFFLINE=1` · the pane could not be opened or run (`could not open a herdr pane …`, with the command) | no terminal and no herdr (`setup --reuse asks for … interactively …`, with the command) |
 | `setup --reuse --report-to <pane> [--close-pane]` | what the handed-off pane runs: as `setup --reuse` on a terminal, plus one `[agent-lark] setup:` line injected into `<pane>` at the end (below); `--close-pane` asks `Close this pane? [Y/n]` after success | as above | as above | – |
-| `daemon --detach` | started (pid printed), or `daemon is already running` | – | did not answer within 10 s | – |
-| `daemon` (foreground) | clean shutdown after a signal or `--stop` | – | already running | no credentials · `bindings.json` unreadable |
-| `daemon --status` | two status lines | not running / no answer | – | – |
+| `daemon --detach` | started (pid printed), or `daemon is already running` | – | did not answer within 10 s | socket path over the limit (nothing spawned) |
+| `daemon` (foreground) | clean shutdown after a signal or `--stop` | – | already running | socket path over the limit · no credentials · `bindings.json` unreadable |
+| `daemon --status` | two status lines | not running / no answer / socket path over the limit | – | – |
 | `daemon --stop` | `daemon: stopped` · `daemon: was not running` | – | still answering 10 s after the request | questions pending (no `--force`) |
 | `bind` | `✅ Created … / ✅ Took back … / ✅ Already bound … / ✅ Bound to existing group oc_…` | task name too long · `--reuse` + `--new` · `--reuse` not a candidate · `--chat` is another project's live group | not connected to Feishu · group creation failed | candidates to choose from · no owner recorded · creation refused for permissions · switching groups with a question pending |
 | `unbind` | `Unbound. The Feishu group "…" stays in Feishu; the next away on in this directory offers to rename and reuse it.` | not bound | daemon not running | a question is pending |
 | `unbind --dissolve` | `Dissolved Feishu group "…"; the local record is removed.` | not bound | daemon not running · not connected to Feishu (nothing touched) | a question is pending (nothing touched) · Feishu refused to dissolve or the call failed (§5: record removed, group still there) |
 | `rename "<task>"` | `Renamed the Feishu group to "<task> [<dir>]"` | empty or over-long name | not connected · Feishu refused (§9) | no live group |
-| `away on` | remote mode enabled (daemon line, group line, `Remote mode is on: …`; outside herdr one more line) | task name too long · `--reuse` + `--new` · `--reuse` not a candidate | daemon did not come up · not connected within 15 s · group creation failed | no credentials · candidates to choose from · no owner · creation refused for permissions |
-| `away off` | `Remote mode is off.` (also when nothing is bound). Daemon not running ⇒ still rc 0: the state file is written locally and a second line says `daemon is not running; local state cleared` (no state file ⇒ `This project has never used agent-lark (no .agent-lark/state.json)`) | – | an IPC error other than "not running" | – |
+| `away on` | remote mode enabled (daemon line, group line, `Remote mode is on: …`; outside herdr one more line) | task name too long · `--reuse` + `--new` · `--reuse` not a candidate | daemon did not come up · not connected within 15 s · group creation failed | no credentials · socket path over the limit (nothing started) · candidates to choose from · no owner · creation refused for permissions |
+| `away off` | `Remote mode is off.` (also when nothing is bound). Daemon not running, or the socket path over the limit ⇒ still rc 0: the state file is written locally and a second line says `daemon is not running; local state cleared` (no state file ⇒ `This project has never used agent-lark (no .agent-lark/state.json)`) | – | an IPC error other than "not running" / "path over the limit" | – |
 | `away status [--json]` | printed, whatever the state | – | – | – |
 | `status` | printed: credentials and their layers, herdr, daemon (or `daemon: not running (agent-lark daemon --detach)`), bindings | – | – | – |
 | `help` / no command | the command summary | unknown command | – | – |

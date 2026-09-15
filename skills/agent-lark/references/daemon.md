@@ -53,6 +53,7 @@ in the log and `--detach` reports `daemon started but did not answer within 10 s
 
 | stderr / log line | rc | meaning |
 |---|---|---|
+| `socket path <home>/daemon.sock is N bytes, over this platform's limit of M; set AGENT_LARK_HOME to a shorter directory` | 4 (foreground and `--detach` alike; `--detach` says it before spawning anything, no 10 s wait) | the state directory is too deep for a Unix socket path (M = 104 on macOS and the BSDs, 108 on Linux; never on Windows, where the endpoint is a named pipe). Checked before the credentials, so it shows with no credentials too (§7) |
 | `no Feishu app credentials found. Run agent-lark setup first (or set AGENT_LARK_APP_ID / AGENT_LARK_APP_SECRET)` | 4 | nothing in any credential layer (§7) |
 | `daemon is already running` | 3 (foreground) · 0 (`--detach`, nothing started) | something already answers on the endpoint |
 | `cannot read the bindings file <home>/bindings.json: <error>` + `Fix or move it; it is left untouched.` | 4 | the file exists but is not readable JSON; the daemon never replaces it with an empty one |
@@ -277,7 +278,7 @@ between two daily sweeps (§4). `daemon --status` does not report the bindings s
 
 | variable | default | effect |
 |---|---|---|
-| `AGENT_LARK_HOME` | `~/.agent-lark` | the daemon's state directory (§3). `--home <dir>` (or `--home=<dir>`, anywhere on the command line) sets it for that command and for a daemon it starts, and the interactive `setup --reuse` handed to a new pane is given it explicitly. With the Unix-socket transport keep the path short: a socket path over the system limit makes every command fail with `connect EINVAL …/daemon.sock` |
+| `AGENT_LARK_HOME` | `~/.agent-lark` | the daemon's state directory (§3). `--home <dir>` (or `--home=<dir>`, anywhere on the command line) sets it for that command and for a daemon it starts, and the interactive `setup --reuse` handed to a new pane is given it explicitly. With the Unix-socket transport the path has a limit (`<home>/daemon.sock` at most 104 bytes on macOS and the BSDs, 108 on Linux): the daemon refuses to start over it (rc 4, `socket path … is N bytes, over this platform's limit of M; set AGENT_LARK_HOME to a shorter directory`, §2), `daemon --detach` and `away on` say the same before spawning anything, and every other command answers rc 3 with the same sentence instead of `connect EINVAL` (`status` shows it as `daemon: cannot run here (…)`); `away off` still switches the local state off. Windows (named pipe) has no such limit |
 | `AGENT_LARK_APP_ID` / `AGENT_LARK_APP_SECRET` | – | app credentials from the environment, for one process: a runtime override that wins over the stores (below). The only way to supply credentials besides `setup` |
 | `AGENT_LARK_OWNER_OPEN_ID` | – | the app owner's `open_id` when credentials come from the environment; needed to create groups and for `--urgent` (`setup` records it in the store on its own, from the QR registration or from the probe of a reused app) |
 | `AGENT_LARK_STORE` | `keychain` where one is usable, else `file` | where `setup` writes: `keychain` (macOS Keychain · Windows DPAPI-encrypted file `<config>/credentials.dpapi` · Linux `secret-tool`), `file` (`<config>/credentials.json`, mode 0600), `none` (this run only) |

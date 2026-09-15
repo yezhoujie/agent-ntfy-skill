@@ -136538,6 +136538,7 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       statusHerdrIn: "herdr: inside herdr, pane {pane}",
       statusHerdrOut: "herdr: not inside herdr",
       statusDaemonDown: "daemon: not running (agent-lark daemon --detach)",
+      statusDaemonPath: "daemon: cannot run here ({problem})",
       statusDaemonLine: "daemon: pid {pid}, connected {connected}, connection {connection}, pending questions {pending}",
       statusNoBindings: "bindings: none yet",
       statusBindings: "bindings:",
@@ -136551,6 +136552,8 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       ipcTimeout: "the daemon did not respond in time",
       ipcBadRequest: "unparseable request",
       ipcUnknownRequest: "unknown request",
+      // the state directory
+      sockPathTooLong: "socket path {path} is {bytes} bytes, over this platform's limit of {limit}; set AGENT_LARK_HOME to a shorter directory",
       // daemon replies
       notBound: "this project is not bound yet; run agent-lark away on first",
       askPending: "this project already has a question pending on the phone; one at a time",
@@ -136940,6 +136943,12 @@ function ensureHomeDir() {
   mkdirSync2(dir, { recursive: true, mode: 448 });
   return dir;
 }
+function sockPathProblem() {
+  if (platform2() === "win32") return null;
+  const path2 = sockPath();
+  const bytes = Buffer.byteLength(path2, "utf8");
+  return bytes > SOCK_PATH_LIMIT ? fill(msg.sockPathTooLong, { path: path2, bytes, limit: SOCK_PATH_LIMIT }) : null;
+}
 function ipcEndpoint() {
   if (platform2() === "win32") return `\\\\.\\pipe\\agent-lark-${createHash2("sha1").update(homeDir()).digest("hex").slice(0, 12)}`;
   return sockPath();
@@ -136999,11 +137008,13 @@ function writeProjectState(root, patch, opts = {}) {
   renameSync2(tmp, projectStatePath(root));
   return next;
 }
-var sockPath, pidPath, logPath, bindingsPath, mediaDir, projectStateDir, projectStatePath;
+var sockPath, SOCK_PATH_LIMIT, pidPath, logPath, bindingsPath, mediaDir, projectStateDir, projectStatePath;
 var init_paths = __esm({
   "src/paths.ts"() {
     "use strict";
+    init_texts();
     sockPath = () => join2(homeDir(), "daemon.sock");
+    SOCK_PATH_LIMIT = ["darwin", "freebsd", "openbsd", "netbsd"].includes(platform2()) ? 104 : 108;
     pidPath = () => join2(homeDir(), "daemon.pid");
     logPath = () => join2(homeDir(), "daemon.log");
     bindingsPath = () => join2(homeDir(), "bindings.json");
@@ -137212,6 +137223,7 @@ function request(req, opts = {}) {
       }
       resolve3(r);
     };
+    const pathProblem = sockPathProblem();
     const sock = createConnection(ipcEndpoint());
     let buf = "";
     sock.on("connect", () => {
@@ -137239,6 +137251,10 @@ function request(req, opts = {}) {
       }
     });
     sock.on("error", (err) => {
+      if (pathProblem) {
+        done({ ok: false, code: 3, message: pathProblem, reason: "path" });
+        return;
+      }
       const down = err.code === "ENOENT" || err.code === "ECONNREFUSED";
       done({
         ok: false,
@@ -137732,6 +137748,8 @@ function isTicked(v) {
   return false;
 }
 async function runDaemon(deps = {}) {
+  const pathProblem = sockPathProblem();
+  if (pathProblem) throw new DaemonStartError(4, pathProblem);
   const creds = resolveCreds();
   if (!creds) throw new DaemonStartError(4, msg.daemonNoCreds);
   ensureHomeDir();
@@ -139181,6 +139199,8 @@ async function cmdSetup(args) {
 }
 var daemonAlive = () => isDaemonListening(2e3);
 async function startDaemonDetached() {
+  const problem = sockPathProblem();
+  if (problem) return { ok: false, code: 4, message: problem };
   if (await daemonAlive()) return { ok: true, message: msg.daemonAlready };
   ensureHomeDir();
   const out = openSync(logPath(), "a");
@@ -139192,7 +139212,7 @@ async function startDaemonDetached() {
     await new Promise((r) => setTimeout(r, 250));
     if (await isDaemonListening(1e3)) return { ok: true, message: fill(msg.daemonStarted, { pid: child.pid ?? "?", log: logPath() }) };
   }
-  return { ok: false, message: fill(msg.daemonNoReply, { log: logPath() }) };
+  return { ok: false, code: 3, message: fill(msg.daemonNoReply, { log: logPath() }) };
 }
 async function cmdDaemon(args) {
   const a = argv("daemon", args);
@@ -139241,7 +139261,7 @@ async function cmdDaemon(args) {
   }
   if (a.flag("detach")) {
     const r = await startDaemonDetached();
-    if (!r.ok) die(3, r.message);
+    if (!r.ok) die(r.code, r.message);
     process.stdout.write(`${r.message}
 `);
     return;
@@ -139430,9 +139450,11 @@ async function cmdAway(args) {
   let chatId;
   if (away) {
     const choice = bindArgs(a);
+    const pathProblem = sockPathProblem();
+    if (pathProblem) die(4, pathProblem);
     if (!resolveCreds()) die(4, msg.awayNoCreds);
     const d = await startDaemonDetached();
-    if (!d.ok) die(3, d.message);
+    if (!d.ok) die(d.code, d.message);
     process.stdout.write(`${d.message}
 `);
     const link = await waitConnected(() => request({ type: "ping" }, { timeoutMs: 2e3 }), CONNECT_WAIT_MS);
@@ -139448,7 +139470,7 @@ async function cmdAway(args) {
     }
   }
   const res = await request({ type: "setAway", root, away, paneId });
-  if (!away && !res.ok && res.reason === "down") {
+  if (!away && !res.ok && (res.reason === "down" || res.reason === "path")) {
     const state = writeProjectState(root, { away: false });
     if (!state) process.stdout.write(`${msg.awayNeverUsed}
 `);
@@ -139475,7 +139497,7 @@ async function cmdStatus() {
 `);
   const ping = await request({ type: "ping" }, { timeoutMs: 5e3 });
   if (!ping.ok) {
-    process.stdout.write(`${msg.statusDaemonDown}
+    process.stdout.write(`${ping.reason === "path" ? fill(msg.statusDaemonPath, { problem: ping.message }) : msg.statusDaemonDown}
 `);
     return;
   }

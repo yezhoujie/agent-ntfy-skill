@@ -30,6 +30,12 @@ pin (`npx skills add 'yezhoujie/agent-remote-communication-skills#v0.1.2' --skil
   in place (`bindings.sweep-skipped` in the log), and a project with a question pending keeps its live
   record that round. A live record found gone leaves the allowlist and sets `chatId: null` in the project's
   `state.json` (the `away` switch is left as it was, so the next `ask` exits 4 as not bound).
+- A state directory too deep for a Unix socket is reported as such: `daemon`, `daemon --detach` and
+  `away on` exit 4 with `socket path <home>/daemon.sock is N bytes, over this platform's limit of M; set
+  AGENT_LARK_HOME to a shorter directory` before anything is spawned (no 10 s wait, and before the
+  credentials are looked at), every other command answers rc 3 with the same sentence instead of
+  `connect EINVAL`, `status` shows it as `daemon: cannot run here (…)`, and `away off` still switches the
+  local state off. The limit is 104 bytes on macOS and the BSDs, 108 on Linux; Windows (named pipe) has none.
 
 #### Changed
 

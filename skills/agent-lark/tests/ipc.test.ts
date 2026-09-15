@@ -4,16 +4,17 @@ import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createConnection } from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { platform, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 
 const home = mkdtempSync(join(tmpdir(), 'al-ipc-'));
 process.env.AGENT_LARK_HOME = home;
 after(() => rmSync(home, { recursive: true, force: true }));
 
-const { ipcEndpoint } = await import('../src/paths.js');
+const { ipcEndpoint, SOCK_PATH_LIMIT, sockPathProblem } = await import('../src/paths.js');
 const { isDaemonListening, request, serve } = await import('../src/ipc.js');
 const { msg } = await import('../src/texts.js');
+const { homeOfSockBytes, withHome } = await import('./fixtures/long-home.js');
 
 type Handle = Parameters<typeof serve>[0]['handle'];
 const pong = { ok: true, kind: 'pong', status: { pid: 1, connection: 'fake', connected: true, lastError: null, pendingAsks: 0, bindings: 0, startedAt: '', media: { ttlDays: 7, files: 0, bytes: 0, at: '' } } } as const;
@@ -134,4 +135,16 @@ test('a client that hangs up mid-request triggers the handler onClose hook', asy
       await closedSeen;
     },
   );
+});
+
+test('a socket path over the limit: request() answers code 3 with reason "path" and the same sentence sockPathProblem gives', { skip: platform() === 'win32' ? 'named pipes have no sun_path' : false }, async () => {
+  const long = homeOfSockBytes(SOCK_PATH_LIMIT + 1, 'al-ipc-long-');
+  after(() => rmSync(dirname(long), { recursive: true, force: true }));
+  const res = await withHome(long, () => request({ type: 'ping' }, { timeoutMs: 1000 }));
+  assert.equal(res.ok, false);
+  if (res.ok) return;
+  assert.equal(res.code, 3);
+  assert.equal(res.reason, 'path');
+  assert.equal(res.message, withHome(long, () => sockPathProblem()));
+  assert.match(res.message, /over this platform's limit/);
 });

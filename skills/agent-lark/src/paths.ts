@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { basename, join, resolve } from 'node:path';
+import { fill, msg } from './texts.js';
 
 /** Daemon-side state directory. Everything the daemon owns lives here. */
 export function homeDir(): string {
@@ -18,6 +19,21 @@ export function ensureHomeDir(): string {
 
 /** Unix socket file; only meaningful off Windows (see ipcEndpoint). */
 export const sockPath = (): string => join(homeDir(), 'daemon.sock');
+
+/**
+ * Longest Unix socket path the platform binds: `sizeof(sun_path)`, every byte
+ * usable (libuv copies the name without a terminating NUL). A deeper state
+ * directory makes every bind and connect fail with EINVAL.
+ */
+export const SOCK_PATH_LIMIT = ['darwin', 'freebsd', 'openbsd', 'netbsd'].includes(platform()) ? 104 : 108;
+
+/** Why the socket path cannot be used, or null; always null on Windows (a named pipe has no such limit). */
+export function sockPathProblem(): string | null {
+  if (platform() === 'win32') return null;
+  const path = sockPath();
+  const bytes = Buffer.byteLength(path, 'utf8');
+  return bytes > SOCK_PATH_LIMIT ? fill(msg.sockPathTooLong, { path, bytes, limit: SOCK_PATH_LIMIT }) : null;
+}
 
 /**
  * Where the CLI meets the daemon. Unix: the socket file in the state dir.
