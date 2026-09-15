@@ -65,7 +65,17 @@ if (files.length === 0) {
 // result: cap each test, and exit once all are done. Anything after
 // `npm test --` (e.g. --test-name-pattern=x, or another --test-timeout) goes
 // to node --test after these, so it wins.
-const run = spawnSync(process.execPath, ['--test', '--test-timeout=30000', '--test-force-exit', ...process.argv.slice(2), ...files], {
+//
+// --test-force-exit only from Node 23 on. On Node 22 it makes the run drop
+// the last tests of a file from both the report and the totals — measured
+// on the same tree: 226 tests with the flag counted as 226, 218, 224, 220
+// over four runs, always "fail 0", and 226 four times without it — so a red
+// test there could go unseen. Without the flag a handle a test leaves
+// behind keeps the process alive instead, which is loud rather than silent;
+// every test that starts a daemon stops it itself.
+const major = Number(process.versions.node.split('.')[0]);
+const forceExit = major >= 23 ? ['--test-force-exit'] : [];
+const run = spawnSync(process.execPath, ['--test', '--test-timeout=30000', ...forceExit, ...process.argv.slice(2), ...files], {
   cwd: root,
   stdio: 'inherit',
 });

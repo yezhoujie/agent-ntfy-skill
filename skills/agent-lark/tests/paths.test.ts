@@ -77,15 +77,23 @@ function homeOfSockBytes(bytes: number): string {
   scratch.push(dirname(home));
   return home;
 }
-/** Bind a Unix socket at `path` for real and connect to it; resolves with the failing side's error code, or null when both worked. */
-const listenAt = (path: string): Promise<string | null> =>
+/**
+ * Bind a Unix socket at `path` for real and connect to it. `code` is the
+ * failing side's error code, null when both worked; `bound` says whether the
+ * requested path itself appeared on disk while listening — Node before 23
+ * (no UV_PIPE_NO_TRUNCATE) silently truncates an over-long path to the
+ * platform limit, so listen and connect both "work" on a shorter name and
+ * `server.address()` still reports the requested one.
+ */
+const listenAt = (path: string): Promise<{ code: string | null; bound: boolean }> =>
   new Promise((resolve) => {
     const srv = createServer((conn) => conn.end());
-    srv.once('error', (err: NodeJS.ErrnoException) => resolve(err.code ?? String(err)));
+    srv.once('error', (err: NodeJS.ErrnoException) => resolve({ code: err.code ?? String(err), bound: false }));
     srv.listen(path, () => {
+      const bound = existsSync(path);
       const client = createConnection(path);
-      client.once('error', (err: NodeJS.ErrnoException) => srv.close(() => resolve(`connect:${err.code ?? String(err)}`)));
-      client.once('connect', () => client.end(() => srv.close(() => resolve(null))));
+      client.once('error', (err: NodeJS.ErrnoException) => srv.close(() => resolve({ code: `connect:${err.code ?? String(err)}`, bound })));
+      client.once('connect', () => client.end(() => srv.close(() => resolve({ code: null, bound }))));
     });
   });
 
@@ -104,11 +112,14 @@ test('sockPathProblem: a socket path over the limit names the path, its length, 
   assert.equal(problem, `socket path ${join(home, 'daemon.sock')} is ${SOCK_PATH_LIMIT + 40} bytes, over this platform's limit of ${SOCK_PATH_LIMIT}; set AGENT_LARK_HOME to a shorter directory`);
 });
 
-test('the limit is real: a socket path of exactly the limit listens, one byte more is EINVAL — and sockPathProblem agrees on both', { skip: platform() === 'win32' ? 'named pipes have no sun_path' : false }, async () => {
+test('the limit is real: a socket path of exactly the limit listens and connects; one byte more is EINVAL or silently truncated — and sockPathProblem agrees on both', { skip: platform() === 'win32' ? 'named pipes have no sun_path' : false }, async () => {
   const atLimit = homeOfSockBytes(SOCK_PATH_LIMIT);
   assert.equal(withHome(atLimit, () => sockPathProblem()), null);
-  assert.equal(await listenAt(withHome(atLimit, () => sockPath())), null, `${SOCK_PATH_LIMIT} bytes did not listen`);
+  assert.deepEqual(await listenAt(withHome(atLimit, () => sockPath())), { code: null, bound: true }, `${SOCK_PATH_LIMIT} bytes did not listen at its own path`);
   const overLimit = homeOfSockBytes(SOCK_PATH_LIMIT + 1);
   assert.match(withHome(overLimit, () => sockPathProblem()) ?? '', /over this platform's limit/);
-  assert.equal(await listenAt(withHome(overLimit, () => sockPath())), 'EINVAL', `${SOCK_PATH_LIMIT + 1} bytes should be EINVAL`);
+  // Node 23+ refuses (EINVAL); Node 22 binds a truncated name instead, so the
+  // requested path never exists — either way the constant is the real edge.
+  const over = await listenAt(withHome(overLimit, () => sockPath()));
+  assert.ok(over.code === 'EINVAL' || (over.code === null && !over.bound), `${SOCK_PATH_LIMIT + 1} bytes should be refused or truncated, got ${JSON.stringify(over)}`);
 });
