@@ -71,7 +71,11 @@ Other rc 1 cases, one line each: `Unknown command "x". See agent-lark --help.` �
 `Usage: agent-lark away on [--name <task>] [--reuse <chat_id> | --new] | off | status [--json]` ·
 `task name: over 60 characters (code points), got N` · `--reuse and --new cannot be combined` ·
 `--reuse oc_…: not one of the groups this project could take back` · `group oc_… is the live group of another project (<root>); unbind it there first` ·
-`this project is not bound` (`unbind`) · `--store must be keychain / file / none` (`setup`).
+`this project is not bound` (`unbind`) · `unknown option --xxx. See agent-lark --help.` (any command: an
+option it does not know, including a `--name=value` spelling — every option takes its value as the next
+argument, `--home=<dir>` is the one exception) · `setup --reuse` after three refused credential probes:
+`连续 3 次没通过，先到开发者后台核对 App ID / App Secret，再跑一次 agent-lark setup --reuse。　/　3 attempts failed; check the App ID / App Secret in the developer console, then run agent-lark setup --reuse again.`
+(on the terminal, so in both languages).
 
 `send-file` rc 1: `file not found: <path>` · `not a regular file: <real path>` · `file too large: 12.3 MB, limit 10 MB`
 (images: `png jpg jpeg gif webp bmp` up to 10 MB; anything else 30 MB) · and, for a path outside the allowlist:
@@ -153,6 +157,13 @@ failure line (`daemon started but did not answer within 10 s; see the log: <home
 
 **`rename` refused by Feishu** (rc 3): `agent-lark: renaming the group failed: Feishu error <code> <msg>` (§9).
 
+**`setup --reuse` could not hand off** (rc 3, inside herdr without a terminal): `agent-lark: could not open a herdr pane for the interactive setup (<why>). Ask the user to run it in their own terminal:`
+followed by the command on its own line (`<node> <cli.mjs> --home <dir> setup --reuse`, absolute paths) — give
+the user that command. `<why>` is `pane split failed` or `pane run failed in <pane>`.
+
+**`setup` refused to go online** (rc 3): `agent-lark: offline: refusing to contact Feishu (AGENT_LARK_OFFLINE=1 is set)`
+— the environment carries the test-suite guard ([daemon.md](daemon.md) §7); unset it.
+
 **Anything unexpected** ends with rc 3 and the error's stack on stderr; relay it.
 
 ## 5. rc 4: a human must act
@@ -169,10 +180,12 @@ agent-lark: this project is not bound yet; run agent-lark away on first
 Run `away on` in the project (SKILL.md, "Remote mode"); it may itself exit 4 with one of the next two.
 
 **No credentials** (`away on`): `agent-lark: No Feishu app credentials yet. Run once: agent-lark setup`
-— ask the user whether to scan a QR code for a new app (`setup`) or reuse an existing app id
-(`setup --app-id cli_xxxxxxxx` with the secret in `AGENT_LARK_APP_SECRET` or the env file). Once they
-have chosen you may run `setup` for them (never without asking: it creates the app under their account),
-handing over the QR code's URL line or rendering it into a PNG yourself; the secret never goes on argv.
+— ask the user whether to scan a QR code for a new app or reuse an app they already have, then follow
+SKILL.md "Invoked with an argument", `setup`: QR code ⇒ run `setup` yourself and hand over the URL line
+(or a PNG of it); reuse ⇒ run `setup --reuse`, which opens its own herdr pane for the human to type the
+App ID and App Secret and reports back with one `[agent-lark] setup:` line (§8), or — outside herdr —
+exits 4 with the command for them (next paragraph). Never run either unasked: it creates or binds a Feishu
+app under their account.
 
 **Earlier groups to choose from** (`away on` / `bind` without `--reuse` / `--new`):
 
@@ -201,8 +214,17 @@ for a project that had a group before.
 `creating the group failed: <error>` with `If this is a permission problem the app lacks the im:chat (create group) scope: run agent-lark setup --update, or bind an existing group with --chat <chat_id>.`
 when Feishu refused for a permission reason (any other reason is rc 3 with the same text).
 
-**`setup --app-id` without a secret**: `App Secret not found. Do not put it on the command line (argv is visible machine-wide); use either:`
-with the two ways to supply it (rc 4). **QR code expired** before it was scanned:
+**`setup --reuse` with no terminal and no herdr** (rc 4, nothing stored):
+
+```
+agent-lark: setup --reuse asks for the App ID and App Secret interactively, and there is no terminal here (and no herdr to open one). Ask the user to run it in their own terminal:
+  /path/to/node /path/to/skills/agent-lark/dist/cli.mjs --home /home/me/.agent-lark setup --reuse
+```
+
+Give the user the second line as is (absolute paths, the `--home` of this run); they run it, type the App
+ID and the App Secret (not echoed), and tell you when it is done — nothing comes back to you by itself.
+
+**QR code expired** before it was scanned:
 `The QR code expired before it was scanned. Run again: agent-lark setup (original error: …)` (rc 4) — the user reruns `setup`
 (every `setup` line is printed in Chinese and English side by side).
 
@@ -212,6 +234,9 @@ Ctrl-C on the `ask` client is Node's default handling: exit 130, nothing on stde
 connection drop and rewrites the card to `⚠️ … · Cancelled` (buttons gone). Only the client was
 interrupted; the daemon is unaffected — **do not restart it**. Simply call `ask` again; a message the
 human types under the cancelled card arrives as an instruction.
+
+Ctrl-C in an interactive `setup` (the pane a handed-off `setup --reuse` runs in) is also rc 130, and the
+pane reports `[agent-lark] setup: interrupted before any credentials were stored` back to the agent (§8).
 
 ## 7. `note:` lines while waiting
 
@@ -227,8 +252,9 @@ Lines starting `note: ` on stderr while a command blocks are informational; the 
 
 | command | 0 | 1 | 3 | 4 |
 |---|---|---|---|---|
-| `setup` (QR) | app registered, credentials saved (`✅ …`), next steps printed; or `Credentials already exist (from <origin>). Add --update … --reset …` when some exist and neither `--update` nor `--reset` nor `--app-id` was given | `--store` not one of `keychain / file / none` | the scan-code registration failed (after up to 3 retries on network errors) | the QR code expired before it was scanned |
-| `setup --app-id cli_…` | credentials checked against Feishu once, saved | – | the pair does not work (`These credentials cannot reach Feishu: …`) | no secret in `AGENT_LARK_APP_SECRET` / the env file |
+| `setup` | on a terminal: the menu (`1) … QR code / 2) reuse …`), then the chosen branch; piped (an agent running it): the QR code straight away — app registered, credentials saved (`✅ …`), next steps printed. Credentials already stored and neither `--update` nor `--reset` given ⇒ only `Credentials already exist (from <origin>). Add --update … --reset …` (rc 0) | – | the scan-code registration failed (after up to 3 retries on network errors) · `AGENT_LARK_OFFLINE=1` | the QR code expired before it was scanned |
+| `setup --reuse` | on a terminal: App ID asked (must be `cli_` + letters and digits, asked again otherwise), App Secret asked with echo off, one probe against Feishu, `✅ Credentials work; app name "…"`, saved, the scopes / event / callback to enable by hand and `Publish a version afterwards` printed. Without a terminal: inside herdr, hands off to a new pane and prints `The interactive setup is running in herdr pane <id>: …` (rc 0) | three probes refused | `AGENT_LARK_OFFLINE=1` · the pane could not be opened or run (`could not open a herdr pane …`, with the command) | no terminal and no herdr (`setup --reuse asks for … interactively …`, with the command) |
+| `setup --reuse --report-to <pane> [--close-pane]` | what the handed-off pane runs: as `setup --reuse` on a terminal, plus one `[agent-lark] setup:` line injected into `<pane>` at the end (below); `--close-pane` asks `Close this pane? [Y/n]` after success | as above | as above | – |
 | `daemon --detach` | started (pid printed), or `daemon is already running` | – | did not answer within 10 s | – |
 | `daemon` (foreground) | clean shutdown after a signal or `--stop` | – | already running | no credentials · `bindings.json` unreadable |
 | `daemon --status` | two status lines | not running / no answer | – | – |
@@ -237,13 +263,27 @@ Lines starting `note: ` on stderr while a command blocks are informational; the 
 | `unbind` | `Unbound. The Feishu group "…" stays in Feishu; the next away on in this directory offers to rename and reuse it.` | not bound | daemon not running | a question is pending |
 | `rename "<task>"` | `Renamed the Feishu group to "<task> [<dir>]"` | empty or over-long name | not connected · Feishu refused (§9) | no live group |
 | `away on` | remote mode enabled (daemon line, group line, `Remote mode is on: …`; outside herdr one more line) | task name too long · `--reuse` + `--new` · `--reuse` not a candidate | daemon did not come up · not connected within 15 s · group creation failed | no credentials · candidates to choose from · no owner · creation refused for permissions |
-| `away off` | `Remote mode is off.` (also when nothing is bound) | – | daemon not running | – |
+| `away off` | `Remote mode is off.` (also when nothing is bound). Daemon not running ⇒ still rc 0: the state file is written locally and a second line says `daemon is not running; local state cleared` (no state file ⇒ `This project has never used agent-lark (no .agent-lark/state.json)`) | – | an IPC error other than "not running" | – |
 | `away status [--json]` | printed, whatever the state | – | – | – |
 | `status` | printed: credentials and their layers, herdr, daemon (or `daemon: not running (agent-lark daemon --detach)`), bindings | – | – | – |
 | `help` / no command | the command summary | unknown command | – | – |
 
 `away on` stops at the first failure and leaves the switch off: a failed step never leaves remote mode
 half-on.
+
+**The line a handed-off `setup --reuse` sends back.** The pane runs `setup --reuse --report-to <your pane> --close-pane`;
+when it ends, exactly one of these is injected into your session (via `herdr agent prompt`, so it arrives
+like any other prompt; the secret is masked as `***` wherever it could appear):
+
+| line | meaning |
+|---|---|
+| `[agent-lark] setup: credentials stored for cli_xxxxxxxx (<app name>); the scopes must be enabled in the developer console before use` | done (rc 0 in the pane); the human still has console work for a reused app |
+| `[agent-lark] setup: failed: 3 probes refused (<why>)` | the only `failed:` form: gave up (rc 1 in the pane); relay `<why>`. Any other end of the pane (`AGENT_LARK_OFFLINE`, a crash, the pane closed by hand) sends no line at all |
+| `[agent-lark] setup: interrupted before any credentials were stored` | Ctrl-C in the pane (rc 130); ask whether to try again |
+| `[agent-lark] setup: credentials already stored (<origin>); nothing changed. To switch apps run agent-lark setup --reset --reuse` | nothing was asked (rc 0) |
+
+If the line cannot be delivered, the pane prints `agent-lark: the result could not be reported to pane <pane> (<why>)` and
+its own exit code stands; the human sees the outcome on that pane.
 
 ## 9. Feishu-specific: urgent flag, renaming, group creation, voice notes, "Read 0/0"
 

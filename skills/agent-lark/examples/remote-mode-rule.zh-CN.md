@@ -11,15 +11,15 @@
 - 字段：`away`（开关）· `chatId`（本项目绑定的飞书群，`null` = 没有）· `target`（项目根）· `updated`。**里面永远没有凭据**，注入目标窗格也不在里面——那个记在 daemon 那边。
 
 ## 开 / 关（用户的话就是开关）
-- **开启**：「开启远程交互模式」「我走了，有事发手机」「切到手机」「remote on」。用户此刻还在键盘旁，**当场做三件**（选群、扫码只有人在时才做得了）：
+- **开启**：「开启远程交互模式」「我走了，有事发手机」「切到手机」「remote on」——用户对你输入 `/agent-lark on` 也是同一个意思（见 SKILL.md「Invoked with an argument」）。用户此刻还在键盘旁，**当场做三件**（选群、扫码只有人在时才做得了）：
   1. **从自己的终端窗格**跑 `$AL away on --name "<任务名>"`——一站式：daemon 没跑就起、等它连上飞书、把本项目绑到一个叫 `<任务名> [<目录名>]` 的群，然后才写开关。**stdout 原样转告用户。** 结果：
      - rc 0 ⇒ 完成。群那一行说明是哪个群（`Created Feishu group "…"` / `Took back Feishu group "…"` / `Connected to Feishu group "…"`）；开关行 `Remote mode is on: …` 在 herdr 内是最后一行；herdr 外它后面还跟一行 `Not inside herdr: …`（手机消息不注入、无卡住提醒）。
-     - rc 4 `No Feishu app credentials yet` ⇒ **先问用户**：扫码新建一个应用（`$AL setup`），还是复用已有的应用（`$AL setup --app-id cli_xxxxxxxx`，secret 放 `AGENT_LARK_APP_SECRET` 或 env 文件）。用户选定后替他跑 `setup`（把二维码的 URL 行交给他，或渲成 PNG 打开）或由他自己跑；跑完再 `away on` 一次。
+     - rc 4 `No Feishu app credentials yet` ⇒ **先问用户**：扫码新建一个应用，还是复用已有的应用（他知道 App ID 与 App Secret）。扫码 ⇒ 替他后台跑 `$AL setup </dev/null`，把二维码下面那行 URL 交给他（或渲成 PNG 打开）。复用 ⇒ 跑 `$AL setup --reuse`：在 herdr 里它会在你下方开一个窗格让用户自己输 App ID 与 App Secret（secret 不经你的手），用户做完后你的会话里会收到一行 `[agent-lark] setup:` 开头的结果——等它；在 herdr 外它退 4、把完整命令打在 stderr——把那条命令给用户在他自己的终端跑，跑完让他说一声。然后再 `away on` 一次。（`/agent-lark setup` 走的就是这条流程；见 SKILL.md「Invoked with an argument」。）
      - rc 4 `this project has no live group, but N earlier group(s) could be taken back` ⇒ 把 stderr 里的候选列表（一行一个群：名字、何时解绑、群 id）转告用户，**问他改名复用哪一个、还是新建**——不要替他选；带 `--reuse <chatId>` 或 `--new` 重跑。
      - rc 3 ⇒ **没开启**，什么都没写。先 `$AL daemon --status`；daemon 没跑就 `$AL daemon --detach` 再 `away on` 一次；仍 3（飞书连不上，`daemon is up but not connected to Feishu: …`）⇒ 停下，把 stderr 转告用户。
   2. `$AL away status --json` 核 `away: true`（`away on` 顺带登记了你的窗格为注入目标——**只在自己的窗格跑**）。
   3. 回一句 stdout 的结论。
-- **关闭**：「关闭远程交互模式」「我回来了」「remote off」⇒ 走「关闭与收尾」。
+- **关闭**：「关闭远程交互模式」「我回来了」「remote off」，或 `/agent-lark off` ⇒ 走「关闭与收尾」。
 
 ## 模式内
 - **一切本来要向用户提问、要他确认或授权的时刻** ⇒ 用 `$AL ask`，不再在终端等。
@@ -51,7 +51,7 @@
 - 手机上的订阅、点按钮、扫码等一切动作都是用户的，agent 不代做、也做不了。
 
 ## 禁止
-- 不问就跑 `setup`、替用户选路，都不行（它会用他的账号建飞书应用）：先问是扫码新建应用、还是复用已有的 app id；用户选定后可以替他跑 `setup`——把二维码的 URL 行交给他，或自己把 URL 渲成 PNG 打开。app secret 只放环境变量或 env 文件，不进 argv、不进你写的任何文件、不进任何输出。
+- 不问就跑 `setup`、替用户选路，都不行（它会用他的账号建或绑飞书应用）：先问是扫码新建应用、还是复用已有的应用；用户选定后可以替他跑 `setup`（扫码：把二维码的 URL 行交给他，或自己渲成 PNG 打开）或 `setup --reuse`（herdr 窗格，或把命令给他）。App Secret 只在交互式 `setup` 里由用户自己输入，不经 agent 之手、不进 argv、不进你写的任何文件、不进任何输出。
 - 不用自己的后台 shell 去起 daemon 常驻（用 `daemon --detach`）；有提问挂着时不 `daemon --stop --force`；不手改 `state.json` / `bindings.json`，只经 `away` / `bind` / `unbind` / `rename`。
 - 不 `bind --chat` 别的项目的群；不复用用户没选过的群。
 

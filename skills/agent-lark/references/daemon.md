@@ -237,28 +237,27 @@ allowlist), which is how a file the human sent can be returned edited.
 
 | variable | default | effect |
 |---|---|---|
-| `AGENT_LARK_HOME` | `~/.agent-lark` | the daemon's state directory (§3). `--home <dir>` (or `--home=<dir>`, anywhere on the command line) sets it for that command and for a daemon it starts |
-| `AGENT_LARK_APP_ID` / `AGENT_LARK_APP_SECRET` | – | app credentials from the environment; the highest-priority layer (below) |
-| `AGENT_LARK_OWNER_OPEN_ID` | – | the app owner's `open_id` when credentials come from the environment or the env file; needed to create groups and for `--urgent` (`setup` records it in the keychain on its own) |
-| `AGENT_LARK_ENV_FILE` | `<config>/.env` | an env file read as the second layer: `AGENT_LARK_APP_ID=…` / `AGENT_LARK_APP_SECRET=…` (or the generic `LARK_APP_ID` / `LARK_APP_SECRET` names), optional `AGENT_LARK_OWNER_OPEN_ID` |
-| `AGENT_LARK_STORE` | `keychain` where one is usable, else `file` | where `setup` writes: `keychain` (macOS Keychain · Windows DPAPI-encrypted file `<config>/credentials.dpapi` · Linux `secret-tool`), `file` (`<config>/credentials.json`, mode 0600), `none` (this run only). `setup --store` overrides per call |
+| `AGENT_LARK_HOME` | `~/.agent-lark` | the daemon's state directory (§3). `--home <dir>` (or `--home=<dir>`, anywhere on the command line) sets it for that command and for a daemon it starts, and the interactive `setup --reuse` handed to a new pane is given it explicitly |
+| `AGENT_LARK_APP_ID` / `AGENT_LARK_APP_SECRET` | – | app credentials from the environment, for one process: a runtime override that wins over the stores (below). The only way to supply credentials besides `setup` |
+| `AGENT_LARK_OWNER_OPEN_ID` | – | the app owner's `open_id` when credentials come from the environment; needed to create groups and for `--urgent` (`setup` records it in the store on its own, from the QR registration or from the probe of a reused app) |
+| `AGENT_LARK_STORE` | `keychain` where one is usable, else `file` | where `setup` writes: `keychain` (macOS Keychain · Windows DPAPI-encrypted file `<config>/credentials.dpapi` · Linux `secret-tool`), `file` (`<config>/credentials.json`, mode 0600), `none` (this run only) |
 | `AGENT_LARK_KEYCHAIN` | `agent-lark` | the keychain service name (`security` on macOS, `secret-tool` on Linux) |
 | `AGENT_LARK_MEDIA_TTL_DAYS` | `7` | retention of `<home>/media/`; `0` = keep everything (§6) |
-| `LARK_APP_ID` / `LARK_APP_SECRET` | – | generic names other Feishu tools also read; the last layer tried, so a machine with several Feishu tools does not cross-wire |
+| `AGENT_LARK_OFFLINE` | – | testing / offline only: `1` makes `setup` refuse to contact Feishu (rc 3 `offline: refusing to contact Feishu (AGENT_LARK_OFFLINE=1 is set)`) before the QR registration or the credential probe; the test runner sets it so no test can register an app by accident. Not for normal use |
 | `XDG_CONFIG_HOME` | `~/.config` (`%AppData%` on Windows) | `<config>` above is `$XDG_CONFIG_HOME/agent-lark` |
-| `HERDR_ENV`, `HERDR_PANE_ID` | set by herdr | detected, not configured: `HERDR_PANE_ID` is recorded on the binding as the injection target; `HERDR_ENV=1` is what `status` and `away on` mean by "inside herdr" |
+| `HERDR_ENV`, `HERDR_PANE_ID` | set by herdr | detected, not configured: `HERDR_PANE_ID` is recorded on the binding as the injection target and is the pane a handed-off `setup --reuse` reports back to; `HERDR_ENV=1` is what `status`, `away on` and `setup --reuse` mean by "inside herdr" |
 
 Credentials are resolved in this order, highest first; `status` shows which layer won and marks every
 layer (`✓` present, `·` absent):
 
 1. `AGENT_LARK_APP_ID` / `AGENT_LARK_APP_SECRET` in the environment
-2. the env file (`AGENT_LARK_ENV_FILE`, else `<config>/.env`)
-3. the OS keychain (what `setup` writes by default)
-4. `<config>/credentials.json` (a warning is printed when its mode is looser than 0600)
-5. `LARK_APP_ID` / `LARK_APP_SECRET` in the environment
+2. the OS keychain (what `setup` writes by default)
+3. `<config>/credentials.json` (what `AGENT_LARK_STORE=file`, or a platform without a keychain, writes; a warning is printed when its mode is looser than 0600)
 
-The secret never travels through argv (`ps` shows argv to every user on the machine): `setup --app-id`
-reads it from `AGENT_LARK_APP_SECRET` or the env file only, and refuses (rc 4) when neither has it.
+Nothing else is read: no env file, no unprefixed `LARK_*` names. The App Secret is typed by the human
+into the interactive `setup` (echo off) and never travels through argv (`ps` shows argv to every user on
+the machine), a file the CLI writes other than the stores above, or any output — a probe error that
+quotes it is printed with the secret masked as `***`.
 
 ## 8. The per-project state file: `<project root>/.agent-lark/state.json`
 

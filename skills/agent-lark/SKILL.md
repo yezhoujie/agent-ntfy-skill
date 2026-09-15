@@ -29,6 +29,35 @@ Two things must exist before the first question: Feishu app credentials on this 
 per machine) and a group bound to this project (`away on`, once per project). Both are the human's to
 run or approve; see "Remote mode and the per-project state file" below.
 
+## Invoked with an argument
+
+The user may hand this skill one word (`/agent-lark setup`, `/agent-lark on`, `/agent-lark off`, or the
+same words in a sentence). Each maps to one flow:
+
+- **`setup`** — guided setup, the human at the keyboard. First ask which way: **create a new app by QR
+  code**, or **reuse an app they already have** (they know its App ID and App Secret). Never pick for
+  them, never run `setup` unasked: it creates or binds a Feishu app under their account.
+  - QR code ⇒ run `agent-lark setup </dev/null` yourself (stdin closed explicitly: the menu only appears
+    on a terminal, so this goes straight to the QR code whatever your harness gives a child process). It draws the code as ANSI art and prints the URL as a plain line right under it;
+    hand over that line, or render it into a PNG yourself and open it. Run it in the background: it waits
+    for the scan (the code expires after a few minutes; rc 4 then, rerun).
+  - Reuse ⇒ run `agent-lark setup --reuse`. **The secret never passes through you.** Inside herdr the
+    command opens a pane below yours, runs the interactive setup there (App ID typed, App Secret typed
+    with echo off) and exits 0 at once with `The interactive setup is running in herdr pane <id>: …`;
+    when the human is done, one line prefixed `[agent-lark] setup:` arrives in your session (the four
+    forms are in "Remote mode" below) — wait for it, do nothing meanwhile. No line, and the pane is gone
+    or the user says they are done ⇒ ask them what the pane printed, or run `status` (its credential
+    layers show whether anything was stored). Outside herdr it exits 4 and
+    puts the exact command on stderr (`node <cli> --home <dir> setup --reuse`): give that command to the
+    user to run in their own terminal, and let them tell you when it is done. Either way the human still
+    has to enable the scopes, the event and the callback for a reused app in the Feishu developer
+    console; the interactive setup lists them.
+  - When it is done, report the outcome in one sentence. **Do not `away on`** — that is the next word.
+- **`on`** — the remote-mode "on" flow from "Remote mode and the per-project state file" (`away on
+  --name "<task>"` from your own pane, relay stdout). No credentials yet ⇒ the `setup` flow above first,
+  then `away on` again.
+- **`off`** — `away off` (the switch only; the group and the daemon stay).
+
 ## Ask a question
 
 Feed one JSON object on stdin through a quoted heredoc (the fields contain quotes and line breaks;
@@ -249,19 +278,27 @@ Whether to route decisions to the phone is the caller's policy (a rule in the us
 this skill). The human sets the channel up once per machine and once per project:
 
 ```bash
-agent-lark setup                                   # once per machine: QR code in the terminal, scan it with Feishu
+agent-lark setup                                   # once per machine, on a terminal: menu — 1) new app by QR code  2) reuse an app (App ID + Secret typed there)
 cd <project> && agent-lark away on --name "<task>" # once per project: daemon up, group created or taken back, switch on
 ```
 
 - **No credentials yet** (`away on` exits 4 with `No Feishu app credentials yet. Run once: agent-lark setup`):
   do not just tell the user to run `setup` — ask them first whether to **scan a QR code for a new app**
-  (`setup`) or **reuse an app they already have** (`setup --app-id cli_xxxxxxxx`, the secret read from
-  `AGENT_LARK_APP_SECRET` or the env file, never from argv). Once they have chosen you may run `setup` for
-  them (it creates the app under their account, so never without asking): it prints the QR code as ANSI art
-  with the URL as a plain line right under it — if you cannot show them the terminal, hand over that URL,
-  or render it into a PNG yourself and open it. `setup --update` re-authorizes an existing
-  app (adds scopes); `setup --reset` forgets the stored credentials and starts a fresh setup in the same
-  run.
+  or **reuse an app they already have**, then follow the `setup` flow in "Invoked with an argument": QR
+  code ⇒ you run `setup` and hand over the URL line (or a PNG of it); reuse ⇒ you run `setup --reuse`,
+  which inside herdr opens its own pane for the human to type the App ID and App Secret (the secret
+  never reaches you) and reports back with one `[agent-lark] setup:` line, and outside herdr exits 4 with
+  the command for the human to run themselves. The four report lines, verbatim:
+  - `[agent-lark] setup: credentials stored for cli_xxxxxxxx (<app name>); the scopes must be enabled in the developer console before use` — done; remind the user of the console work if they have not done it, then `away on` again.
+  - `[agent-lark] setup: failed: 3 probes refused (<why>)` — the only `failed:` form; relay `<why>` (the secret is masked as `***` wherever it could appear).
+  - `[agent-lark] setup: interrupted before any credentials were stored` — the human pressed Ctrl-C; ask whether to try again.
+  - `[agent-lark] setup: credentials already stored (<origin>); nothing changed. To switch apps run agent-lark setup --reset --reuse` — there was nothing to do.
+  `setup` in any form with credentials already stored only reports them — `Credentials already exist
+  (from <origin>). …`, rc 0, no pane opened; `setup --update` rescans the QR code for the same app (adds
+  scopes; on a terminal the menu comes first); `setup --reset` forgets the stored credentials first, so `setup --reset --reuse` switches to
+  another app. Credentials live in the OS keychain (or a
+  0600 `credentials.json`); `AGENT_LARK_APP_ID` / `AGENT_LARK_APP_SECRET` in the environment override
+  them for one process — that is the only way in besides `setup`.
 - `away on` does everything in one command: checks credentials, starts the daemon if needed, waits up to
   15 s for it to reach Feishu, binds this project to a group, and only then flips the switch. **Relay its
   stdout to the user.** The first line says whether the daemon was started (`daemon: started in the
@@ -321,11 +358,12 @@ daemon keeps that on the binding.
   binding, live and released.
 - Attachments the human sent live under `~/.agent-lark/media/` and are deleted after 7 days
   (`AGENT_LARK_MEDIA_TTL_DAYS`; `0` keeps everything). Copy what you need into the project.
-- Credentials are in the OS keychain (or a 0600 file), never in this skill's directory or in any output;
-  the group id appears in `state.json` and `bindings.json`, the project's absolute path in the group's
-  description on Feishu's servers.
-- 0.1.0 is the first release; there is no upgrade path to describe yet. After an upgrade, restart the
-  daemon (`daemon --stop`, then `--detach`).
+- Credentials are in the OS keychain (or a 0600 file), never in this skill's directory or in any output,
+  and the App Secret is typed by the human in an interactive `setup` — it never passes through argv, a
+  file you write, or your session; the group id appears in `state.json` and `bindings.json`, the
+  project's absolute path in the group's description on Feishu's servers.
+- After an upgrade, restart the daemon (`daemon --stop`, then `--detach`); credentials, bindings and
+  the per-project state files carry over.
 
 ## References
 
