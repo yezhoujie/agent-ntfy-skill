@@ -432,12 +432,16 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
 
   /**
    * Transcribe one voice message. Feishu's file_recognize takes base64 opus
-   * and caps at 60 s. Needs the `speech_to_text:speech` scope — without it
-   * the call fails and the caller falls back to saying so plainly, which is
-   * far better than handing the agent an `<audio .../>` placeholder it cannot
-   * read and will silently misinterpret as text.
+   * and caps at 60 s. It needs the `speech_to_text:speech` scope, and a
+   * free-plan tenant cannot call it at all (Feishu answers 99991400 "request
+   * trigger frequency limit" even with the scope granted). A failure comes
+   * back as Feishu's code and msg so the note handed to the agent says which
+   * — far better than an `<audio .../>` placeholder it cannot read and would
+   * silently misinterpret as text. `null` is the third outcome: the call went
+   * through but nothing was recognised, which is not a failure to explain.
    */
-  const transcribe = async (audioPath: string): Promise<string | null> => {
+  type Unheard = { code: string; msg: string };
+  const transcribe = async (audioPath: string): Promise<string | null | Unheard> => {
     try {
       const b64 = readFileSync(audioPath).toString('base64');
       const res = await (channel.rawClient as unknown as {
@@ -459,13 +463,15 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
       const res = (err as { response?: { status?: number; data?: unknown } } | null)?.response;
       const refused = feishuError(res?.data) ?? feishuError(err);
       log('transcribe.failed', { status: res?.status, code: refused?.code, msg: refused?.msg, err: String(err).slice(0, 200) });
-      return null;
+      return refused ? { code: String(refused.code), msg: refused.msg || 'unknown' } : { code: 'unknown', msg: 'unknown' };
     }
   };
 
   /** Save an inbound attachment next to the daemon's state, never in the repo. */
-  const saveResources = async (incoming: NormalizedMessage): Promise<{ saved: string[]; spoken: string[]; unheard: number }> => {
-    const out = { saved: [] as string[], spoken: [] as string[], unheard: 0 };
+  const saveResources = async (
+    incoming: NormalizedMessage,
+  ): Promise<{ saved: string[]; spoken: string[]; unheard: Unheard[]; silent: number }> => {
+    const out = { saved: [] as string[], spoken: [] as string[], unheard: [] as Unheard[], silent: 0 };
     if (!incoming.resources.length) return out;
     const dir = join(mediaDir(), createHash('sha1').update(incoming.chatId).digest('hex').slice(0, 12));
     mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -484,9 +490,10 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
       }
       out.saved.push(dest);
       if (res.type === 'audio') {
-        const text = await transcribe(dest);
-        if (text) out.spoken.push(text);
-        else out.unheard += 1;
+        const heard = await transcribe(dest);
+        if (typeof heard === 'string') out.spoken.push(heard);
+        else if (heard === null) out.silent += 1;
+        else out.unheard.push(heard);
       }
     }
     return out;
@@ -517,8 +524,13 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
       const said = got.spoken.join('\n');
       text = text ? `${text}\n${fill(msg.injectVoice, { text: said })}` : said;
     }
-    if (got.unheard) {
-      const why = fill(msg.injectUnheard, { n: got.unheard });
+    if (got.unheard.length) {
+      // One note for all of them; the first failure's reason stands in for the rest.
+      const why = fill(msg.injectUnheard, { n: got.unheard.length, ...got.unheard[0]! });
+      text = text ? `${text}\n${why}` : why;
+    }
+    if (got.silent) {
+      const why = fill(msg.injectNothingHeard, { n: got.silent });
       text = text ? `${text}\n${why}` : why;
     }
     if (got.saved.length) {

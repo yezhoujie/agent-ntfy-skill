@@ -145,6 +145,7 @@ export const msg = {
 
   setup [--update] [--scopes a,b]  Create or update the Feishu app by QR code; credentials go to the keychain
   setup --app-id cli_xxx [--store]  Use an existing app; the secret is read from the environment / env file, never argv
+  setup --reset                      Forget the stored credentials and set up again from scratch in the same run (QR code or --app-id)
   daemon [--detach|--status|--stop]  Resident process holding the Feishu connection (--stop is refused while a question is pending, unless --force)
   away on [--name <task>] [--reuse <chat_id> | --new]
                                      Remote mode on: daemon up, this project bound to a Feishu group named "<task> [<dir>]"
@@ -285,7 +286,8 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   // text synthesized into the pane
   injectVoice: '(voice transcript) {text}',
   injectUnheard:
-    '({n} voice message(s) received but transcription failed — most likely the app lacks the speech_to_text:speech scope. Tell the user: run agent-lark setup --update to rescan and add that scope, or type instead this time.)',
+    '({n} voice message(s) received but transcription failed — Feishu code {code}: {msg}. Either the app lacks the speech_to_text:speech scope (agent-lark setup --update adds it), or the tenant is on the free plan, which cannot call speech recognition at all. Tell the user to type it instead this time.)',
+  injectNothingHeard: '({n} voice message(s) received but nothing was recognised in the audio. Tell the user to type it or send it again.)',
   injectSaved: '[saved: {path}]',
   replyTo: '(reply to: "{title}")',
   injectFilesWithText: '(attachments saved locally)',

@@ -1047,6 +1047,81 @@ test('attachments: the injected text names where each one was saved, before the 
   await daemon.stop();
 });
 
+// ---- voice: what the agent is told when Feishu will not transcribe ---------
+
+/** A download that leaves a real (empty) file behind, so the transcriber has something to read. */
+const downloadLeavingFile: FakeChannelOptions['downloadResourceToFile'] = async (_messageId, _fileKey, _type, dest) => {
+  writeFileSync(dest, '');
+  return { path: dest, bytes: 0 } as never;
+};
+const speechThat = (fileRecognize: () => Promise<unknown>) => ({ speech_to_text: { speech: { fileRecognize } } });
+const voiceNote = { chatId: 'oc_x', content: '<audio file_key="file_v" />', messageId: 'om_human_1', resources: [{ type: 'audio' as const, fileKey: 'file_v' }] };
+
+test('voice: when Feishu refuses the transcription, the injected note carries its code and msg and names both likely causes', PER_TEST, async () => {
+  const refused = Object.assign(new Error('Request failed with status code 400'), {
+    response: { status: 400, data: { code: 99991400, msg: 'request trigger frequency limit' } },
+  });
+  const { daemon, fake, herdr } = await start({ downloadResourceToFile: downloadLeavingFile, rawClient: speechThat(async () => { throw refused; }) });
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  await fake.message(voiceNote);
+  await waitFor(() => herdr.prompts.length === 1, 'the injection');
+  const lines = herdr.prompts[0]!.text.split('\n');
+  assert.equal(lines[0], `[agent-lark remote] ${fill(msg.injectUnheard, { n: 1, code: 99991400, msg: 'request trigger frequency limit' })}`);
+  assert.match(lines[0]!, /99991400/);
+  assert.match(lines[0]!, /request trigger frequency limit/);
+  assert.match(lines[0]!, /speech_to_text:speech/);
+  assert.match(lines[0]!, /free/i);
+  assert.match(lines[1]!, /^\[saved: .+\]$/);
+  assert.equal(lines[2], msg.injectFilesWithText);
+  assert.equal(lines.length, 3);
+  await daemon.stop();
+});
+
+test('voice: a transcription failure with no Feishu body in it is reported with code and msg "unknown"', PER_TEST, async () => {
+  const { daemon, fake, herdr } = await start({ downloadResourceToFile: downloadLeavingFile, rawClient: speechThat(async () => { throw new Error('socket hang up'); }) });
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  await fake.message(voiceNote);
+  await waitFor(() => herdr.prompts.length === 1, 'the injection');
+  const lines = herdr.prompts[0]!.text.split('\n');
+  assert.equal(lines[0], `[agent-lark remote] ${fill(msg.injectUnheard, { n: 1, code: 'unknown', msg: 'unknown' })}`);
+  assert.match(lines[0]!, /unknown/);
+  assert.doesNotMatch(lines[0]!, /socket hang up/);
+  assert.equal(lines.length, 3);
+  await daemon.stop();
+});
+
+test('voice: a transcription that recognised nothing says so, without blaming the scope or the plan', PER_TEST, async () => {
+  const { daemon, fake, herdr } = await start({ downloadResourceToFile: downloadLeavingFile, rawClient: speechThat(async () => ({ data: { recognition_text: '  ' } })) });
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  await fake.message(voiceNote);
+  await waitFor(() => herdr.prompts.length === 1, 'the injection');
+  const lines = herdr.prompts[0]!.text.split('\n');
+  assert.equal(lines[0], `[agent-lark remote] ${fill(msg.injectNothingHeard, { n: 1 })}`);
+  assert.match(lines[0]!, /recogni[sz]ed/);
+  assert.doesNotMatch(lines[0]!, /speech_to_text:speech|free plan|code/);
+  assert.match(lines[1]!, /^\[saved: .+\]$/);
+  assert.equal(lines[2], msg.injectFilesWithText);
+  assert.equal(lines.length, 3);
+  await daemon.stop();
+});
+
+test('voice: a successful transcription replaces the audio placeholder with the transcript', PER_TEST, async () => {
+  const { daemon, fake, herdr } = await start({ downloadResourceToFile: downloadLeavingFile, rawClient: speechThat(async () => ({ data: { recognition_text: ' ship it ' } })) });
+  await connected();
+  await request({ type: 'bind', root: '/p', label: 'p', paneId: 'w1:p1', chatId: 'oc_x' });
+  await fake.message(voiceNote);
+  await waitFor(() => herdr.prompts.length === 1, 'the injection');
+  const lines = herdr.prompts[0]!.text.split('\n');
+  assert.equal(lines[0], '[agent-lark remote] ship it');
+  assert.match(lines[1]!, /^\[saved: .+\]$/);
+  assert.equal(lines[2], msg.injectFilesWithText);
+  assert.equal(lines.length, 3);
+  await daemon.stop();
+});
+
 // ---- quoting a card: which one the human is replying to --------------------
 
 test('a message quoting an answered question card is injected with "(reply to: …)" on top; rootId works as the quote too', PER_TEST, async () => {

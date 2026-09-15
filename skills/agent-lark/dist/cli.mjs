@@ -136399,6 +136399,7 @@ var init_texts = __esm({
 
   setup [--update] [--scopes a,b]  Create or update the Feishu app by QR code; credentials go to the keychain
   setup --app-id cli_xxx [--store]  Use an existing app; the secret is read from the environment / env file, never argv
+  setup --reset                      Forget the stored credentials and set up again from scratch in the same run (QR code or --app-id)
   daemon [--detach|--status|--stop]  Resident process holding the Feishu connection (--stop is refused while a question is pending, unless --force)
   away on [--name <task>] [--reuse <chat_id> | --new]
                                      Remote mode on: daemon up, this project bound to a Feishu group named "<task> [<dir>]"
@@ -136533,7 +136534,8 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       fileTooBig: "file too large: {size} MB, limit {cap} MB",
       // text synthesized into the pane
       injectVoice: "(voice transcript) {text}",
-      injectUnheard: "({n} voice message(s) received but transcription failed \u2014 most likely the app lacks the speech_to_text:speech scope. Tell the user: run agent-lark setup --update to rescan and add that scope, or type instead this time.)",
+      injectUnheard: "({n} voice message(s) received but transcription failed \u2014 Feishu code {code}: {msg}. Either the app lacks the speech_to_text:speech scope (agent-lark setup --update adds it), or the tenant is on the free plan, which cannot call speech recognition at all. Tell the user to type it instead this time.)",
+      injectNothingHeard: "({n} voice message(s) received but nothing was recognised in the audio. Tell the user to type it or send it again.)",
       injectSaved: "[saved: {path}]",
       replyTo: '(reply to: "{title}")',
       injectFilesWithText: "(attachments saved locally)",
@@ -137822,11 +137824,11 @@ async function runDaemon(deps = {}) {
       const res = err?.response;
       const refused = feishuError(res?.data) ?? feishuError(err);
       log("transcribe.failed", { status: res?.status, code: refused?.code, msg: refused?.msg, err: String(err).slice(0, 200) });
-      return null;
+      return refused ? { code: String(refused.code), msg: refused.msg || "unknown" } : { code: "unknown", msg: "unknown" };
     }
   };
   const saveResources = async (incoming) => {
-    const out = { saved: [], spoken: [], unheard: 0 };
+    const out = { saved: [], spoken: [], unheard: [], silent: 0 };
     if (!incoming.resources.length) return out;
     const dir = join3(mediaDir(), createHash3("sha1").update(incoming.chatId).digest("hex").slice(0, 12));
     mkdirSync3(dir, { recursive: true, mode: 448 });
@@ -137843,9 +137845,10 @@ async function runDaemon(deps = {}) {
       }
       out.saved.push(dest);
       if (res.type === "audio") {
-        const text = await transcribe(dest);
-        if (text) out.spoken.push(text);
-        else out.unheard += 1;
+        const heard = await transcribe(dest);
+        if (typeof heard === "string") out.spoken.push(heard);
+        else if (heard === null) out.silent += 1;
+        else out.unheard.push(heard);
       }
     }
     return out;
@@ -137869,8 +137872,13 @@ async function runDaemon(deps = {}) {
       text = text ? `${text}
 ${fill(msg.injectVoice, { text: said })}` : said;
     }
-    if (got.unheard) {
-      const why = fill(msg.injectUnheard, { n: got.unheard });
+    if (got.unheard.length) {
+      const why = fill(msg.injectUnheard, { n: got.unheard.length, ...got.unheard[0] });
+      text = text ? `${text}
+${why}` : why;
+    }
+    if (got.silent) {
+      const why = fill(msg.injectNothingHeard, { n: got.silent });
       text = text ? `${text}
 ${why}` : why;
     }

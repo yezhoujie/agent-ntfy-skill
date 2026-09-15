@@ -45,6 +45,12 @@ test('help: exit 0, English, names agent-lark and never herdr-lark', () => {
   assert.equal(hasHan(r.stdout), false, r.stdout);
 });
 
+test('help lists setup --reset, the way to drop stored credentials and switch apps', () => {
+  const r = run(['help']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^  setup --reset\s{2,}\S.*credentials.*same run/m, r.stdout);
+});
+
 test('unknown command: exit 1, English hint on stderr with the agent-lark prefix', () => {
   const r = run(['nope']);
   assert.equal(r.status, 1);
