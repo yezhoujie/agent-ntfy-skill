@@ -114,7 +114,7 @@ Three places, highest first: `AGENT_LARK_APP_ID` / `AGENT_LARK_APP_SECRET` in th
 - **🔔 `[<project dir>] waiting for you`** (orange; inside herdr only) means the agent is stuck on a prompt only you can answer — a permission dialog, a choice — and will wait until you are back at the keyboard.
 - The questions are JSON the agent writes (the contract is in [SKILL.md](SKILL.md)); you never write one.
 
-**Coming back.** Say "I'm back" or type `/agent-lark off`: the agent runs `away off` — the switch only; the group and the daemon stay. When the task is over the agent runs `unbind`: the group stays in Feishu, and the next time this project turns remote mode on the agent offers it back. Remote mode changes the channel, not the standard: irreversible actions still need your explicit approval, and a timeout is not approval.
+**Coming back.** Say "I'm back" or type `/agent-lark off`: the agent runs `away off` — the switch only; the group and the daemon stay. When the task is over the agent asks whether to keep the group: keep ⇒ `unbind` (the group stays in Feishu, and the next time this project turns remote mode on the agent offers it back); drop ⇒ `unbind --dissolve` (the group is dissolved and forgotten). Remote mode changes the channel, not the standard: irreversible actions still need your explicit approval, and a timeout is not approval.
 
 ## 6. Day-to-day
 
@@ -123,7 +123,7 @@ Three places, highest first: `AGENT_LARK_APP_ID` / `AGENT_LARK_APP_SECRET` in th
 | you say | the agent runs |
 |---|---|
 | "the task changed, call it X" | `rename "X"` — the group becomes `X [<project dir>]` |
-| "let the group go" / the task ends | `unbind` — the group stays in Feishu; offered back next time |
+| the task ends | the agent asks whether the group should stay: "keep it" ⇒ `unbind` — the group stays in Feishu, offered back next time; "drop it" ⇒ `unbind --dissolve` — dissolved in Feishu and forgotten (if Feishu refuses, the agent tells you to dissolve it by hand; the record is gone either way) |
 | "use group oc_xxxxxxxx" (one you created, or after a reinstall) | `bind --chat oc_xxxxxxxx` — the group's description is rewritten to mark it as this project's |
 | "turn remote mode on / off" | `away on --name "…"` / `away off` (§5) |
 
@@ -147,7 +147,7 @@ agent-lark daemon --stop     # before an upgrade (§9); refused while a question
 - **The QR code expired.** Run `setup` again (by hand, or ask the agent again).
 - **A reused app sends nothing / creating the group fails with a permission error.** Its scopes, event and callback are not enabled, or no version was published: §4.3, then try again.
 - **The agent handed you a `setup --reuse` command.** You are outside herdr: run it in a terminal window of your own, not inside the agent session (it needs a real terminal for the secret), then tell the agent.
-- **An old group keeps being offered.** Tell the agent to create a new one; the old one stays on the list as long as it exists in Feishu with this project's marker or in the local records.
+- **An old group keeps being offered.** It is offered as long as it exists in Feishu: tell the agent to create a new one and drop the old one (`unbind --dissolve` while it is bound), or dissolve it in Feishu yourself — the daemon forgets groups that are gone (once a day, and whenever it looks for groups to offer back). A group the app cannot dissolve (it is not the owner) is left for you to dissolve by hand.
 
 Every exit code with its stderr text and what the agent is told to do: [references/failures.md](references/failures.md).
 
@@ -169,7 +169,7 @@ On a machine that runs the daemon: 1. `agent-lark daemon --stop` with the CLI yo
 
 ## 10. Make it stick: the rule for your agent
 
-The skill only provides the calls and never decides *when* to use them. Left alone, an agent uses agent-lark only when it happens to remember it exists. The trigger policy belongs in the agent's **standing instructions**, and it has to cover four moments: at session start, read the project's `state.json` (`away: true` ⇒ you are away) · when you leave, the agent runs `away on` while you are still there and asks you about old groups · while you are away, every decision becomes a question card, `notify` only for major events, never for progress · when you are back, `away off`; when the task is over, `unbind`.
+The skill only provides the calls and never decides *when* to use them. Left alone, an agent uses agent-lark only when it happens to remember it exists. The trigger policy belongs in the agent's **standing instructions**, and it has to cover four moments: at session start, read the project's `state.json` (`away: true` ⇒ you are away) · when you leave, the agent runs `away on` while you are still there and asks you about old groups · while you are away, every decision becomes a question card, `notify` only for major events, never for progress · when you are back, `away off`; when the task is over, the agent asks whether to keep the group, then `unbind` or `unbind --dissolve`.
 
 A ready-made rule that does exactly this ships with the skill — [`examples/remote-mode-rule.md`](examples/remote-mode-rule.md) (English) and [`examples/remote-mode-rule.zh-CN.md`](examples/remote-mode-rule.zh-CN.md) (Chinese); it also covers teams of agent sessions. For Claude Code, rules in `~/.claude/rules/` are injected into every session:
 

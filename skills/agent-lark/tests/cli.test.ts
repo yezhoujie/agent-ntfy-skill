@@ -9,7 +9,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { argv, isTransientNetworkError, waitConnected } from '../src/cli.js';
-import type { Response } from '../src/ipc.js';
+import { serve, type Response } from '../src/ipc.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cli = resolve(here, '..', '..', 'dist', 'cli.mjs');
@@ -81,6 +81,7 @@ const UNKNOWN: Array<[string, string[], string]> = [
   ['daemon', ['daemon', '--status', '--json'], '--json'],
   ['bind', ['bind', '--chat', 'oc_x', '--force'], '--force'],
   ['unbind', ['unbind', '--all'], '--all'],
+  ['unbind --keep (there is no such flag)', ['unbind', '--keep'], '--keep'],
   ['rename', ['rename', 'x', '--new'], '--new'],
   ['ask', ['ask', '--timeout', '5', '--idle'], '--idle'],
   ['notify', ['notify', '--urgent'], '--urgent'],
@@ -174,7 +175,13 @@ describe('with a fake daemon', () => {
   // Not inside herdr as far as the CLI can tell, whatever spawned the tests.
   // `away on` checks for credentials before talking to the daemon; the fake
   // pair keeps it off the real keychain.
-  const env: NodeJS.ProcessEnv = { ...isolatedEnv(), AGENT_LARK_HOME: home, AGENT_LARK_APP_ID: 'cli_fake', AGENT_LARK_APP_SECRET: 'fake-secret' };
+  const env: NodeJS.ProcessEnv = {
+    ...isolatedEnv(),
+    AGENT_LARK_HOME: home,
+    AGENT_LARK_APP_ID: 'cli_fake',
+    AGENT_LARK_APP_SECRET: 'fake-secret',
+    AGENT_LARK_FAKE_CHAT_DELETE: 'ok',
+  };
   delete env.HERDR_ENV;
   delete env.HERDR_PANE_ID;
   const entry = join(here, 'fixtures', 'daemon-entry.js');
@@ -337,6 +344,21 @@ describe('with a fake daemon', () => {
     const elsewhere = cmd(['status'], other);
     assert.match(elsewhere.stdout, /^ {4}.*oc_old/m);
   });
+
+  test('unbind --dissolve with Feishu agreeing: exit 0 names the group, state.json is cleared, and the group is not offered back', () => {
+    const again = cmd(['away', 'on', '--reuse', 'oc_old', '--name', 'again']);
+    assert.equal(again.status, 0, again.stdout + again.stderr);
+    const r = cmd(['unbind', '--dissolve']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /^Dissolved Feishu group ".+"; the local record is removed\.$/m);
+    assert.equal(r.stderr, '');
+    assert.equal(state().chatId, null);
+    assert.equal(state().away, false);
+    assert.doesNotMatch(cmd(['status']).stdout, /oc_old/);
+    const next = cmd(['away', 'on', '--name', 'next task']);
+    assert.equal(next.status, 4, next.stdout + next.stderr);
+    assert.doesNotMatch(next.stderr, /oc_old/);
+  });
 });
 
 // `away on` must wait for the daemon's Feishu handshake, not just for the
@@ -398,6 +420,55 @@ describe('with a fake daemon whose first handshakes fail', () => {
     assert.equal(s.away, true);
     assert.equal(s.chatId, 'oc_old');
   });
+
+  test('unbind --dissolve when Feishu will not dissolve the group: exit 4 says so on stderr, the record and state are cleared all the same', () => {
+    const r = cmd(['unbind', '--dissolve']);
+    assert.equal(r.status, 4, r.stdout + r.stderr);
+    assert.equal(r.stdout, '');
+    assert.match(r.stderr, /^agent-lark: the Feishu group ".+" was not dissolved: /m);
+    assert.match(r.stderr, /Dissolve it by hand in Feishu/);
+    assert.match(r.stderr, /The local record is removed\./);
+    const s = JSON.parse(readFileSync(join(project, '.agent-lark', 'state.json'), 'utf8')) as { away: boolean; chatId: string | null };
+    assert.equal(s.away, false);
+    assert.equal(s.chatId, null);
+    assert.doesNotMatch(cmd(['status']).stdout, /oc_old/);
+  });
+});
+
+// ---- a daemon from before --dissolve ------------------------------------------
+// The CLI and the daemon are the same bundle, but a daemon started before an
+// upgrade keeps running the old code: its unbind reply carries no `dissolved`.
+
+test('unbind --dissolve against a daemon that does not know the flag: exit 3 saying to restart it; the state file is cleared as after a plain unbind', async () => {
+  const home = tmp('agent-lark-old-daemon-');
+  const project = realpathSync(tmp('agent-lark-old-proj-'));
+  mkdirSync(join(project, '.agent-lark'));
+  writeFileSync(join(project, '.agent-lark', 'state.json'), JSON.stringify({ away: true, chatId: 'oc_x', target: project, updated: '' }));
+  const prev = process.env.AGENT_LARK_HOME;
+  process.env.AGENT_LARK_HOME = home;
+  const server = await serve({ handle: async () => ({ ok: true, kind: 'unbind', chatId: 'oc_x', name: 'x' }) });
+  try {
+    // The server lives in this process, so the CLI must run asynchronously:
+    // a spawnSync would block the loop the server answers from.
+    const r = await new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+      const child = spawn(process.execPath, [cli, 'unbind', '--dissolve'], { env: { ...isolatedEnv(), AGENT_LARK_HOME: home }, cwd: project, stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));
+      child.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
+      child.on('error', reject);
+      child.on('close', (status) => resolve({ status, stdout, stderr }));
+    });
+    assert.equal(r.status, 3, r.stdout + r.stderr);
+    assert.equal(r.stdout, '');
+    assert.match(r.stderr, /^agent-lark: .*--dissolve.*daemon --stop/m);
+    const s = JSON.parse(readFileSync(join(project, '.agent-lark', 'state.json'), 'utf8')) as { away: boolean; chatId: string | null };
+    assert.deepEqual([s.away, s.chatId], [false, null]);
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (prev === undefined) delete process.env.AGENT_LARK_HOME;
+    else process.env.AGENT_LARK_HOME = prev;
+  }
 });
 
 // ---- reading a command line, in-process --------------------------------------

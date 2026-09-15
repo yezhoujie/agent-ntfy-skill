@@ -173,7 +173,8 @@ export const msg = {
                                      (exit 4 lists earlier groups to take back; rerun with --reuse or --new)
   away off | status [--json]         Remote mode off / the project's state ({away, chatId, target, updated})
   rename "<task>"                    Rename the project's live group to "<task> [<dir>]"
-  unbind                             Let the live group go (it stays in Feishu; the next away on offers it back)
+  unbind [--dissolve]                Let the live group go (it stays in Feishu; the next away on offers it back);
+                                     --dissolve dissolves it in Feishu and forgets it (exit 4 if Feishu refuses: dissolve it by hand)
   bind [--chat <id>] [--name <task>] [--reuse <chat_id> | --new]
                                      Bind without switching remote mode on; --chat names a group outright
   ask [--timeout <seconds>] [--urgent]
@@ -254,6 +255,7 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   bindModeIgnored: 'this project already has a live group; --reuse / --new were ignored (unbind first to pick another group)',
   bindUpdateSkipped: 'not connected to Feishu; the group\'s name and description were left as they are',
   unbound: 'Unbound. The Feishu group "{name}" stays in Feishu; the next away on in this directory offers to rename and reuse it.',
+  dissolved: 'Dissolved Feishu group "{name}"; the local record is removed.',
   renameNotBound: 'this project has no live group; run agent-lark away on first',
   renameFailed: 'renaming the group failed: Feishu error {code} {msg}',
   renameThrew: 'renaming the group failed: {error}',
@@ -307,6 +309,13 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   sendFailed: 'send failed: {error}',
   unbindNone: 'this project is not bound',
   unbindPending: 'a question is still pending on the phone; answer it or wait for the timeout',
+  dissolveRefused:
+    'the Feishu group "{name}" was not dissolved: Feishu answered {code} {msg}. Dissolve it by hand in Feishu (the app can only dissolve a group it owns, or one it created if it has the im:chat:operate_as_owner scope). The local record is removed.',
+  dissolveThrew: 'the Feishu group "{name}" was not dissolved: {error}. Dissolve it by hand in Feishu. The local record is removed.',
+  dissolveMarkerCleared: "The group's marker was cleared, so it will not be offered back.",
+  dissolveMarkerKept: "The group's marker could not be cleared ({error}), so it will be offered back until it is dissolved.",
+  dissolveOldDaemon:
+    'the running daemon predates --dissolve and has only let the group go (it stays in Feishu, on record as released). Restart the daemon (agent-lark daemon --stop, then agent-lark daemon --detach), bind the group back (away on --reuse <chat_id>) and run unbind --dissolve again',
   bindNoOwner: 'nobody to invite into a new group (the app owner is not recorded). Use --chat <chat_id> to bind a group you created yourself.',
   bindCreateFailed:
     'creating the group failed: {error}\nIf this is a permission problem the app lacks the im:chat (create group) scope: run agent-lark setup --update, or bind an existing group with --chat <chat_id>.',

@@ -10,7 +10,6 @@ export interface FakeChannelOptions {
   connect?: () => Promise<void>;
   /** Replaces the REST card update (the record in `sent` is still kept); lets a test make it hang. */
   updateCard?: (messageId: string, card: object) => Promise<void>;
-  listChats?: ChannelLike['listChats'];
   getChatInfo?: ChannelLike['getChatInfo'];
   createChat?: ChannelLike['createChat'];
   addReaction?: ChannelLike['addReaction'];
@@ -18,6 +17,10 @@ export interface FakeChannelOptions {
   downloadResourceToFile?: ChannelLike['downloadResourceToFile'];
   /** Answers `rawClient.im.v1.chat.update`; every call is also recorded in `renames`. */
   chatUpdate?: (req: ChatUpdateRequest) => Promise<ChatUpdateResult>;
+  /** Answers `rawClient.im.v1.chat.delete`; every call is also recorded in `deletes`. */
+  chatDelete?: (req: ChatDeleteRequest) => Promise<ChatDeleteResult>;
+  /** Answers `rawClient.im.v1.chat.list`, one page per call; `pageOf()` builds the usual answers. */
+  chatList?: (req: ChatListRequest) => Promise<ChatListResult>;
   /** Answers `rawClient.im.v1.message.urgentApp`; every call is also recorded in `urgents`. */
   urgentApp?: (req: UrgentAppRequest) => Promise<UrgentAppResult>;
   rawClient?: unknown;
@@ -35,6 +38,27 @@ export interface ChatUpdateRequest {
   data: { name?: string; description?: string };
 }
 export type ChatUpdateResult = { code?: number; msg?: string };
+export interface ChatDeleteRequest {
+  path: { chat_id: string };
+}
+export type ChatDeleteResult = { code?: number; msg?: string };
+export interface ChatListRequest {
+  params: { page_size?: number; page_token?: string };
+}
+export type ChatListResult = {
+  code?: number;
+  msg?: string;
+  data?: { items?: Array<{ chat_id?: string; name?: string }>; has_more?: boolean; page_token?: string };
+};
+/** A `chat.list` answer listing `ids`, `pageSize` per page, following `page_token` the way Feishu does. */
+export function pageOf(ids: string[], pageSize = 100): (req: ChatListRequest) => Promise<ChatListResult> {
+  return async ({ params }) => {
+    const from = Number(params.page_token ?? 0);
+    const items = ids.slice(from, from + pageSize).map((chat_id) => ({ chat_id, name: chat_id }));
+    const hasMore = from + pageSize < ids.length;
+    return { code: 0, data: { items, has_more: hasMore, ...(hasMore ? { page_token: String(from + pageSize) } : {}) } };
+  };
+}
 
 export interface FakeChannel {
   channel: ChannelLike;
@@ -45,6 +69,10 @@ export interface FakeChannel {
   policy: unknown[];
   /** Group updates (name / description) issued through rawClient, oldest first. */
   renames: Array<{ chatId: string; name: string | undefined; description: string | undefined }>;
+  /** Groups dissolved through rawClient, oldest first. */
+  deletes: string[];
+  /** `chat.list` pages asked for through rawClient, oldest first. */
+  listCalls: ChatListRequest[];
   /** Urgent flags issued through rawClient, oldest first. */
   urgents: UrgentAppRequest[];
   /** Reactions added with the default addReaction (a configured one is not recorded). */
@@ -67,6 +95,8 @@ export function createFakeChannel(opts: FakeChannelOptions = {}): FakeChannel {
     disconnectCalls: 0,
     policy: [],
     renames: [],
+    deletes: [],
+    listCalls: [],
     urgents: [],
     reactions: [],
     channel: undefined as unknown as ChannelLike,
@@ -94,13 +124,23 @@ export function createFakeChannel(opts: FakeChannelOptions = {}): FakeChannel {
   // Only the raw-client calls a test configured exist; the rest throw, so a
   // path that reaches the raw client unexpectedly fails loudly.
   const rawV1: Record<string, unknown> = {};
+  const chat: Record<string, unknown> = {};
   if (opts.chatUpdate)
-    rawV1.chat = {
-      update: async (req: ChatUpdateRequest): Promise<ChatUpdateResult> => {
-        fake.renames.push({ chatId: req.path.chat_id, name: req.data.name, description: req.data.description });
-        return opts.chatUpdate!(req);
-      },
+    chat.update = async (req: ChatUpdateRequest): Promise<ChatUpdateResult> => {
+      fake.renames.push({ chatId: req.path.chat_id, name: req.data.name, description: req.data.description });
+      return opts.chatUpdate!(req);
     };
+  if (opts.chatDelete)
+    chat.delete = async (req: ChatDeleteRequest): Promise<ChatDeleteResult> => {
+      fake.deletes.push(req.path.chat_id);
+      return opts.chatDelete!(req);
+    };
+  if (opts.chatList)
+    chat.list = async (req: ChatListRequest): Promise<ChatListResult> => {
+      fake.listCalls.push(req);
+      return opts.chatList!(req);
+    };
+  if (Object.keys(chat).length) rawV1.chat = chat;
   if (opts.urgentApp)
     rawV1.message = {
       urgentApp: async (req: UrgentAppRequest): Promise<UrgentAppResult> => {
@@ -151,7 +191,6 @@ export function createFakeChannel(opts: FakeChannelOptions = {}): FakeChannel {
       fake.sent.push({ update: messageId, card });
       if (opts.updateCard) await opts.updateCard(messageId, card);
     },
-    listChats: opts.listChats ?? notImplemented('listChats'),
     getChatInfo: opts.getChatInfo ?? notImplemented('getChatInfo'),
     createChat: opts.createChat ?? notImplemented('createChat'),
     addReaction:

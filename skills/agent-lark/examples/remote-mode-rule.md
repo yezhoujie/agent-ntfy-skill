@@ -50,12 +50,12 @@
 
 ## Turning it off and wrapping up (skipping a step raises no error)
 - Turning off: make sure no background `ask` is pending (if one is ⇒ wait for it or stop it; the card turns "Cancelled") → `$AL away off` (the switch only; the group and the binding stay, the daemon keeps running).
-- **At the end of a task, remind the user and run `$AL unbind`**: the group is theirs (it stays in Feishu; archiving it is their call), and the next `away on` in this directory will offer it back for renaming. If remote mode is still on (the user has not returned), leave the switch on and do the reminder through `notify`.
+- **At the end of a task, ask the user whether the group should stay, then run the matching command**: keep it ⇒ `$AL unbind` (it stays in Feishu, and the next `away on` in this directory offers it back for renaming); drop it ⇒ `$AL unbind --dissolve` (dissolved in Feishu and forgotten; rc 4 means Feishu refused — tell the user the group is still there for them to dissolve by hand, the record is gone either way). The group is theirs: never dissolve it unasked. If remote mode is still on (the user has not returned), ask on the phone with `ask` — one question, "keep" recommended — and send whatever you still owe them (`notify`, `send-file`) **before** running the command: either form switches remote mode off, and `--dissolve` removes the very group the conversation runs in.
 - Subscribing, tapping buttons, scanning the QR code and anything else on the phone are the human's actions; the agent cannot do them.
 
 ## Never
 - Never run `setup` without asking first, and never choose the path for the user (it creates or binds a Feishu app under their account): ask whether to scan a QR code for a new app or reuse an app they already have; once they have chosen you may run `setup` (QR code: hand them the URL line, or render it into a PNG yourself and open it) or `setup --reuse` (herdr pane, or the command for them) for them. The App Secret is typed by the user themselves in the interactive `setup`; it never passes through you, and must not appear in argv, a file you write, or any output.
-- Do not keep the daemon alive from your own background shell (use `daemon --detach`); do not `daemon --stop --force` while a question is pending; do not edit `state.json` or `bindings.json` by hand — only through `away` / `bind` / `unbind` / `rename`.
+- Do not keep the daemon alive from your own background shell (use `daemon --detach`); do not `daemon --stop --force` while a question is pending; do not edit `state.json` or `bindings.json` by hand — only through `away` / `bind` / `unbind` / `rename` (records of groups that no longer exist in Feishu are forgotten by the daemon on its own).
 - Do not `bind --chat` a group that belongs to another project; do not reuse a group the user has not chosen.
 
 ## Both skills installed (agent-ntfy and agent-lark)

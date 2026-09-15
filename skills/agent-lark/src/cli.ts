@@ -109,7 +109,7 @@ const OPTIONS: Record<string, { flags: string[]; opts: string[] }> = {
   setup: { flags: ['update', 'reset', 'reuse', 'close-pane'], opts: ['scopes', 'report-to'] },
   daemon: { flags: ['detach', 'status', 'stop', 'force'], opts: [] },
   bind: { flags: ['new'], opts: ['chat', 'name', 'reuse'] },
-  unbind: { flags: [], opts: [] },
+  unbind: { flags: ['dissolve'], opts: [] },
   rename: { flags: [], opts: [] },
   ask: { flags: ['urgent'], opts: ['timeout'] },
   notify: { flags: [], opts: [] },
@@ -686,12 +686,26 @@ async function cmdBind(args: string[]): Promise<void> {
   });
 }
 
-async function cmdUnbind(): Promise<void> {
+async function cmdUnbind(args: string[]): Promise<void> {
   const { root } = ctx();
-  const res = await request({ type: 'unbind', root });
+  const dissolve = argv('unbind', args).flag('dissolve');
+  const res = await request({ type: 'unbind', root, dissolve });
+  // A daemon started before this bundle answers the plain way and has let the
+  // group go without dissolving it; say so rather than report the wrong outcome.
+  if (dissolve && res.ok && res.kind === 'unbind' && res.dissolved === undefined) {
+    writeProjectState(root, { chatId: null, away: false });
+    die(3, msg.dissolveOldDaemon);
+  }
+  // Feishu kept the group although the record is gone: the human has to
+  // dissolve it there, so this ends like the other "a human must act" cases.
+  if (res.ok && res.kind === 'unbind' && res.dissolved === false) {
+    writeProjectState(root, { chatId: null, away: false });
+    die(4, res.problem ?? '');
+  }
   finish(res, (r) => {
     writeProjectState(root, { chatId: null, away: false });
-    process.stdout.write(`${fill(msg.unbound, { name: r.kind === 'unbind' ? r.name : '' })}\n`);
+    if (r.kind !== 'unbind') return;
+    process.stdout.write(`${r.dissolved ? fill(msg.dissolved, { name: r.name }) : fill(msg.unbound, { name: r.name })}\n`);
   });
 }
 
@@ -932,7 +946,7 @@ async function main(): Promise<void> {
     case 'bind':
       return cmdBind(args);
     case 'unbind':
-      return cmdUnbind();
+      return cmdUnbind(args);
     case 'rename':
       return cmdRename(args);
     case 'ask':

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createFakeChannel, type FakeChannelOptions } from './fixtures/fake-channel.js';
+import { createFakeChannel, pageOf, type FakeChannelOptions } from './fixtures/fake-channel.js';
 import { createFakeHerdr } from './fixtures/fake-herdr.js';
 
 process.env.AGENT_LARK_APP_ID = 'cli_fake';
@@ -15,6 +15,7 @@ process.env.AGENT_LARK_APP_SECRET = 'fake-secret';
 const { runDaemon, DaemonStartError } = await import('../src/daemon.js');
 const { request } = await import('../src/ipc.js');
 const { fill, msg, t } = await import('../src/texts.js');
+const { readProjectState, writeProjectState } = await import('../src/paths.js');
 
 type Daemon = Awaited<ReturnType<typeof runDaemon>>;
 const homes: string[] = [];
@@ -301,14 +302,10 @@ async function seedReleasedAndRemote(chatUpdate: FakeChannelOptions['chatUpdate'
   const ctx = await start(
     {
       chatUpdate,
-      listChats: async () => [
-        { id: 'oc_old', name: 'old task [p]' },
-        { id: 'oc_remote', name: 'remote task [p]' },
-        { id: 'oc_other', name: 'someone else' },
-      ],
+      chatList: pageOf(['oc_old', 'oc_remote', 'oc_other']),
       getChatInfo: async (id) => {
         infoCalls.push(id);
-        return { chatId: id, chatType: 'group', description: id === 'oc_remote' ? MARKER : 'not ours' };
+        return { chatId: id, chatType: 'group', name: id === 'oc_remote' ? 'remote task [p]' : 'someone else', description: id === 'oc_remote' ? MARKER : 'not ours' };
       },
       createChat: async (opts) => {
         created.push(opts);
@@ -386,7 +383,7 @@ test('bind --new creates a group carrying the marker even though candidates exis
 });
 
 test('creating a group with no owner recorded is code 4', PER_TEST, async () => {
-  const { daemon } = await start({ listChats: async () => [] });
+  const { daemon } = await start({ chatList: pageOf([]) });
   await connected();
   const res = await request({ type: 'bind', root: '/p', label: 'p', paneId: null });
   assert.equal(res.ok, false);
@@ -438,6 +435,139 @@ test('unbind: code 4 while a question is pending; then the group leaves the allo
   const again = await request({ type: 'unbind', root: '/p' });
   assert.equal(again.ok, false);
   if (!again.ok) assert.equal(again.code, 1);
+  await daemon.stop();
+});
+
+// ---- unbind --dissolve --------------------------------------------------------
+const dissolve = (root = '/p') => request({ type: 'unbind', root, dissolve: true });
+
+test('unbind --dissolve: Feishu dissolves the group, the record is forgotten, the allowlist and status are refreshed', PER_TEST, async () => {
+  const { daemon, fake, home } = await start({ chatDelete: async () => ({ code: 0 }) });
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const res = await dissolve();
+  assert.deepEqual(res, { ok: true, kind: 'unbind', chatId: 'oc_x', name: 'oc_x', dissolved: true });
+  assert.deepEqual(fake.deletes, ['oc_x']);
+  assert.deepEqual(await bindings(home), []);
+  assert.deepEqual(lastAllowlist(fake), []);
+  assert.equal((await ping())?.bindings, 0);
+  assert.match(readFileSync(join(home, 'daemon.log'), 'utf8'), /"dissolved":true/);
+  await daemon.stop();
+});
+
+test('unbind --dissolve refused by Feishu (code≠0): the record is still forgotten, and the reply carries the code, the scope hint and dissolved false', PER_TEST, async () => {
+  const { daemon, fake, home } = await start({ chatDelete: async () => ({ code: 232002, msg: 'no permission' }) });
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const res = await dissolve();
+  assert.equal(res.ok, true, JSON.stringify(res));
+  if (!res.ok || res.kind !== 'unbind') return;
+  assert.equal(res.dissolved, false);
+  assert.match(res.problem ?? '', /232002/);
+  assert.match(res.problem ?? '', /no permission/);
+  assert.match(res.problem ?? '', /im:chat:operate_as_owner/);
+  assert.match(res.problem ?? '', /by hand/);
+  assert.deepEqual(fake.deletes, ['oc_x']);
+  assert.deepEqual(await bindings(home), []);
+  assert.deepEqual(lastAllowlist(fake), []);
+  await daemon.stop();
+});
+
+test('unbind --dissolve refused: the group\'s marker is cleared so it is not offered back, and the reply and log say so', PER_TEST, async () => {
+  const { daemon, fake, home } = await start({
+    chatDelete: async () => ({ code: 232002, msg: 'no permission' }),
+    chatUpdate: async () => ({ code: 0 }),
+  });
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const res = await dissolve();
+  assert.equal(res.ok, true, JSON.stringify(res));
+  if (!res.ok || res.kind !== 'unbind') return;
+  assert.equal(res.dissolved, false);
+  assert.match(res.problem ?? '', /marker .*cleared/);
+  assert.doesNotMatch(res.problem ?? '', /could not be cleared/);
+  const last = fake.renames.at(-1);
+  assert.equal(last?.chatId, 'oc_x');
+  assert.equal(last?.name, undefined);
+  assert.ok(last?.description && last.description !== 'agent-lark · /p', JSON.stringify(last));
+  assert.match(readFileSync(join(home, 'daemon.log'), 'utf8'), /dissolve\.marker-cleared/);
+  assert.deepEqual(await bindings(home), []);
+  await daemon.stop();
+});
+
+test('unbind --dissolve refused and the marker cannot be cleared either: the reply says the group will be offered back, the log says why', PER_TEST, async () => {
+  const { daemon, fake, home } = await start({
+    chatDelete: async () => ({ code: 232002, msg: 'no permission' }),
+    chatUpdate: async () => ({ code: 232016, msg: 'not allowed' }),
+  });
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const before = fake.renames.length;
+  const res = await dissolve();
+  assert.equal(res.ok, true, JSON.stringify(res));
+  if (!res.ok || res.kind !== 'unbind') return;
+  assert.equal(res.dissolved, false);
+  assert.match(res.problem ?? '', /could not be cleared/);
+  assert.match(res.problem ?? '', /232016/);
+  assert.match(res.problem ?? '', /offered back/);
+  assert.equal(fake.renames.length, before + 1);
+  assert.equal(fake.renames.at(-1)?.description, 'released by agent-lark');
+  assert.match(readFileSync(join(home, 'daemon.log'), 'utf8'), /dissolve\.marker-failed/);
+  assert.deepEqual(await bindings(home), []);
+  await daemon.stop();
+});
+
+test('unbind --dissolve when the SDK call throws: the record is still forgotten, the reply says what was thrown', PER_TEST, async () => {
+  const { daemon, home } = await start({
+    chatDelete: async () => {
+      throw new Error('socket hang up');
+    },
+  });
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const res = await dissolve();
+  assert.equal(res.ok, true, JSON.stringify(res));
+  if (!res.ok || res.kind !== 'unbind') return;
+  assert.equal(res.dissolved, false);
+  assert.match(res.problem ?? '', /socket hang up/);
+  assert.deepEqual(await bindings(home), []);
+  await daemon.stop();
+});
+
+test('unbind --dissolve before Feishu is connected is code 3 and touches nothing; a plain unbind still works then', PER_TEST, async () => {
+  const { daemon, home } = await start({
+    connect: async () => {
+      throw new Error('offline');
+    },
+    chatDelete: async () => ({ code: 0 }),
+  });
+  await waitFor(async () => (await ping())?.lastError, 'the failed handshake');
+  await bindChat('/p', 'oc_x');
+  const res = await dissolve();
+  assert.equal(res.ok, false);
+  if (!res.ok) assert.equal(res.code, 3);
+  assert.equal((await bindings(home)).find((b) => b.chatId === 'oc_x')?.releasedAt, null);
+  const plain = await request({ type: 'unbind', root: '/p' });
+  assert.ok(plain.ok);
+  await daemon.stop();
+});
+
+test('unbind --dissolve while a question is pending is code 4, nothing dissolved; with no live group it is code 1', PER_TEST, async () => {
+  const { daemon, fake, home } = await start({ chatDelete: async () => ({ code: 0 }) });
+  await connected();
+  await bindChat('/p', 'oc_x');
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: null, payload: askPayload, timeoutMs: 5000 });
+  await waitFor(() => fake.sent.length === 1, 'the question card to be sent');
+  const refused = await dissolve();
+  assert.equal(refused.ok, false);
+  if (!refused.ok) assert.equal(refused.code, 4);
+  assert.deepEqual(fake.deletes, []);
+  assert.equal((await bindings(home)).length, 1);
+  await fake.message({ chatId: 'oc_x', content: 'Keep' });
+  await asking;
+  const none = await dissolve('/other');
+  assert.equal(none.ok, false);
+  if (!none.ok) assert.equal(none.code, 1);
   await daemon.stop();
 });
 
@@ -506,9 +636,30 @@ test('before Feishu is connected a bind that has to look at Feishu is code 3; bi
   await daemon.stop();
 });
 
+test('bind: the group scan forgets released records whose group is gone, so only groups that exist are offered back', PER_TEST, async () => {
+  const { daemon, home } = await start({
+    chatList: pageOf(['oc_remote', 'oc_other']),
+    getChatInfo: async (id) => ({ chatId: id, chatType: 'group', description: id === 'oc_remote' ? MARKER : 'not ours' }),
+  });
+  await connected();
+  await bindChat('/p', 'oc_old');
+  await request({ type: 'unbind', root: '/p' });
+  await bindChat('/p', 'oc_gone');
+  await request({ type: 'unbind', root: '/p' });
+  const res = await request({ type: 'bind', root: '/p', label: 'p', paneId: null });
+  assert.equal(res.ok, false);
+  if (!res.ok) {
+    assert.equal(res.code, 4);
+    assert.deepEqual(res.candidates?.map((c) => c.chatId), ['oc_remote']);
+  }
+  assert.deepEqual(await chatIds(home), []);
+  assert.match(logLines(home, 'bindings.swept').at(-1) ?? '', /"removed":2/);
+  await daemon.stop();
+});
+
 test('a failed group scan is a note, not a refusal: local candidates still count', PER_TEST, async () => {
   const { daemon } = await start({
-    listChats: async () => {
+    chatList: async () => {
       throw new Error('scope missing');
     },
   });
@@ -1332,6 +1483,230 @@ async function withTtl<T>(value: string | undefined, fn: () => Promise<T>): Prom
     else process.env.AGENT_LARK_MEDIA_TTL_DAYS = prev;
   }
 }
+
+// ---- bindings sweep: records whose group is gone from Feishu -----------------
+const logLines = (home: string, event: string): string[] =>
+  readFileSync(join(home, 'daemon.log'), 'utf8')
+    .split('\n')
+    .filter((l) => l.includes(` ${event} `));
+const sweptLine = (home: string): string | undefined => logLines(home, 'bindings.swept').at(-1);
+const chatIds = async (home: string): Promise<string[]> => (await bindings(home)).map((b) => String(b.chatId)).sort();
+/** A daemon sweeping every 30 ms, with the given `chat.list` answers; stopped when the test ends, however it ends. */
+async function sweeper(t: TestContext, chatList: FakeChannelOptions['chatList'], extra: FakeChannelOptions = {}) {
+  const home = freshHome();
+  const fake = createFakeChannel({ chatList, ...extra });
+  const daemon = await runDaemon({ createChannel: () => fake.channel, herdr: createFakeHerdr().deps, connectRetryMs: 50, sweepMs: 30 });
+  daemons.push(daemon);
+  t.after(() => daemon.stop());
+  return { home, fake, daemon };
+}
+
+// The 30 ms timer may tick while a test is still binding: the list holds every
+// id until the setup is done, then drops the ones the test wants gone.
+test('sweep: a released record whose group Feishu no longer lists is removed; a listed one stays', PER_TEST, async (t) => {
+  let ids = ['oc_gone', 'oc_keep'];
+  const { home } = await sweeper(t, (req) => pageOf(ids)(req));
+  await connected();
+  await bindChat('/p', 'oc_gone');
+  await request({ type: 'unbind', root: '/p' });
+  await bindChat('/q', 'oc_keep');
+  ids = ['oc_keep'];
+  const line = await waitFor(() => logLines(home, 'bindings.swept').find((l) => l.includes('"removed":1')), 'a sweep that removed one');
+  assert.match(line, /"kept":1/);
+  assert.match(line, /"roots":\["\/p"\]/);
+  assert.deepEqual(await chatIds(home), ['oc_keep']);
+});
+
+test('sweep: a live record whose group is gone: removed, allowlist refreshed, the project state loses its chatId but keeps away', PER_TEST, async (t) => {
+  let ids = ['oc_live'];
+  const { home, fake } = await sweeper(t, (req) => pageOf(ids)(req));
+  await connected();
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'al-sweep-proj-')));
+  homes.push(project);
+  writeProjectState(project, { away: true, chatId: 'oc_live' }, { create: true });
+  await bindChat(project, 'oc_live');
+  await request({ type: 'setAway', root: project, away: true, paneId: 'w1:p1' });
+  assert.deepEqual(lastAllowlist(fake), ['oc_live']);
+  ids = [];
+  await waitFor(() => logLines(home, 'bindings.swept').find((l) => l.includes('"removed":1')), 'the sweep');
+  assert.deepEqual(await chatIds(home), []);
+  assert.deepEqual(lastAllowlist(fake), []);
+  assert.deepEqual(readProjectState(project), { away: true, chatId: null, target: project, updated: readProjectState(project)?.updated ?? '' });
+  assert.equal((await ping())?.bindings, 0);
+});
+
+test('sweep: a project that never had a state file does not get one planted by the sweep', PER_TEST, async (t) => {
+  const { home } = await sweeper(t, pageOf([]));
+  await connected();
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'al-sweep-proj-')));
+  homes.push(project);
+  await bindChat(project, 'oc_live');
+  await waitFor(() => logLines(home, 'bindings.swept').find((l) => l.includes('"removed":1')), 'the sweep');
+  assert.equal(existsSync(join(project, '.agent-lark')), false);
+});
+
+for (const [what, chatList, reason] of [
+  ['a page answered with code≠0', async () => ({ code: 99991400, msg: 'too many requests' }), /99991400/],
+  ['has_more without a page_token', async () => ({ code: 0, data: { items: [{ chat_id: 'oc_x' }], has_more: true } }), /page_token/],
+  [
+    'a throwing chat.list',
+    async () => {
+      throw new Error('scope missing');
+    },
+    /scope missing/,
+  ],
+  ['code 0 with no data at all', async () => ({ code: 0 }), /data/],
+] as Array<[string, FakeChannelOptions['chatList'], RegExp]>) {
+  test(`sweep: ${what} removes nothing and logs bindings.sweep-skipped with why`, PER_TEST, async (t) => {
+    const { home } = await sweeper(t, chatList);
+    await connected();
+    await bindChat('/p', 'oc_gone');
+    await request({ type: 'unbind', root: '/p' });
+    await bindChat('/q', 'oc_live');
+    const line = await waitFor(() => logLines(home, 'bindings.sweep-skipped').at(-1), 'the skipped line');
+    assert.match(line, reason);
+    await sleep(100);
+    assert.deepEqual(await chatIds(home), ['oc_gone', 'oc_live']);
+    assert.equal(sweptLine(home), undefined);
+  });
+}
+
+test('sweep: a list that keeps saying has_more past 100 pages is not trusted: nothing removed, 100 pages asked for', PER_TEST, async (t) => {
+  let endless = false;
+  const { home, fake } = await sweeper(t, async (req) =>
+    endless
+      ? { code: 0, data: { items: [{ chat_id: 'oc_live' }], has_more: true, page_token: String(Number(req.params.page_token ?? 0) + 1) } }
+      : pageOf(['oc_gone'])(req),
+  );
+  await connected();
+  await bindChat('/p', 'oc_gone');
+  await request({ type: 'unbind', root: '/p' });
+  const before = fake.listCalls.length;
+  endless = true;
+  const line = await waitFor(() => logLines(home, 'bindings.sweep-skipped').at(-1), 'the skipped line');
+  assert.match(line, /100 pages/);
+  // One endless fetch is exactly 100 pages, tokens 0…99; a further tick can only add whole fetches.
+  const tokens = fake.listCalls.slice(before, before + 100).map((c) => c.params.page_token);
+  assert.deepEqual(tokens, [undefined, ...Array.from({ length: 99 }, (_, i) => String(i + 1))]);
+  assert.equal((fake.listCalls.length - before) % 100, 0);
+  assert.deepEqual(await chatIds(home), ['oc_gone']);
+});
+
+test('sweep: while Feishu is not connected nothing is removed and the reason is logged', PER_TEST, async (t) => {
+  const { home } = await sweeper(t, pageOf([]), {
+    connect: async () => {
+      throw new Error('offline');
+    },
+  });
+  await waitFor(async () => (await ping())?.lastError, 'the failed handshake');
+  await bindChat('/p', 'oc_live');
+  const line = await waitFor(() => logLines(home, 'bindings.sweep-skipped').at(-1), 'the skipped line');
+  assert.match(line, /not connected/);
+  assert.deepEqual(await chatIds(home), ['oc_live']);
+});
+
+test('sweep: a live record whose project has a question pending is kept this round and logged; its released records and the others go', PER_TEST, async (t) => {
+  let ids = ['oc_prev', 'oc_asking', 'oc_idle'];
+  const { home, fake } = await sweeper(t, (req) => pageOf(ids)(req));
+  await connected();
+  await bindChat('/p', 'oc_prev');
+  await request({ type: 'unbind', root: '/p' });
+  await bindChat('/p', 'oc_asking');
+  await bindChat('/q', 'oc_idle');
+  const asking = request({ type: 'ask', root: '/p', label: 'p', paneId: null, payload: askPayload, timeoutMs: 5000 });
+  await waitFor(() => fake.sent.length === 1, 'the question card');
+  ids = [];
+  const line = await waitFor(() => logLines(home, 'bindings.swept').find((l) => l.includes('"removed":2')), 'the sweep');
+  assert.match(line, /"kept":1/);
+  assert.ok(logLines(home, 'bindings.sweep-pending').some((l) => l.includes('oc_asking')), 'the pending root was not logged');
+  assert.ok(!logLines(home, 'bindings.sweep-pending').some((l) => l.includes('oc_prev')), 'the released record was shielded by the pending question');
+  assert.deepEqual(await chatIds(home), ['oc_asking']);
+  await fake.message({ chatId: 'oc_asking', content: 'Keep' });
+  await asking;
+});
+
+test('sweep: a list spread over several pages is merged before anything is judged missing', PER_TEST, async (t) => {
+  let ids = ['oc_a', 'oc_b', 'oc_c', 'oc_d'];
+  const { home, fake } = await sweeper(t, (req) => pageOf(ids, 2)(req));
+  await connected();
+  for (const [root, id] of [['/a', 'oc_a'], ['/b', 'oc_b'], ['/c', 'oc_c'], ['/d', 'oc_d']] as const) await bindChat(root, id);
+  const before = fake.listCalls.length;
+  ids = ['oc_a', 'oc_b', 'oc_c'];
+  await waitFor(() => logLines(home, 'bindings.swept').find((l) => l.includes('"removed":1')), 'the sweep');
+  assert.deepEqual(await chatIds(home), ['oc_a', 'oc_b', 'oc_c']);
+  const pages = fake.listCalls.slice(before).map((c) => c.params.page_token);
+  assert.ok(pages.includes('2'), `the second page was never asked for: ${JSON.stringify(pages)}`);
+});
+
+test('sweep: with AGENT_LARK_MEDIA_TTL_DAYS=0 the bindings are still swept', PER_TEST, async (t) => {
+  await withTtl('0', async () => {
+    const { home } = await sweeper(t, pageOf([]));
+    await connected();
+    await bindChat('/p', 'oc_gone');
+    await waitFor(() => logLines(home, 'bindings.swept').find((l) => l.includes('"removed":1')), 'the sweep');
+    assert.deepEqual(await chatIds(home), []);
+    assert.equal(swept(home), undefined);
+  });
+});
+
+test('sweep: a record that went away while the list was being fetched is left alone, and so is the state written since', PER_TEST, async (t) => {
+  const home = freshHome();
+  const project = realpathSync(mkdtempSync(join(tmpdir(), 'al-sweep-proj-')));
+  homes.push(project);
+  writeProjectState(project, { away: true, chatId: 'oc_x' }, { create: true });
+  writeFileSync(
+    join(home, 'bindings.json'),
+    JSON.stringify({
+      bindings: [{ root: project, label: 'p', chatId: 'oc_x', name: null, paneId: null, away: true, lang: null, boundAt: '2026-01-01T00:00:00.000Z', releasedAt: null }],
+    }),
+  );
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const fake = createFakeChannel({
+    chatList: async (req) => {
+      if (fake.listCalls.length === 1) await gate;
+      return pageOf([])(req);
+    },
+    chatDelete: async () => ({ code: 0 }),
+  });
+  const daemon = await runDaemon({ createChannel: () => fake.channel, herdr: createFakeHerdr().deps, connectRetryMs: 50 });
+  daemons.push(daemon);
+  t.after(() => daemon.stop());
+  await connected();
+  await waitFor(() => fake.listCalls.length >= 1, 'the post-handshake fetch to start');
+  // While the list is on its way: the group is dissolved and a new one bound.
+  const gone = await request({ type: 'unbind', root: project, dissolve: true });
+  assert.ok(gone.ok, JSON.stringify(gone));
+  await bindChat(project, 'oc_new');
+  writeProjectState(project, { chatId: 'oc_new' });
+  release();
+  const line = await waitFor(() => sweptLine(home), 'the sweep to finish');
+  assert.match(line, /"removed":0/);
+  assert.deepEqual(await chatIds(home), ['oc_new']);
+  assert.equal(readProjectState(project)?.chatId, 'oc_new');
+  assert.deepEqual(lastAllowlist(fake), ['oc_new']);
+});
+
+test('sweep: the first successful handshake sweeps the records on file at once, before any timer', PER_TEST, async (t) => {
+  const home = freshHome();
+  writeFileSync(
+    join(home, 'bindings.json'),
+    JSON.stringify({
+      bindings: [
+        { root: '/p', label: 'p', chatId: 'oc_gone', name: null, paneId: null, away: false, lang: null, boundAt: '2026-01-01T00:00:00.000Z', releasedAt: '2026-01-02T00:00:00.000Z' },
+        { root: '/q', label: 'q', chatId: 'oc_keep', name: null, paneId: null, away: false, lang: null, boundAt: '2026-01-01T00:00:00.000Z', releasedAt: null },
+      ],
+    }),
+  );
+  const fake = createFakeChannel({ chatList: pageOf(['oc_keep']) });
+  const daemon = await runDaemon({ createChannel: () => fake.channel, herdr: createFakeHerdr().deps, connectRetryMs: 50 });
+  daemons.push(daemon);
+  await connected();
+  const line = await waitFor(() => sweptLine(home), 'the sweep after the handshake');
+  assert.match(line, /"removed":1/);
+  assert.deepEqual(await chatIds(home), ['oc_keep']);
+  await daemon.stop();
+});
 
 test('media sweep at start: files older than the default 7 days go, the rest and the log line stay; empty directories go too', PER_TEST, async () => {
   await withTtl(undefined, async () => {

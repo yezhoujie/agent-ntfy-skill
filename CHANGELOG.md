@@ -11,6 +11,31 @@ pin (`npx skills add 'yezhoujie/agent-remote-communication-skills#v0.1.2' --skil
 
 ### [Unreleased][agent-lark-unreleased]
 
+#### Added
+
+- `unbind --dissolve` dissolves the project's group in Feishu (`im.v1.chat.delete`) and forgets its record,
+  for a group the human does not want offered back. Feishu dissolving it exits 0
+  (`Dissolved Feishu group "…"; the local record is removed.`); Feishu refusing — the app can only dissolve
+  a group it owns, or one it created with the `im:chat:operate_as_owner` scope — or the call failing exits 4
+  with the reason and `Dissolve it by hand in Feishu`, the record removed all the same and the group's
+  marker description replaced so it is not offered back (a group whose marker could not be cleared either
+  is offered back until it is dissolved — the line says which); not connected exits 3 with nothing
+  touched; a daemon from before this version exits 3 naming the restart.
+  The plain `unbind` is unchanged. SKILL.md and the example rule now have the agent ask whether the group
+  should stay before choosing.
+- The daemon forgets records of groups that no longer exist in Feishu (dissolved, or the bot removed from
+  them): once a day, right after the first successful handshake, and whenever `bind` / `away on` looks for
+  a group to offer back. The list is read page by page straight from `im.v1.chat.list`; a page Feishu
+  refused, a missing `page_token`, more than 100 pages, a thrown call or no connection leaves every record
+  in place (`bindings.sweep-skipped` in the log), and a project with a question pending keeps its live
+  record that round. A live record found gone leaves the allowlist and sets `chatId: null` in the project's
+  `state.json` (the `away` switch is left as it was, so the next `ask` exits 4 as not bound).
+
+#### Changed
+
+- The daily sweep timer is always armed: `AGENT_LARK_MEDIA_TTL_DAYS=0` keeps every attachment as before
+  but no longer switches off the sweep of stale group records.
+
 #### Fixed
 
 - `send-file` with a relative path (`send-file out/shot.png`) no longer fails with `file not found`: the path

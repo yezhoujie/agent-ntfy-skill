@@ -41,7 +41,7 @@ Sources, so you can check: agent-ntfy's [README](skills/agent-ntfy/README.md) (�
 | **What to keep secret** | The topic name — whoever knows it reads everything and can instruct the agent | The app secret (kept in the OS keychain; never in argv or output) — and group membership: anyone in the project's group can drive the agent |
 | **Where content travels** | In clear through ntfy.sh | Through Feishu's servers; the group's description carries the project's absolute path |
 | **Stopping the daemon with a question pending** | Stops; the waiting `ask` exits 3 | Refused; `--force` stops and cancels |
-| **End of a task** | `release`: the slot goes back to the pool (`away off` does it too) | `unbind`: the group stays in Feishu and is offered back for renaming next time; `away off` only flips the switch |
+| **End of a task** | `release`: the slot goes back to the pool (`away off` does it too) | ask the human first: `unbind` (the group stays in Feishu and is offered back for renaming next time) or `unbind --dissolve` (dissolved and forgotten); groups gone from Feishu are forgotten by the daemon daily; `away off` only flips the switch |
 | **Language of the fixed wording** | `lang` in the JSON; otherwise `--lang` / `AGENT_NTFY_LANG` / the system locale | `lang` in the JSON (default `en`); the CLI itself is English only |
 
 ## Both installed

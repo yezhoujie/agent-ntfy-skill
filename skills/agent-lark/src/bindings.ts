@@ -218,4 +218,13 @@ export class BindingStore {
     this.persist();
     return b;
   }
+
+  /** Forget a group altogether, live or released: for one that no longer exists in Feishu. */
+  remove(chatId: string): Binding | undefined {
+    const b = this.map.get(chatId);
+    if (!b) return undefined;
+    this.map.delete(chatId);
+    this.persist();
+    return b;
+  }
 }

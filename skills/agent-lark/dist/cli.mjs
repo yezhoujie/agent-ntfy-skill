@@ -136430,7 +136430,8 @@ var init_texts = __esm({
                                      (exit 4 lists earlier groups to take back; rerun with --reuse or --new)
   away off | status [--json]         Remote mode off / the project's state ({away, chatId, target, updated})
   rename "<task>"                    Rename the project's live group to "<task> [<dir>]"
-  unbind                             Let the live group go (it stays in Feishu; the next away on offers it back)
+  unbind [--dissolve]                Let the live group go (it stays in Feishu; the next away on offers it back);
+                                     --dissolve dissolves it in Feishu and forgets it (exit 4 if Feishu refuses: dissolve it by hand)
   bind [--chat <id>] [--name <task>] [--reuse <chat_id> | --new]
                                      Bind without switching remote mode on; --chat names a group outright
   ask [--timeout <seconds>] [--urgent]
@@ -136507,6 +136508,7 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       bindModeIgnored: "this project already has a live group; --reuse / --new were ignored (unbind first to pick another group)",
       bindUpdateSkipped: "not connected to Feishu; the group's name and description were left as they are",
       unbound: 'Unbound. The Feishu group "{name}" stays in Feishu; the next away on in this directory offers to rename and reuse it.',
+      dissolved: 'Dissolved Feishu group "{name}"; the local record is removed.',
       renameNotBound: "this project has no live group; run agent-lark away on first",
       renameFailed: "renaming the group failed: Feishu error {code} {msg}",
       renameThrew: "renaming the group failed: {error}",
@@ -136559,6 +136561,11 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       sendFailed: "send failed: {error}",
       unbindNone: "this project is not bound",
       unbindPending: "a question is still pending on the phone; answer it or wait for the timeout",
+      dissolveRefused: 'the Feishu group "{name}" was not dissolved: Feishu answered {code} {msg}. Dissolve it by hand in Feishu (the app can only dissolve a group it owns, or one it created if it has the im:chat:operate_as_owner scope). The local record is removed.',
+      dissolveThrew: 'the Feishu group "{name}" was not dissolved: {error}. Dissolve it by hand in Feishu. The local record is removed.',
+      dissolveMarkerCleared: "The group's marker was cleared, so it will not be offered back.",
+      dissolveMarkerKept: "The group's marker could not be cleared ({error}), so it will be offered back until it is dissolved.",
+      dissolveOldDaemon: "the running daemon predates --dissolve and has only let the group go (it stays in Feishu, on record as released). Restart the daemon (agent-lark daemon --stop, then agent-lark daemon --detach), bind the group back (away on --reuse <chat_id>) and run unbind --dissolve again",
       bindNoOwner: "nobody to invite into a new group (the app owner is not recorded). Use --chat <chat_id> to bind a group you created yourself.",
       bindCreateFailed: "creating the group failed: {error}\nIf this is a permission problem the app lacks the im:chat (create group) scope: run agent-lark setup --update, or bind an existing group with --chat <chat_id>.",
       fileMissing: "file not found: {path}",
@@ -137170,6 +137177,14 @@ var init_bindings = __esm({
         if (!b) return void 0;
         b.releasedAt = (/* @__PURE__ */ new Date()).toISOString();
         b.away = false;
+        this.persist();
+        return b;
+      }
+      /** Forget a group altogether, live or released: for one that no longer exists in Feishu. */
+      remove(chatId) {
+        const b = this.map.get(chatId);
+        if (!b) return void 0;
+        this.map.delete(chatId);
         this.persist();
         return b;
       }
@@ -138024,6 +138039,7 @@ ${text}`;
         connected = true;
         lastError = null;
         log("daemon.connected", { bindings: bindings.all().length, credSource: creds.source });
+        void sweepBindings().catch((err) => log("bindings.sweep-failed", { err: String(err).slice(0, 200) }));
         return;
       } catch (err) {
         if (stopping) return;
@@ -138063,6 +138079,61 @@ ${msg.renamePermissionHint}` : text;
       log("rename.failed", { chatId, err: String(err).slice(0, 200) });
       if (refused) return { ok: false, error: explain(refused) };
       return { ok: false, error: fill(msg.renameThrew, { error: err instanceof Error ? err.message : String(err) }) };
+    }
+  };
+  const deleteChat = async (chatId, name) => {
+    try {
+      const res = await channel.rawClient.im.v1.chat.delete({ path: { chat_id: chatId } });
+      const refused = feishuError(res);
+      if (refused) {
+        log("dissolve.refused", { chatId, code: refused.code });
+        return { ok: false, error: fill(msg.dissolveRefused, { name, code: refused.code, msg: refused.msg }) };
+      }
+      return { ok: true };
+    } catch (err) {
+      const body = err?.response?.data;
+      const refused = feishuError(body) ?? feishuError(err);
+      log("dissolve.failed", { chatId, err: String(err).slice(0, 200) });
+      if (refused) return { ok: false, error: fill(msg.dissolveRefused, { name, code: refused.code, msg: refused.msg }) };
+      return { ok: false, error: fill(msg.dissolveThrew, { name, error: err instanceof Error ? err.message : String(err) }) };
+    }
+  };
+  const clearMarker = async (chatId) => {
+    try {
+      const res = await channel.rawClient.im.v1.chat.update({ path: { chat_id: chatId }, data: { description: MARKER_CLEARED } });
+      const refused = feishuError(res);
+      if (refused) {
+        log("dissolve.marker-failed", { chatId, code: refused.code });
+        return { ok: false, error: `Feishu answered ${refused.code} ${refused.msg}` };
+      }
+      log("dissolve.marker-cleared", { chatId });
+      return { ok: true };
+    } catch (err) {
+      const body = err?.response?.data;
+      const refused = feishuError(body) ?? feishuError(err);
+      log("dissolve.marker-failed", { chatId, err: String(err).slice(0, 200) });
+      return { ok: false, error: refused ? `Feishu answered ${refused.code} ${refused.msg}` : err instanceof Error ? err.message : String(err) };
+    }
+  };
+  const fetchChatIds = async () => {
+    if (!connected) return { ok: false, reason: "not connected" };
+    const ids = /* @__PURE__ */ new Set();
+    let pageToken;
+    try {
+      for (let page = 0; page < CHAT_LIST_MAX_PAGES; page++) {
+        const res = await channel.rawClient.im.v1.chat.list({ params: { page_size: 100, page_token: pageToken } });
+        const refused = feishuError(res);
+        if (refused) return { ok: false, reason: `Feishu answered ${refused.code} ${refused.msg}` };
+        const d = res?.data;
+        if (res?.code !== 0 || !d || typeof d !== "object") return { ok: false, reason: "no data in the reply" };
+        for (const it of d.items ?? []) if (it.chat_id) ids.add(it.chat_id);
+        if (!d.has_more) return { ok: true, ids };
+        if (!d.page_token) return { ok: false, reason: "has_more without a page_token" };
+        pageToken = d.page_token;
+      }
+      return { ok: false, reason: `still more after ${CHAT_LIST_MAX_PAGES} pages` };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
     }
   };
   const flagUrgent = async (messageId) => {
@@ -138132,8 +138203,48 @@ ${msg.renamePermissionHint}` : text;
     mediaSeen = { files: r.keptFiles, bytes: r.keptBytes, at: (/* @__PURE__ */ new Date()).toISOString() };
     log("media.swept", { removed: r.removed, keptFiles: r.keptFiles, keptBytes: r.keptBytes, failed: r.failed, ttlDays: ttl.days });
   };
-  const sweepTimer = ttl.days === 0 ? void 0 : setInterval(sweepMedia, deps.sweepMs ?? MEDIA_SWEEP_MS);
-  sweepTimer?.unref();
+  const pruneBindings = (ids, among) => {
+    const roots = /* @__PURE__ */ new Set();
+    let removed = 0;
+    for (const b of among) {
+      if (ids.has(b.chatId)) continue;
+      if (b.releasedAt === null && pendingFor(b.root)) {
+        log("bindings.sweep-pending", { root: b.root, chatId: b.chatId });
+        continue;
+      }
+      const gone = bindings.remove(b.chatId);
+      if (!gone) continue;
+      removed += 1;
+      roots.add(b.root);
+      if (gone.releasedAt === null) {
+        lastStatus.delete(b.root);
+        try {
+          writeProjectState(b.root, { chatId: null });
+        } catch (err) {
+          log("bindings.sweep-state-failed", { root: b.root, err: String(err).slice(0, 200) });
+        }
+      }
+    }
+    if (removed) refreshPolicy();
+    return { removed, roots: [...roots] };
+  };
+  const sweepBindings = async () => {
+    const all = bindings.all();
+    if (!all.length) return;
+    const list = await fetchChatIds();
+    if (!list.ok) {
+      log("bindings.sweep-skipped", { reason: list.reason });
+      return;
+    }
+    const r = pruneBindings(list.ids, all);
+    log("bindings.swept", { removed: r.removed, kept: all.length - r.removed, roots: r.roots });
+  };
+  const sweep = () => {
+    sweepMedia();
+    void sweepBindings().catch((err) => log("bindings.sweep-failed", { err: String(err).slice(0, 200) }));
+  };
+  const sweepTimer = setInterval(sweep, deps.sweepMs ?? SWEEP_MS);
+  sweepTimer.unref();
   let server;
   const sockets = /* @__PURE__ */ new Set();
   let resolveDone;
@@ -138166,7 +138277,7 @@ ${msg.renamePermissionHint}` : text;
     log("daemon.stopping", { why });
     for (const sig of signals) process.off(sig, onSignal[sig]);
     clearInterval(pollTimer);
-    if (sweepTimer) clearInterval(sweepTimer);
+    clearInterval(sweepTimer);
     if (retryTimer) clearTimeout(retryTimer);
     wakeRetry?.();
     const cancelled = [...pendings.values()];
@@ -138308,25 +138419,31 @@ ${msg.renamePermissionHint}` : text;
             return { ok: true, kind: "bind", chatId: live.chatId, how: "existing", name: name2 };
           }
           if (!connected) return notConnected();
-          const candidates = bindings.released(req.root).map((b) => ({ chatId: b.chatId, name: b.name, releasedAt: b.releasedAt }));
+          const releasedHere = () => bindings.released(req.root).map((b) => ({ chatId: b.chatId, name: b.name, releasedAt: b.releasedAt }));
+          let candidates = releasedHere();
           const known = req.mode === "reuse" && candidates.some((c) => c.chatId === req.reuseChatId);
           if (req.mode !== "new" && !known) {
-            try {
-              for (const summary of await channel.listChats()) {
-                if (bindings.byChat(summary.id)) continue;
+            const list = await fetchChatIds();
+            if (list.ok) {
+              const r = pruneBindings(list.ids, bindings.released(req.root));
+              if (r.removed) {
+                log("bindings.swept", { removed: r.removed, kept: bindings.all().length, roots: r.roots });
+                candidates = releasedHere();
+              }
+              for (const id of list.ids) {
+                if (bindings.byChat(id)) continue;
                 let info;
                 try {
-                  info = await channel.getChatInfo(summary.id);
+                  info = await channel.getChatInfo(id);
                 } catch {
                   continue;
                 }
                 if (info.description !== marker) continue;
-                candidates.push({ chatId: summary.id, name: summary.name || info.name || null, releasedAt: null });
+                candidates.push({ chatId: id, name: info.name || null, releasedAt: null });
               }
-            } catch (err) {
-              const error = err instanceof Error ? err.message : String(err);
-              log("bind.scan-failed", { root: req.root, err: error });
-              ctx2.note(fill(msg.bindScanFailed, { error }));
+            } else {
+              log("bind.scan-failed", { root: req.root, err: list.reason });
+              ctx2.note(fill(msg.bindScanFailed, { error: list.reason }));
             }
           }
           if (req.mode === "reuse") {
@@ -138393,11 +138510,24 @@ ${msg.renamePermissionHint}` : text;
           const live = bindings.active(req.root);
           if (!live) return { ok: false, code: 1, message: msg.unbindNone };
           if (pendingFor(req.root)) return { ok: false, code: 4, message: msg.unbindPending };
+          const name = live.name ?? live.chatId;
+          if (req.dissolve) {
+            if (!connected) return notConnected();
+            const r = await deleteChat(live.chatId, name);
+            bindings.remove(live.chatId);
+            refreshPolicy();
+            lastStatus.delete(req.root);
+            log("unbind", { root: req.root, chatId: live.chatId, dissolved: r.ok });
+            if (r.ok) return { ok: true, kind: "unbind", chatId: live.chatId, name, dissolved: true };
+            const cleared = await clearMarker(live.chatId);
+            const problem = `${r.error} ${cleared.ok ? msg.dissolveMarkerCleared : fill(msg.dissolveMarkerKept, { error: cleared.error })}`;
+            return { ok: true, kind: "unbind", chatId: live.chatId, name, dissolved: false, problem };
+          }
           bindings.release(req.root);
           refreshPolicy();
           lastStatus.delete(req.root);
           log("unbind", { root: req.root, chatId: live.chatId });
-          return { ok: true, kind: "unbind", chatId: live.chatId, name: live.name ?? live.chatId };
+          return { ok: true, kind: "unbind", chatId: live.chatId, name };
         }
         case "rename": {
           const live = bindings.active(req.root);
@@ -138542,7 +138672,7 @@ ${msg.renamePermissionHint}` : text;
   void connectLoop().catch((err) => log("connect-loop.failed", { err: String(err).slice(0, 200) }));
   return { stop: () => stop("stop()"), done };
 }
-var INJECT_PREFIX, POLL_MS, STATUS_COOLDOWN_MS, CONNECT_RETRY_MS, CONNECT_RETRY_MAX_MS, CLOSE_GRACE_MS, CANCEL_CARD_MS, MEDIA_TTL_DAYS, MEDIA_SWEEP_MS, DAY_MS, DaemonStartError, MAX_IMAGE_BYTES, MAX_FILE_BYTES, CLOSED_KEEP, SENT_CARDS_KEEP;
+var INJECT_PREFIX, POLL_MS, STATUS_COOLDOWN_MS, CONNECT_RETRY_MS, CONNECT_RETRY_MAX_MS, CLOSE_GRACE_MS, CANCEL_CARD_MS, MEDIA_TTL_DAYS, SWEEP_MS, CHAT_LIST_MAX_PAGES, MARKER_CLEARED, DAY_MS, DaemonStartError, MAX_IMAGE_BYTES, MAX_FILE_BYTES, CLOSED_KEEP, SENT_CARDS_KEEP;
 var init_daemon = __esm({
   "src/daemon.ts"() {
     "use strict";
@@ -138563,7 +138693,9 @@ var init_daemon = __esm({
     CLOSE_GRACE_MS = 2e3;
     CANCEL_CARD_MS = 3e3;
     MEDIA_TTL_DAYS = 7;
-    MEDIA_SWEEP_MS = 24 * 60 * 60 * 1e3;
+    SWEEP_MS = 24 * 60 * 60 * 1e3;
+    CHAT_LIST_MAX_PAGES = 100;
+    MARKER_CLEARED = "released by agent-lark";
     DAY_MS = 24 * 60 * 60 * 1e3;
     DaemonStartError = class extends Error {
       constructor(code, message) {
@@ -138727,7 +138859,7 @@ var OPTIONS = {
   setup: { flags: ["update", "reset", "reuse", "close-pane"], opts: ["scopes", "report-to"] },
   daemon: { flags: ["detach", "status", "stop", "force"], opts: [] },
   bind: { flags: ["new"], opts: ["chat", "name", "reuse"] },
-  unbind: { flags: [], opts: [] },
+  unbind: { flags: ["dissolve"], opts: [] },
   rename: { flags: [], opts: [] },
   ask: { flags: ["urgent"], opts: ["timeout"] },
   notify: { flags: [], opts: [] },
@@ -139169,12 +139301,22 @@ async function cmdBind(args) {
 `);
   });
 }
-async function cmdUnbind() {
+async function cmdUnbind(args) {
   const { root } = ctx();
-  const res = await request({ type: "unbind", root });
+  const dissolve = argv("unbind", args).flag("dissolve");
+  const res = await request({ type: "unbind", root, dissolve });
+  if (dissolve && res.ok && res.kind === "unbind" && res.dissolved === void 0) {
+    writeProjectState(root, { chatId: null, away: false });
+    die(3, msg.dissolveOldDaemon);
+  }
+  if (res.ok && res.kind === "unbind" && res.dissolved === false) {
+    writeProjectState(root, { chatId: null, away: false });
+    die(4, res.problem ?? "");
+  }
   finish(res, (r) => {
     writeProjectState(root, { chatId: null, away: false });
-    process.stdout.write(`${fill(msg.unbound, { name: r.kind === "unbind" ? r.name : "" })}
+    if (r.kind !== "unbind") return;
+    process.stdout.write(`${r.dissolved ? fill(msg.dissolved, { name: r.name }) : fill(msg.unbound, { name: r.name })}
 `);
   });
 }
@@ -139397,7 +139539,7 @@ async function main() {
     case "bind":
       return cmdBind(args);
     case "unbind":
-      return cmdUnbind();
+      return cmdUnbind(args);
     case "rename":
       return cmdRename(args);
     case "ask":

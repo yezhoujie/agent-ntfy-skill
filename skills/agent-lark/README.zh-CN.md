@@ -114,7 +114,7 @@ im:message   im:message:send_as_bot   im:message.group_msg   im:chat   im:resour
 - **🔔「[<项目目录名>] 等你输入」**（橙色；只在 herdr 里有）表示 agent 卡在只有你能回答的提示上——权限确认、选择题——它会一直等到你回到键盘旁。
 - 提问是 agent 写的 JSON（契约在 [SKILL.md](SKILL.md)）；你永远不用写。
 
-**回来。** 说「我回来了」或输入 `/agent-lark off`：agent 跑 `away off`——只关开关，群和 daemon 都留着。任务结束时 agent 跑 `unbind`：群留在飞书里，这个项目下次开启远程模式时 agent 会把它提出来。远程模式只换通道，不降标准：不可逆动作仍要你明确批准，超时不算批准。
+**回来。** 说「我回来了」或输入 `/agent-lark off`：agent 跑 `away off`——只关开关，群和 daemon 都留着。任务结束时 agent 先问你群留不留：留 ⇒ `unbind`（群留在飞书里，这个项目下次开启远程模式时 agent 会把它提出来）；不留 ⇒ `unbind --dissolve`（解散群、忘掉记录）。远程模式只换通道，不降标准：不可逆动作仍要你明确批准，超时不算批准。
 
 ## 6. 日常
 
@@ -123,7 +123,7 @@ im:message   im:message:send_as_bot   im:message.group_msg   im:chat   im:resour
 | 你说 | agent 跑 |
 |---|---|
 | 「任务换了，叫 X」 | `rename "X"`——群名变成 `X [<项目目录名>]` |
-| 「把群放掉」/ 任务结束 | `unbind`——群留在飞书里，下次提出来 |
+| 任务结束 | agent 先问群留不留：「留」⇒ `unbind`——群留在飞书里，下次提出来；「不留」⇒ `unbind --dissolve`——在飞书里解散并忘掉（飞书拒绝解散时 agent 会让你手动解散；本地记录两种情况都删） |
 | 「用群 oc_xxxxxxxx」（你自己建的，或重装之后） | `bind --chat oc_xxxxxxxx`——群描述被改写成标记本项目 |
 | 「开启 / 关闭远程交互模式」 | `away on --name "…"` / `away off`（§5） |
 
@@ -147,7 +147,7 @@ agent-lark daemon --stop     # 升级前（§9）；有提问挂着时拒绝—�
 - **二维码过期了。** 重跑 `setup`（手动，或再让 agent 来一次）。
 - **复用的应用发不出东西 / 建群报权限错误。** 权限、事件、回调没开，或没发布版本：按 §4.3 做完再试。
 - **agent 给了你一条 `setup --reuse` 命令。** 你不在 herdr 里：在自己的终端窗口跑，不要在 agent 会话里跑（输 secret 需要真终端），跑完告诉 agent。
-- **旧群一直被提出来。** 让 agent 新建一个；只要旧群还在飞书里带着本项目的标记、或本地还有记录，它就会一直列在候选里。
+- **旧群一直被提出来。** 只要它还在飞书里就会被提出来：让 agent 新建一个、把旧的丢掉（绑定着的时候跑 `unbind --dissolve`），或者你自己在飞书里解散它——daemon 会忘掉已经不存在的群（每天一次，以及每次找旧群提出来的时候）。应用解散不了的群（它不是群主）留给你手动解散。
 
 每个退出码的 stderr 原文与 agent 被要求怎么办：[references/failures.md](references/failures.md)。
 
@@ -169,7 +169,7 @@ agent-lark daemon --stop     # 升级前（§9）；有提问挂着时拒绝—�
 
 ## 10. 让它一直生效：给 agent 的规则
 
-skill 只提供命令，**有意不规定什么时候用**。不加约束的 agent 只在碰巧想起这个 skill 时才用它。触发策略要写进 agent 的**常驻指令**，而且要覆盖四个时刻：会话开始时读项目的 `state.json`（`away: true` ⇒ 你不在）· 你要走时它趁你还在跑 `away on`、有旧群时问你 · 你不在时每个决定都变成一张提问卡，`notify` 只用于重大事项、不报进展 · 你回来时 `away off`，任务结束时 `unbind`。
+skill 只提供命令，**有意不规定什么时候用**。不加约束的 agent 只在碰巧想起这个 skill 时才用它。触发策略要写进 agent 的**常驻指令**，而且要覆盖四个时刻：会话开始时读项目的 `state.json`（`away: true` ⇒ 你不在）· 你要走时它趁你还在跑 `away on`、有旧群时问你 · 你不在时每个决定都变成一张提问卡，`notify` 只用于重大事项、不报进展 · 你回来时 `away off`，任务结束时 agent 问你群留不留，再跑 `unbind` 或 `unbind --dissolve`。
 
 skill 自带一份照这四条写好的规则——[`examples/remote-mode-rule.zh-CN.md`](examples/remote-mode-rule.zh-CN.md)（中文）、[`examples/remote-mode-rule.md`](examples/remote-mode-rule.md)（英文），也写了多个 agent 会话组队时怎么办。Claude Code 的 `~/.claude/rules/` 会注入每个会话：
 

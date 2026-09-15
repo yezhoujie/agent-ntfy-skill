@@ -9,7 +9,7 @@
 3. Status, stop, lifecycle
 4. Groups and bindings
 5. Messages from the phone when no question is pending
-6. Attachments and the media directory
+6. Attachments, the media directory and the daily sweep
 7. Environment variables and files
 8. The per-project state file
 9. Language of the fixed wording
@@ -74,8 +74,8 @@ agent-lark daemon --stop     # rc 0 "daemon: stopped" (or "daemon: was not runni
 - **The daemon is up before it reaches Feishu.** It opens the IPC endpoint first and runs the Feishu
   handshake in the background: a failed attempt is recorded (`last error:`), retried after 5 s, then
   10, 20, 40, 60 s and every 60 s from there; the process never exits over it. Until `connected true`,
-  the commands that need Feishu (`ask`, `notify`, `send-file`, `rename`, and a `bind` that has to create
-  or look up a group) answer rc 3 `not connected to Feishu (<last error>); the daemon keeps retrying, try again shortly`;
+  the commands that need Feishu (`ask`, `notify`, `send-file`, `rename`, `unbind --dissolve`, and a `bind`
+  that has to create or look up a group) answer rc 3 `not connected to Feishu (<last error>); the daemon keeps retrying, try again shortly`;
   `ping`, `status`, `unbind`, `away off`, `bind --chat` and `--stop` work regardless. Once the first
   handshake succeeded the SDK's own reconnect takes over: a dropped connection shows as `connected false`
   with `last error: the connection to Feishu dropped, reconnecting` until it is back.
@@ -97,7 +97,7 @@ agent-lark daemon --stop     # rc 0 "daemon: stopped" (or "daemon: was not runni
   | `daemon.sock` | the listening socket (POSIX); removed on exit. On Windows the pipe name vanishes with the process, no file |
   | `daemon.pid` | the daemon's pid; removed on exit |
   | `daemon.log` | one line per event, `<ISO time> <event> <JSON detail>` (ids, states, error codes; never message bodies, never credentials); stderr of a detached daemon lands here too |
-  | `bindings.json` | every group ever bound, live and released (§4); mode 0600 |
+  | `bindings.json` | every group ever bound, live and released (§4), minus those whose group no longer exists in Feishu — swept once a day (§6); mode 0600 |
   | `media/` | attachments the human sent, one subdirectory per group (§6) |
 
 - A stale `daemon.sock` from a crash is removed at the next start (POSIX); a pid file with no daemon
@@ -141,7 +141,7 @@ when the local records are gone. Task names are at most 60 characters (code poin
 | `paneId` | the herdr pane phone messages are injected into; refreshed by every command run with `HERDR_PANE_ID` set (`ask`, `notify`, `send-file`, `bind`, `rename`, `away on|off`) |
 | `away` | remote mode switch as the daemon knows it (the stuck alert only polls `away` bindings) |
 | `lang` | `lang` of the project's last `ask` / `notify`; the receipt and alert cards follow it (§9) |
-| `boundAt` / `releasedAt` | ISO times; `releasedAt: null` marks the live group, a time means `unbind` let it go (kept so it can be offered back) |
+| `boundAt` / `releasedAt` | ISO times; `releasedAt: null` marks the live group, a time means `unbind` let it go (kept so it can be offered back, until the group is gone from Feishu — §6) |
 
 **How `bind` (and `away on`, which is `bind` + switch) picks the group** (the stdout lines quoted below
 are `away on`'s; `bind` itself prints `✅ Already bound to Feishu group "…" (<root>)` / `✅ Took back … for <root>` /
@@ -153,6 +153,8 @@ are `away on`'s; `bind` itself prints `✅ Already bound to Feishu group "…" (
    when offline; `note: bound, but renaming the group failed: …` when Feishu refuses). Another project's
    live group is refused (rc 1 `group oc_… is the live group of another project (<root>); unbind it there first`);
    switching away from this project's own live group while a question is pending is refused like `unbind` (rc 4).
+   The bot must be a member of the group: one it is not in is not in Feishu's list for it, and the
+   next sweep (§6) forgets the record again.
 2. The project has a live group ⇒ it is kept (`Connected to Feishu group "…"`); `--name` renames it in the
    same call; `--reuse` / `--new` are ignored with a `note:`.
 3. No live group ⇒ **candidates** are collected: groups this project released earlier (on record) plus
@@ -171,7 +173,26 @@ are `away on`'s; `bind` itself prints `✅ Already bound to Feishu group "…" (
 
 `unbind` (rc 1 `this project is not bound`; rc 4 `a question is still pending on the phone; answer it or wait for the timeout`)
 sets `releasedAt`, switches `away` off on that binding, and makes the daemon stop listening to the
-group; the group itself is untouched in Feishu. `rename "<task>"` renames the live group (rc 4
+group; the group itself is untouched in Feishu. `unbind --dissolve` (same rc 1 / rc 4 refusals) asks
+Feishu to dissolve the group (`im.v1.chat.delete`) and forgets the record either way:
+
+- not connected to Feishu ⇒ rc 3 (`not connected to Feishu (<last error>); the daemon keeps retrying, try again shortly`), nothing changes; a plain `unbind` still works;
+- Feishu dissolved it ⇒ rc 0, `Dissolved Feishu group "<name>"; the local record is removed.`;
+- Feishu refused (the app can only dissolve a group it owns, or one it created when it has the
+  `im:chat:operate_as_owner` scope) or the call failed ⇒ rc 4, stderr
+  `the Feishu group "<name>" was not dissolved: Feishu answered <code> <msg>. Dissolve it by hand in Feishu (…). The local record is removed.`
+  (or `… was not dissolved: <error>. Dissolve it by hand in Feishu. The local record is removed.`) — the
+  group is still there for the human to dissolve and the record is gone. The daemon then replaces the
+  group's marker description (best effort, `dissolve.marker-cleared` / `dissolve.marker-failed` in the
+  log) and the line ends with which it was: `The group's marker was cleared, so it will not be offered back.`
+  or `The group's marker could not be cleared (<why>), so it will be offered back until it is dissolved.`
+  — with the marker gone the group scan (step 3 above) no longer finds it; only a group whose marker
+  could not be cleared is offered back again;
+- a daemon started before this version answers as a plain `unbind` (no `dissolved` in the reply): rc 3
+  `the running daemon predates --dissolve and has only let the group go (…)` naming the restart —
+  the group was released, not dissolved, and the state file is written as after a plain `unbind`.
+
+Both forms write `chatId: null, away: false` to the project's state file (§8). `rename "<task>"` renames the live group (rc 4
 `this project has no live group; run agent-lark away on first`; rc 3 with Feishu's code when refused —
 only the bot's own groups can be renamed freely, a human-made group only when its settings let every
 member edit group info; codes 232002 / 232016 / 232011 get that hint appended).
@@ -210,7 +231,7 @@ own judgement) and no question of that project is pending, it sends an orange **
 you`** card with the pane's terminal title and pane id, at most once per 60 s per project. Idle and
 finished sessions never trigger anything. Outside herdr `paneId` is never recorded, so nothing is polled.
 
-## 6. Attachments and the media directory
+## 6. Attachments, the media directory and the daily sweep
 
 Images, files, video and voice notes the human sends are downloaded before injection into
 `<home>/media/<12 hex chars per group>/<epoch ms>-<file name>` (a voice note becomes `…-audio-<epoch>.opus`)
@@ -228,10 +249,29 @@ tenant, which cannot call speech recognition at all); when the call succeeds but
 there in every case.
 
 Retention: at start and every 24 h the daemon deletes files under `media/` older than 7 days
-(`AGENT_LARK_MEDIA_TTL_DAYS=<days>`; `0` switches the sweep off), then the directories left empty;
+(`AGENT_LARK_MEDIA_TTL_DAYS=<days>`; `0` keeps every file), then the directories left empty;
 symlinks are never followed. `daemon --status` reports the setting and what the directory held at the
 last sweep. `send-file` may send anything from this directory back (the media directory is on its
 allowlist), which is how a file the human sent can be returned edited.
+
+The same daily sweep — and once right after the first successful handshake — also prunes
+`bindings.json`: every record, live or released, whose group is not in the list of groups the bot is
+in (`im.v1.chat.list`, read page by page through the raw client) is forgotten. A group the bot was
+removed from counts as gone, like a dissolved one. Rules:
+
+- nothing is removed unless the list was read in full: not connected, a page Feishu refused
+  (`code` ≠ 0), a page with `has_more` but no `page_token`, more than 100 pages, or a thrown call
+  each skip the round with `bindings.sweep-skipped {reason}` in the log;
+- a live record whose project has a question pending is kept this round (`bindings.sweep-pending`);
+  a released record goes regardless, a question never lives on it;
+- a live record that goes takes the group off the allowlist and sets `chatId: null` in the project's
+  state file (§8) — the `away` switch is left as it was, so the next `ask` exits 4 as not bound instead
+  of the agent silently falling back to the terminal;
+- the round is logged as `bindings.swept {removed, kept, roots}`.
+
+`bind` / `away on` looking for a group to offer back read the same list and forget the released
+records of that project that are gone before listing candidates, so a dissolved group is not offered
+between two daily sweeps (§4). `daemon --status` does not report the bindings sweep.
 
 ## 7. Environment variables and files
 
@@ -261,19 +301,20 @@ quotes it is printed with the secret masked as `***`.
 
 ## 8. The per-project state file: `<project root>/.agent-lark/state.json`
 
-Written by the CLI (never by the daemon), read by the agent and by whatever rule the user keeps about
-remote mode. Project root as in §4. The directory carries its own `.gitignore` (`*`), so git never sees
-it and the project's own `.gitignore` is not touched.
+Written by the CLI, read by the agent and by whatever rule the user keeps about remote mode; the
+daemon writes it in one case only (a live group found gone during a sweep, §6). Project root as in §4.
+The directory carries its own `.gitignore` (`*`), so git never sees it and the project's own
+`.gitignore` is not touched.
 
 | field | written by | meaning |
 |---|---|---|
 | `away` | `away on` (`true`) · `away off` / `unbind` (`false`) | the human is away and wants decisions on the phone |
-| `chatId` | `bind` / `away on` (the group) · `unbind` (`null`) | the group this project is bound to right now |
+| `chatId` | `bind` / `away on` (the group) · `unbind` / the daemon's sweep of a group gone from Feishu (`null`) | the group this project is bound to right now |
 | `target` | every write | the project root, informational |
 | `updated` | every write | UTC time, ISO 8601 |
 
-`bind` and `away on` create the directory; `away off` and `unbind` only update a file that already
-exists, so a project that never used the channel gets no directory. `away status` prints the file in
+`bind` and `away on` create the directory; `away off`, `unbind` and the daemon's sweep only update a
+file that already exists, so a project that never used the channel gets no directory. `away status` prints the file in
 words (`remote mode: on  group: oc_…`; `This project has never used agent-lark (no .agent-lark/state.json)`
 when there is none); `away status --json` prints it verbatim, or `{"away":false,"chatId":null,"target":"<root>","updated":""}`
 when there is none. The file is not checked against the daemon: `status` is the command that asks the

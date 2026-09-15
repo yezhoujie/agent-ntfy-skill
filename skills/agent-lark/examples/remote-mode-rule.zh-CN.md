@@ -47,12 +47,12 @@
 
 ## 关闭与收尾（缺一步都不报错）
 - 关闭模式：先确认没有挂着的后台 `ask`（有 ⇒ 等它或停掉，卡片会变「Cancelled」）→ `$AL away off`（只关开关；群与绑定留着，daemon 留着不停）。
-- **任务结束时提醒用户并跑 `$AL unbind`**：群是他的（留在飞书里，要不要归档是他的事），下次同目录 `away on` 会问要不要改名复用。模式仍开着（用户没回来）就留着开关，提醒改用 `notify` 发。
+- **任务结束时先问用户群留不留，再跑对应命令**：留 ⇒ `$AL unbind`（群留在飞书里，下次同目录 `away on` 会问要不要改名复用）；不留 ⇒ `$AL unbind --dissolve`（在飞书里解散并忘掉记录；退 4 = 飞书拒绝解散——告诉用户群还在、要他手动解散，本地记录两种情况都已删）。群是他的：没问过就不许解散。模式仍开着（用户没回来）就用 `ask` 在手机上问这一道题（推荐「留」），还欠他的通知 / 文件（`notify` / `send-file`）**先发完再跑命令**：两种形式都会顺带关掉远程模式，`--dissolve` 解散的正是对话所在的这个群。
 - 手机上的订阅、点按钮、扫码等一切动作都是用户的，agent 不代做、也做不了。
 
 ## 禁止
 - 不问就跑 `setup`、替用户选路，都不行（它会用他的账号建或绑飞书应用）：先问是扫码新建应用、还是复用已有的应用；用户选定后可以替他跑 `setup`（扫码：把二维码的 URL 行交给他，或自己渲成 PNG 打开）或 `setup --reuse`（herdr 窗格，或把命令给他）。App Secret 只在交互式 `setup` 里由用户自己输入，不经 agent 之手、不进 argv、不进你写的任何文件、不进任何输出。
-- 不用自己的后台 shell 去起 daemon 常驻（用 `daemon --detach`）；有提问挂着时不 `daemon --stop --force`；不手改 `state.json` / `bindings.json`，只经 `away` / `bind` / `unbind` / `rename`。
+- 不用自己的后台 shell 去起 daemon 常驻（用 `daemon --detach`）；有提问挂着时不 `daemon --stop --force`；不手改 `state.json` / `bindings.json`，只经 `away` / `bind` / `unbind` / `rename`（飞书里已不存在的群，其记录由 daemon 自己忘掉）。
 - 不 `bind --chat` 别的项目的群；不复用用户没选过的群。
 
 ## 两个 skill 都装了（agent-ntfy 与 agent-lark）

@@ -4,6 +4,8 @@
 // AGENT_LARK_FAKE_CONNECT shapes the fake handshake for the paths that wait
 // on `connected`: `fail` keeps every attempt failing, `fail:<n>` only the
 // first n (the retry interval is 50 ms). Unset, the first attempt succeeds.
+// AGENT_LARK_FAKE_CHAT_DELETE=ok makes `im.v1.chat.delete` succeed; unset,
+// the raw client has no such call and `unbind --dissolve` takes the failure path.
 import { runDaemon } from '../../src/daemon.js';
 import { createFakeChannel, type FakeChannelOptions } from './fake-channel.js';
 import { createFakeHerdr } from './fake-herdr.js';
@@ -21,6 +23,8 @@ if (shape) {
     if (attempts <= failures) throw new Error(`fake handshake ${attempts} refused`);
   };
 }
+
+if (process.env.AGENT_LARK_FAKE_CHAT_DELETE === 'ok') channelOpts.chatDelete = async () => ({ code: 0 });
 
 const daemon = await runDaemon({
   createChannel: () => createFakeChannel(channelOpts).channel,

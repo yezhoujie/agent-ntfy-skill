@@ -125,6 +125,26 @@ test('release stamps releasedAt and switches away off; set() with releasedAt nul
   assert.equal(store.active('/p')?.chatId, 'oc_live');
 });
 
+test('remove drops the entry by chat id and writes the file; removing an unknown chat id touches nothing', () => {
+  const home = freshHome();
+  const store = new BindingStore();
+  store.set(entry({ root: '/a', chatId: 'oc_live' }));
+  store.set(entry({ root: '/a', chatId: 'oc_gone', releasedAt: '2026-01-02T00:00:00.000Z' }));
+  const file = join(home, 'bindings.json');
+  const gone = store.remove('oc_gone');
+  assert.equal(gone?.chatId, 'oc_gone');
+  assert.deepEqual(store.all().map((b) => b.chatId), ['oc_live']);
+  assert.deepEqual((JSON.parse(readFileSync(file, 'utf8')) as { bindings: Binding[] }).bindings.map((b) => b.chatId), ['oc_live']);
+  const before = readFileSync(file, 'utf8');
+  writeFileSync(file, before.replace(/\n$/, '\n\n'));
+  assert.equal(store.remove('oc_nope'), undefined);
+  assert.equal(readFileSync(file, 'utf8'), before.replace(/\n$/, '\n\n'), 'the file was rewritten although nothing changed');
+  assert.deepEqual(store.all().map((b) => b.chatId), ['oc_live']);
+  // a live entry goes the same way
+  assert.equal(store.remove('oc_live')?.root, '/a');
+  assert.equal(store.active('/a'), undefined);
+});
+
 test('two live entries for one root on disk: the newer stays live, the older is treated as released', () => {
   const home = freshHome();
   writeFileSync(

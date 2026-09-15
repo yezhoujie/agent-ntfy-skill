@@ -15,7 +15,8 @@ export type Request =
    * `reuseChatId`, or `new`); without it, candidates are reported back.
    */
   | { type: 'bind'; root: string; label: string; paneId: string | null; chatId?: string; name?: string; mode?: 'reuse' | 'new'; reuseChatId?: string }
-  | { type: 'unbind'; root: string }
+  /** `dissolve`: also dissolve the group in Feishu and forget the record, instead of keeping it to offer back. */
+  | { type: 'unbind'; root: string; dissolve?: boolean }
   | { type: 'rename'; root: string; paneId: string | null; name: string }
   | { type: 'setAway'; root: string; away: boolean; paneId: string | null }
   | { type: 'ask'; root: string; label: string; paneId: string | null; payload: unknown; timeoutMs: number; urgent?: boolean }
@@ -44,7 +45,12 @@ export type Response =
   | { ok: true; kind: 'ask'; reply: string; via: 'button' | 'form' | 'text' }
   /** `how`: the live group was kept · a released one was taken back · a new one was created · `chatId` was named outright. */
   | { ok: true; kind: 'bind'; chatId: string; how: 'existing' | 'reused' | 'created' | 'chat'; name: string }
-  | { ok: true; kind: 'unbind'; chatId: string; name: string }
+  /**
+   * `dissolved` is set only for `dissolve`: true when Feishu dissolved the
+   * group, false when it refused or the call failed — the record is removed
+   * either way, and `problem` then says what Feishu answered.
+   */
+  | { ok: true; kind: 'unbind'; chatId: string; name: string; dissolved?: boolean; problem?: string }
   | { ok: true; kind: 'rename'; name: string }
   | { ok: true; kind: 'list'; bindings: BindingSummary[] }
   | { ok: true; kind: 'ack' }

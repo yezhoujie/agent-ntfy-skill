@@ -138,6 +138,11 @@ network) is for the user.
 **Send failed** (not sent): `agent-lark: send failed: <SDK error>` — Feishu refused or the request
 failed after the connection was up. Report it to the user; retrying immediately rarely helps.
 
+**`unbind --dissolve` answered by a daemon from before the flag** (the group was released, not dissolved; the
+state file is written as after a plain `unbind`):
+`agent-lark: the running daemon predates --dissolve and has only let the group go (it stays in Feishu, on record as released). Restart the daemon (agent-lark daemon --stop, then agent-lark daemon --detach), bind the group back (away on --reuse <chat_id>) and run unbind --dissolve again`
+— do what the line says; the group is offered back by `away on` as usual.
+
 **Daemon stopped while you were waiting** (sent, then cancelled): `agent-lark: the daemon is stopping; the question was sent but no answer will arrive this time`
 — someone ran `daemon --stop --force` or the daemon got a signal. The card is rewritten to
 `⚠️ … · Cancelled`. Ask again once it is back.
@@ -205,6 +210,20 @@ for a project that had a group before.
 
 **`unbind` / switching groups while a question is pending**: `agent-lark: a question is still pending on the phone; answer it or wait for the timeout`.
 
+**`unbind --dissolve` when Feishu will not dissolve the group** (the record is removed all the same, and
+`state.json` cleared, so there is nothing to retry — the group is the human's to dissolve):
+
+```
+agent-lark: the Feishu group "<name>" was not dissolved: Feishu answered 232002 <msg>. Dissolve it by hand in Feishu (the app can only dissolve a group it owns, or one it created if it has the im:chat:operate_as_owner scope). The local record is removed.
+```
+
+or, when the call itself failed, `agent-lark: the Feishu group "<name>" was not dissolved: <error>. Dissolve it by hand in Feishu. The local record is removed.`
+The line ends with what became of the group's marker: `The group's marker was cleared, so it will not be offered back.`
+or `The group's marker could not be cleared (<why>), so it will be offered back until it is dissolved.`
+Tell the user the group is still there and why; whether they dissolve it, or grant the scope and let the
+next `unbind --dissolve` try (after binding it again with `--chat`), is theirs to decide. Not connected
+to Feishu is rc 3 instead, and then nothing was touched (a plain `unbind` still works offline).
+
 **`daemon --stop` while questions are pending**: see [daemon.md](daemon.md) §3 (`--force` overrides).
 
 **`rename` with no live group**: `agent-lark: this project has no live group; run agent-lark away on first`.
@@ -262,6 +281,7 @@ Lines starting `note: ` on stderr while a command blocks are informational; the 
 | `daemon --stop` | `daemon: stopped` · `daemon: was not running` | – | still answering 10 s after the request | questions pending (no `--force`) |
 | `bind` | `✅ Created … / ✅ Took back … / ✅ Already bound … / ✅ Bound to existing group oc_…` | task name too long · `--reuse` + `--new` · `--reuse` not a candidate · `--chat` is another project's live group | not connected to Feishu · group creation failed | candidates to choose from · no owner recorded · creation refused for permissions · switching groups with a question pending |
 | `unbind` | `Unbound. The Feishu group "…" stays in Feishu; the next away on in this directory offers to rename and reuse it.` | not bound | daemon not running | a question is pending |
+| `unbind --dissolve` | `Dissolved Feishu group "…"; the local record is removed.` | not bound | daemon not running · not connected to Feishu (nothing touched) | a question is pending (nothing touched) · Feishu refused to dissolve or the call failed (§5: record removed, group still there) |
 | `rename "<task>"` | `Renamed the Feishu group to "<task> [<dir>]"` | empty or over-long name | not connected · Feishu refused (§9) | no live group |
 | `away on` | remote mode enabled (daemon line, group line, `Remote mode is on: …`; outside herdr one more line) | task name too long · `--reuse` + `--new` · `--reuse` not a candidate | daemon did not come up · not connected within 15 s · group creation failed | no credentials · candidates to choose from · no owner · creation refused for permissions |
 | `away off` | `Remote mode is off.` (also when nothing is bound). Daemon not running ⇒ still rc 0: the state file is written locally and a second line says `daemon is not running; local state cleared` (no state file ⇒ `This project has never used agent-lark (no .agent-lark/state.json)`) | – | an IPC error other than "not running" | – |

@@ -32,7 +32,7 @@
 | **要保密的是什么** | topic 名——知道它的人能看到一切、能给 agent 下指令 | app secret（存 OS 钥匙串，不进 argv、不进任何输出）——以及群成员：群里的任何人都能驱动 agent |
 | **内容经过哪里** | 明文经 ntfy.sh | 经飞书服务器；群描述里带着项目的绝对路径 |
 | **有提问挂着时停 daemon** | 直接停，等着的 `ask` 退 3 | 拒绝；`--force` 才停并取消 |
-| **任务收尾** | `release`：槽位还回池里（`away off` 也会做） | `unbind`：群留在飞书里，下次会问要不要改名复用；`away off` 只关开关 |
+| **任务收尾** | `release`：槽位还回池里（`away off` 也会做） | 先问用户群留不留：`unbind`（群留在飞书里，下次会问要不要改名复用）或 `unbind --dissolve`（解散并忘掉）；已不存在的群 daemon 每天自动忘掉；`away off` 只关开关 |
 | **固定文案的语言** | JSON 里的 `lang`；否则 `--lang` / `AGENT_NTFY_LANG` / 系统 locale | JSON 里的 `lang`（缺省 `en`）；CLI 本身只有英文 |
 
 ## 两个都装了

@@ -195,7 +195,7 @@ agent-lark send-file ./shot.png --caption "Current layout"
 | 1 | Input rejected; stderr lists every problem | **no** | fix the JSON (or the argument) and call again |
 | 2 | No reply within the timeout | yes | decide yourself or ask again; a late reply still reaches you as an instruction |
 | 3 | Channel failure: daemon not running, not connected to Feishu, send failed, daemon stopping; stderr says which | see stderr | start the daemon or wait for the connection (below), retry once; still 3 → stop and tell the user |
-| 4 | A human must act: no credentials, project not bound, a question already pending, earlier groups to choose from | no | relay stderr to the user in your own conversation, then retry |
+| 4 | A human must act: no credentials, project not bound, a question already pending, earlier groups to choose from; for `unbind --dissolve`, Feishu refused to dissolve the group | no | relay stderr to the user in your own conversation, then retry (after `unbind --dissolve` there is nothing to retry: the record is gone, the group is the human's to dissolve) |
 | 130 | The `ask` client itself was interrupted (Ctrl-C); the card is cancelled, the daemon is unaffected — do not restart it | yes | call again |
 
 `notify` and `send-file` use 0 / 1 / 3 / 4 with the same meanings and never 2. Stderr text per case, what
@@ -328,7 +328,8 @@ agent-lark setup                                   # once per machine, on a term
   question of yours is pending. Nothing is pushed for "finished" or "idle".
 - `rename "<task>"` renames the live group to `<task> [<dir>]` when the work changes; `unbind` lets the
   group go when the work is done (the group stays in Feishu; the next `away on` in the same directory
-  offers it back). `bind [--chat <id>] [--name …]` binds without switching remote mode on, and `--chat`
+  offers it back), `unbind --dissolve` dissolves it in Feishu and forgets it — ask the human which they
+  want first. `bind [--chat <id>] [--name …]` binds without switching remote mode on, and `--chat`
   names a group outright (one the human created, or after the local records were lost). Task names are
   at most 60 characters.
 - `away off` only flips the switch; the binding stays. **Remote mode changes the channel, not the
@@ -336,7 +337,8 @@ agent-lark setup                                   # once per machine, on a term
 
 The switch and the group live in `<project root>/.agent-lark/state.json` (project root = the git
 toplevel, else the cwd; a worktree or a submodule is its own project), written by `away on|off`, `bind`
-and `unbind`. Read it with `away status --json`:
+and `unbind` (and by the daemon, `chatId` only, when it finds the live group gone from Feishu — Housekeeping).
+Read it with `away status --json`:
 
 ```json
 {"away":true,"chatId":"oc_xxxxxxxx","target":"/Users/me/work/my-project","updated":"2026-09-15T04:03:11.902Z"}
@@ -357,9 +359,18 @@ daemon keeps that on the binding.
 - The pane your last `agent-lark` command ran from is remembered as the injection target; `ask`,
   `notify`, `send-file`, `bind`, `rename` and `away on|off` refresh it. **Run them from your own pane**, not from a
   helper process elsewhere, or the user's next phone message lands in the wrong pane.
-- When your task ends, run `unbind` (the group stays in Feishu; archiving it is the human's call).
-  `away off` is the human's call, not yours. `status` shows credentials, herdr, the daemon and every
-  binding, live and released.
+- When your task ends, ask the human whether the group should stay. Keep it: `unbind` (the group stays
+  in Feishu, the next `away on` in this directory offers it back). Drop it: `unbind --dissolve` (the group
+  is dissolved in Feishu and its record forgotten; rc 4 means Feishu refused — the app can only dissolve
+  a group it owns — so the record is gone but the human has to dissolve the group by hand; the daemon
+  clears the group's marker so it is not offered back meanwhile, and says so if that failed too). `away off` is
+  the human's call, not yours. `status` shows credentials, herdr, the daemon and every binding, live and
+  released.
+- Records of groups that no longer exist in Feishu (dissolved, or the bot removed from them) are
+  forgotten by the daemon once a day and whenever `away on` / `bind` looks for a group to offer back — a
+  live one included, in which case the project's `state.json` loses its `chatId` (the `away` switch is
+  left as it was) and the next `ask` exits 4 as not bound. Nothing is forgotten while Feishu's group list
+  cannot be read in full.
 - Attachments the human sent live under `~/.agent-lark/media/` and are deleted after 7 days
   (`AGENT_LARK_MEDIA_TTL_DAYS`; `0` keeps everything). Copy what you need into the project.
 - Credentials are in the OS keychain (or a 0600 file), never in this skill's directory or in any output,

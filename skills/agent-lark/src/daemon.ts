@@ -9,7 +9,7 @@ import { askCard, checkerName, notifyCard, optionIdOf, receiptCard, statusCard }
 import { resolveCreds } from './creds.js';
 import { agentList, findPaneForProject, promptPane } from './herdr.js';
 import { isDaemonListening, serve, type Candidate, type Request, type Response } from './ipc.js';
-import { ensureHomeDir, homeDir, ipcEndpoint, logPath, mediaDir, pidPath, sockPath } from './paths.js';
+import { ensureHomeDir, homeDir, ipcEndpoint, logPath, mediaDir, pidPath, sockPath, writeProjectState } from './paths.js';
 import { fill, msg, t } from './texts.js';
 import { validateAsk, validateNotify, ValidationError, type AskPayload, type Lang } from './validate.js';
 
@@ -22,13 +22,18 @@ const CONNECT_RETRY_MAX_MS = 60_000;
 const CLOSE_GRACE_MS = 2_000;
 /** How long stop() waits for Feishu to accept a cancelled card before moving on. */
 const CANCEL_CARD_MS = 3_000;
-/** Inbound attachments are kept this many days unless AGENT_LARK_MEDIA_TTL_DAYS says otherwise. */
+/** Inbound attachments are kept this many days unless AGENT_LARK_MEDIA_TTL_DAYS says otherwise (0 keeps them all). */
 const MEDIA_TTL_DAYS = 7;
-const MEDIA_SWEEP_MS = 24 * 60 * 60 * 1000;
+/** Media and bindings are swept this often (the first media sweep runs at start, the first bindings sweep on the first handshake). */
+const SWEEP_MS = 24 * 60 * 60 * 1000;
+/** `im.v1.chat.list` pages of 100 followed before the list is declared untrustworthy. */
+const CHAT_LIST_MAX_PAGES = 100;
+/** What a group's description becomes when its dissolve was refused: anything but a project marker. */
+const MARKER_CLEARED = 'released by agent-lark';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Retention for the media directory, in days; 0 switches the sweep off. A
+ * Retention for the media directory, in days; 0 keeps every file. A
  * value that is not a whole number falls back to the default with a warning,
  * rather than silently keeping or deleting everything.
  */
@@ -126,7 +131,6 @@ export type ChannelLike = Pick<
   | 'getConnectionStatus'
   | 'send'
   | 'updateCard'
-  | 'listChats'
   | 'getChatInfo'
   | 'createChat'
   | 'addReaction'
@@ -148,7 +152,7 @@ export interface DaemonDeps {
   connectRetryMs?: number;
   /** How often the panes of away projects are polled for a stuck agent. */
   pollMs?: number;
-  /** How often the media directory is swept (the first sweep runs at start regardless). */
+  /** How often the media directory and the bindings are swept (the first media sweep runs at start, the first bindings sweep on the first handshake). */
   sweepMs?: number;
 }
 
@@ -652,6 +656,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
         connected = true;
         lastError = null;
         log('daemon.connected', { bindings: bindings.all().length, credSource: creds.source });
+        void sweepBindings().catch((err) => log('bindings.sweep-failed', { err: String(err).slice(0, 200) }));
         return; // from here on the SDK's own reconnect takes over
       } catch (err) {
         if (stopping) return;
@@ -704,6 +709,90 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
       log('rename.failed', { chatId, err: String(err).slice(0, 200) });
       if (refused) return { ok: false, error: explain(refused) };
       return { ok: false, error: fill(msg.renameThrew, { error: err instanceof Error ? err.message : String(err) }) };
+    }
+  };
+
+  /**
+   * Dissolve a group (`im.v1.chat.delete`, raw client — no wrapper in the
+   * channel SDK). Feishu only lets the app dissolve a group it owns, or one it
+   * created when it has the operate-as-owner scope; a refusal is reported,
+   * not retried.
+   */
+  const deleteChat = async (chatId: string, name: string): Promise<{ ok: true } | { ok: false; error: string }> => {
+    try {
+      const res = await (channel.rawClient as unknown as {
+        im: { v1: { chat: { delete(req: unknown): Promise<unknown> } } };
+      }).im.v1.chat.delete({ path: { chat_id: chatId } });
+      const refused = feishuError(res);
+      if (refused) {
+        log('dissolve.refused', { chatId, code: refused.code });
+        return { ok: false, error: fill(msg.dissolveRefused, { name, code: refused.code, msg: refused.msg }) };
+      }
+      return { ok: true };
+    } catch (err) {
+      const body = (err as { response?: { data?: unknown } } | null)?.response?.data;
+      const refused = feishuError(body) ?? feishuError(err);
+      log('dissolve.failed', { chatId, err: String(err).slice(0, 200) });
+      if (refused) return { ok: false, error: fill(msg.dissolveRefused, { name, code: refused.code, msg: refused.msg }) };
+      return { ok: false, error: fill(msg.dissolveThrew, { name, error: err instanceof Error ? err.message : String(err) }) };
+    }
+  };
+
+  /**
+   * Replace a group's marker description after a dissolve Feishu refused, so
+   * the group scan stops offering the group back while it still exists.
+   * Best effort: the same permission that blocked the dissolve may block this.
+   */
+  const clearMarker = async (chatId: string): Promise<{ ok: true } | { ok: false; error: string }> => {
+    try {
+      const res = await (channel.rawClient as unknown as {
+        im: { v1: { chat: { update(req: unknown): Promise<unknown> } } };
+      }).im.v1.chat.update({ path: { chat_id: chatId }, data: { description: MARKER_CLEARED } });
+      const refused = feishuError(res);
+      if (refused) {
+        log('dissolve.marker-failed', { chatId, code: refused.code });
+        return { ok: false, error: `Feishu answered ${refused.code} ${refused.msg}` };
+      }
+      log('dissolve.marker-cleared', { chatId });
+      return { ok: true };
+    } catch (err) {
+      const body = (err as { response?: { data?: unknown } } | null)?.response?.data;
+      const refused = feishuError(body) ?? feishuError(err);
+      log('dissolve.marker-failed', { chatId, err: String(err).slice(0, 200) });
+      return { ok: false, error: refused ? `Feishu answered ${refused.code} ${refused.msg}` : err instanceof Error ? err.message : String(err) };
+    }
+  };
+
+  /**
+   * Every group the bot is in, by id — or why the list cannot be trusted.
+   * Read straight from `im.v1.chat.list`: the channel's `listChats()`
+   * swallows a page Feishu refused (HTTP 200, `code` ≠ 0) into an empty or
+   * truncated list, which a sweep would read as "every group is gone".
+   */
+  const fetchChatIds = async (): Promise<{ ok: true; ids: Set<string> } | { ok: false; reason: string }> => {
+    if (!connected) return { ok: false, reason: 'not connected' };
+    const ids = new Set<string>();
+    let pageToken: string | undefined;
+    try {
+      for (let page = 0; page < CHAT_LIST_MAX_PAGES; page++) {
+        const res = (await (channel.rawClient as unknown as {
+          im: { v1: { chat: { list(req: unknown): Promise<unknown> } } };
+        }).im.v1.chat.list({ params: { page_size: 100, page_token: pageToken } })) as
+          | { code?: unknown; data?: { items?: Array<{ chat_id?: string }>; has_more?: boolean; page_token?: string } }
+          | null
+          | undefined;
+        const refused = feishuError(res);
+        if (refused) return { ok: false, reason: `Feishu answered ${refused.code} ${refused.msg}` };
+        const d = res?.data;
+        if (res?.code !== 0 || !d || typeof d !== 'object') return { ok: false, reason: 'no data in the reply' };
+        for (const it of d.items ?? []) if (it.chat_id) ids.add(it.chat_id);
+        if (!d.has_more) return { ok: true, ids };
+        if (!d.page_token) return { ok: false, reason: 'has_more without a page_token' };
+        pageToken = d.page_token;
+      }
+      return { ok: false, reason: `still more after ${CHAT_LIST_MAX_PAGES} pages` };
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) };
     }
   };
 
@@ -788,8 +877,60 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
     mediaSeen = { files: r.keptFiles, bytes: r.keptBytes, at: new Date().toISOString() };
     log('media.swept', { removed: r.removed, keptFiles: r.keptFiles, keptBytes: r.keptBytes, failed: r.failed, ttlDays: ttl.days });
   };
-  const sweepTimer = ttl.days === 0 ? undefined : setInterval(sweepMedia, deps.sweepMs ?? MEDIA_SWEEP_MS);
-  sweepTimer?.unref();
+
+  // ---- bindings retention ---------------------------------------------------
+  // A record whose group is gone from Feishu (dissolved, or the bot removed
+  // from it) is forgotten, live or released; otherwise `away on` keeps
+  // offering a group that cannot be taken back. Only a list Feishu answered
+  // in full is acted on: a doubtful list removes nothing.
+  /** Forget the records among `among` whose group is not in `ids`; a root with a question pending keeps its record this round. */
+  const pruneBindings = (ids: Set<string>, among: Binding[]): { removed: number; roots: string[] } => {
+    const roots = new Set<string>();
+    let removed = 0;
+    for (const b of among) {
+      if (ids.has(b.chatId)) continue;
+      // A question in flight lives on the live group; a released record can go.
+      if (b.releasedAt === null && pendingFor(b.root)) {
+        log('bindings.sweep-pending', { root: b.root, chatId: b.chatId });
+        continue;
+      }
+      // `among` was read before the list came back; a record that went
+      // meanwhile (an unbind, a rebind) is not this round's to act on.
+      const gone = bindings.remove(b.chatId);
+      if (!gone) continue;
+      removed += 1;
+      roots.add(b.root);
+      if (gone.releasedAt === null) {
+        lastStatus.delete(b.root);
+        // The switch stays as it was: the next ask is refused as "not bound"
+        // rather than silently falling back to the terminal.
+        try {
+          writeProjectState(b.root, { chatId: null });
+        } catch (err) {
+          log('bindings.sweep-state-failed', { root: b.root, err: String(err).slice(0, 200) });
+        }
+      }
+    }
+    if (removed) refreshPolicy();
+    return { removed, roots: [...roots] };
+  };
+  const sweepBindings = async (): Promise<void> => {
+    const all = bindings.all();
+    if (!all.length) return;
+    const list = await fetchChatIds();
+    if (!list.ok) {
+      log('bindings.sweep-skipped', { reason: list.reason });
+      return;
+    }
+    const r = pruneBindings(list.ids, all);
+    log('bindings.swept', { removed: r.removed, kept: all.length - r.removed, roots: r.roots });
+  };
+  const sweep = (): void => {
+    sweepMedia();
+    void sweepBindings().catch((err) => log('bindings.sweep-failed', { err: String(err).slice(0, 200) }));
+  };
+  const sweepTimer = setInterval(sweep, deps.sweepMs ?? SWEEP_MS);
+  sweepTimer.unref();
 
   // ---- IPC ----------------------------------------------------------------
   let server: Server | undefined;
@@ -828,7 +969,7 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
     log('daemon.stopping', { why });
     for (const sig of signals) process.off(sig, onSignal[sig]);
     clearInterval(pollTimer);
-    if (sweepTimer) clearInterval(sweepTimer);
+    clearInterval(sweepTimer);
     if (retryTimer) clearTimeout(retryTimer);
     wakeRetry?.();
     // Release every waiting client first; the card rewrites go out after, each
@@ -997,9 +1138,8 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
           // No live group. Taking one back or creating one both go through
           // Feishu, so nothing below is attempted while disconnected.
           if (!connected) return notConnected();
-          const candidates: Candidate[] = bindings
-            .released(req.root)
-            .map((b) => ({ chatId: b.chatId, name: b.name, releasedAt: b.releasedAt }));
+          const releasedHere = () => bindings.released(req.root).map((b): Candidate => ({ chatId: b.chatId, name: b.name, releasedAt: b.releasedAt }));
+          let candidates = releasedHere();
           // The group may also exist with no local record at all (bindings.json
           // gone with a reinstall). Creating a second group for the same
           // project would split the conversation in two, so the ones the bot
@@ -1007,22 +1147,29 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
           // the caller already said which group, or asked for a new one.
           const known = req.mode === 'reuse' && candidates.some((c) => c.chatId === req.reuseChatId);
           if (req.mode !== 'new' && !known) {
-            try {
-              for (const summary of await channel.listChats()) {
-                if (bindings.byChat(summary.id)) continue;
+            const list = await fetchChatIds();
+            if (list.ok) {
+              // The same list says which released groups are gone: forgotten
+              // now rather than offered back until the daily sweep.
+              const r = pruneBindings(list.ids, bindings.released(req.root));
+              if (r.removed) {
+                log('bindings.swept', { removed: r.removed, kept: bindings.all().length, roots: r.roots });
+                candidates = releasedHere();
+              }
+              for (const id of list.ids) {
+                if (bindings.byChat(id)) continue;
                 let info;
                 try {
-                  info = await channel.getChatInfo(summary.id);
+                  info = await channel.getChatInfo(id);
                 } catch {
                   continue;
                 }
                 if (info.description !== marker) continue;
-                candidates.push({ chatId: summary.id, name: summary.name || info.name || null, releasedAt: null });
+                candidates.push({ chatId: id, name: info.name || null, releasedAt: null });
               }
-            } catch (err) {
-              const error = err instanceof Error ? err.message : String(err);
-              log('bind.scan-failed', { root: req.root, err: error });
-              ctx.note(fill(msg.bindScanFailed, { error }));
+            } else {
+              log('bind.scan-failed', { root: req.root, err: list.reason });
+              ctx.note(fill(msg.bindScanFailed, { error: list.reason }));
             }
           }
 
@@ -1095,11 +1242,29 @@ export async function runDaemon(deps: DaemonDeps = {}): Promise<DaemonHandle> {
           const live = bindings.active(req.root);
           if (!live) return { ok: false, code: 1, message: msg.unbindNone };
           if (pendingFor(req.root)) return { ok: false, code: 4, message: msg.unbindPending };
+          const name = live.name ?? live.chatId;
+          if (req.dissolve) {
+            // Nothing is touched until Feishu can be asked: a group that is
+            // still there with no record of it is the one state to avoid.
+            if (!connected) return notConnected();
+            const r = await deleteChat(live.chatId, name);
+            // Refused or not, the record goes: the human said the group is
+            // not wanted, and a stale record would only be offered back.
+            bindings.remove(live.chatId);
+            refreshPolicy();
+            lastStatus.delete(req.root);
+            log('unbind', { root: req.root, chatId: live.chatId, dissolved: r.ok });
+            if (r.ok) return { ok: true, kind: 'unbind', chatId: live.chatId, name, dissolved: true };
+            // The group stays; without its marker the scan will not offer it back.
+            const cleared = await clearMarker(live.chatId);
+            const problem = `${r.error} ${cleared.ok ? msg.dissolveMarkerCleared : fill(msg.dissolveMarkerKept, { error: cleared.error })}`;
+            return { ok: true, kind: 'unbind', chatId: live.chatId, name, dissolved: false, problem };
+          }
           bindings.release(req.root);
           refreshPolicy();
           lastStatus.delete(req.root);
           log('unbind', { root: req.root, chatId: live.chatId });
-          return { ok: true, kind: 'unbind', chatId: live.chatId, name: live.name ?? live.chatId };
+          return { ok: true, kind: 'unbind', chatId: live.chatId, name };
         }
 
         case 'rename': {
