@@ -279,7 +279,7 @@ like any other prompt; the secret is masked as `***` wherever it could appear):
 | line | meaning |
 |---|---|
 | `[agent-lark] setup: credentials stored for cli_xxxxxxxx (<app name>); the scopes must be enabled in the developer console before use` | done (rc 0 in the pane); the human still has console work for a reused app |
-| `[agent-lark] setup: failed: 3 probes refused (<why>)` | the only `failed:` form: gave up (rc 1 in the pane); relay `<why>`. Any other end of the pane (`AGENT_LARK_OFFLINE`, a crash, the pane closed by hand) sends no line at all |
+| `[agent-lark] setup: failed: <why>` | every end that is not success or Ctrl-C: three failed probes, refused or thrown (`3 probes refused (<error>)`, rc 1 in the pane), `offline: refusing to contact Feishu (AGENT_LARK_OFFLINE=1 is set)` (rc 3), any other failure (rc 3, `<why>` is the error text). The secret is masked as `***` wherever it could appear; relay `<why>`. The one end that sends no line: the pane closed by hand |
 | `[agent-lark] setup: interrupted before any credentials were stored` | Ctrl-C in the pane (rc 130); ask whether to try again |
 | `[agent-lark] setup: credentials already stored (<origin>); nothing changed. To switch apps run agent-lark setup --reset --reuse` | nothing was asked (rc 0) |
 

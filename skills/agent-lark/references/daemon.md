@@ -237,7 +237,7 @@ allowlist), which is how a file the human sent can be returned edited.
 
 | variable | default | effect |
 |---|---|---|
-| `AGENT_LARK_HOME` | `~/.agent-lark` | the daemon's state directory (§3). `--home <dir>` (or `--home=<dir>`, anywhere on the command line) sets it for that command and for a daemon it starts, and the interactive `setup --reuse` handed to a new pane is given it explicitly |
+| `AGENT_LARK_HOME` | `~/.agent-lark` | the daemon's state directory (§3). `--home <dir>` (or `--home=<dir>`, anywhere on the command line) sets it for that command and for a daemon it starts, and the interactive `setup --reuse` handed to a new pane is given it explicitly. With the Unix-socket transport keep the path short: a socket path over the system limit makes every command fail with `connect EINVAL …/daemon.sock` |
 | `AGENT_LARK_APP_ID` / `AGENT_LARK_APP_SECRET` | – | app credentials from the environment, for one process: a runtime override that wins over the stores (below). The only way to supply credentials besides `setup` |
 | `AGENT_LARK_OWNER_OPEN_ID` | – | the app owner's `open_id` when credentials come from the environment; needed to create groups and for `--urgent` (`setup` records it in the store on its own, from the QR registration or from the probe of a reused app) |
 | `AGENT_LARK_STORE` | `keychain` where one is usable, else `file` | where `setup` writes: `keychain` (macOS Keychain · Windows DPAPI-encrypted file `<config>/credentials.dpapi` · Linux `secret-tool`), `file` (`<config>/credentials.json`, mode 0600), `none` (this run only) |

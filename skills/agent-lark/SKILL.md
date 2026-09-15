@@ -45,9 +45,10 @@ same words in a sentence). Each maps to one flow:
     command opens a pane below yours, runs the interactive setup there (App ID typed, App Secret typed
     with echo off) and exits 0 at once with `The interactive setup is running in herdr pane <id>: …`;
     when the human is done, one line prefixed `[agent-lark] setup:` arrives in your session (the four
-    forms are in "Remote mode" below) — wait for it, do nothing meanwhile. No line, and the pane is gone
-    or the user says they are done ⇒ ask them what the pane printed, or run `status` (its credential
-    layers show whether anything was stored). Outside herdr it exits 4 and
+    forms are in "Remote mode" below) — wait for it, do nothing meanwhile. Every end of the pane reports
+    a line except one: the pane closed by hand. No line, and the pane is gone or the user says they are
+    done ⇒ ask them what the pane printed, or run `status` (its credential layers show whether anything
+    was stored). Outside herdr it exits 4 and
     puts the exact command on stderr (`node <cli> --home <dir> setup --reuse`): give that command to the
     user to run in their own terminal, and let them tell you when it is done. The user must run it in a terminal window of their own (Terminal, iTerm, …). Never suggest running it inside this session — a `!`-prefixed command, a shell tool, a background job: none of them has a TTY, and the CLI refuses without one.
     Either way the human still
@@ -293,7 +294,7 @@ agent-lark setup                                   # once per machine, on a term
   the command for the human to run themselves. The user must run it in a terminal window of their own (Terminal, iTerm, …). Never suggest running it inside this session — a `!`-prefixed command, a shell tool, a background job: none of them has a TTY, and the CLI refuses without one.
   The four report lines, verbatim:
   - `[agent-lark] setup: credentials stored for cli_xxxxxxxx (<app name>); the scopes must be enabled in the developer console before use` — done; remind the user of the console work if they have not done it, then `away on` again.
-  - `[agent-lark] setup: failed: 3 probes refused (<why>)` — the only `failed:` form; relay `<why>` (the secret is masked as `***` wherever it could appear).
+  - `[agent-lark] setup: failed: <why>` — every end that is not success or Ctrl-C: three failed probes — refused or thrown — (`3 probes refused (<error>)`), the `AGENT_LARK_OFFLINE` guard, any other failure; relay `<why>` (the secret is masked as `***` wherever it could appear).
   - `[agent-lark] setup: interrupted before any credentials were stored` — the human pressed Ctrl-C; ask whether to try again.
   - `[agent-lark] setup: credentials already stored (<origin>); nothing changed. To switch apps run agent-lark setup --reset --reuse` — there was nothing to do.
   `setup` in any form with credentials already stored only reports them — `Credentials already exist
