@@ -1,101 +1,62 @@
-# 远程交互模式（herdr-lark）：我走开时，要拍板的事推到手机
+# Remote mode (agent-lark): while the human is away, decisions go to the phone
 
-> 这是一份**给 agent 读的常驻规则**。skill 本身只提供通路（`ask` / `notify` / `send-file` / `away`），
-> 不规定什么时候用；什么时候用由这条规则定。
-> Claude Code 用户把本文件复制到 `~/.claude/rules/`（每个会话自动注入）即可；其他 agent 放到它常驻加载的位置。
+> An example of an **always-loaded rule for the agent**. The skill itself only provides the calls
+> (`ask` / `notify` / `send-file` / `away` / `rename` / `unbind`) and never decides when to use them; a rule
+> like this one does. Claude Code users: copy this file into `~/.claude/rules/` (rules there are injected
+> into every session). Other agents: put it wherever your agent loads its standing instructions. Chinese
+> version: `remote-mode-rule.zh-CN.md`.
 >
-> 下文 `herdr-lark` = 这个 skill 的 CLI。
+> Below, `$AL` = `node <skill dir>/dist/cli.mjs`; with a global Claude Code install `<skill dir>` is
+> `~/.claude/skills/agent-lark`. How to write a question card is in SKILL.md.
 
-## 状态在哪：`<项目根>/.herdr-lark/state.json`（CLI 写，你只读）
+## Where the state lives: `<project root>/.agent-lark/state.json` (written by the CLI; you only read it)
+- **At session start, and after your context was cleared or reset**, run `$AL away status --json` first: `away: true` ⇒ this project is already in remote mode, follow "While in remote mode"; file absent or `false` ⇒ normal terminal interaction.
+- Fields: `away` (the switch) · `chatId` (the Feishu group this project is bound to, `null` = none) · `target` (the project root) · `updated`. **No credential is ever in it**, and the pane phone messages are injected into is not either — the daemon keeps that.
 
-- **会话开始 / 上下文被清空或重置后**，先 `herdr-lark away status --json`：
-  `away: true` ⇒ 本项目已在远程模式，照「模式内」办；文件不存在或 `false` ⇒ 正常终端交互。
-- 字段：`away`（开关）· `chatId`（本项目绑定的飞书群）· `paneId`（手机消息注入回哪个窗格）。
-- 你自己不要手改这个文件，只经 `away` / `bind` 命令改。
+## On / off (the human's words are the switch)
+- **On**: "enable remote mode", "I'm leaving, send it to my phone", "switch to phone", "remote on". The human is still at the keyboard right now — **do three things immediately** (a group can only be chosen or a QR code scanned while they are here):
+  1. **From your own terminal pane**, run `$AL away on --name "<task>"` — one-stop: starts the daemon if none answers, waits for it to reach Feishu, binds this project to a group named `<task> [<dir>]`, and only then writes the switch. **Relay its stdout to the user verbatim.** Outcomes:
+     - rc 0 ⇒ done. The group line says which group (`Created Feishu group "…"` / `Took back Feishu group "…"` / `Connected to Feishu group "…"`); the switch line `Remote mode is on: …` is the last line inside herdr; outside herdr one more line follows it, `Not inside herdr: …` (phone messages are not injected, no stuck alert).
+     - rc 4 `No Feishu app credentials yet` ⇒ **ask the user first** whether to scan a QR code for a new app (`$AL setup`) or reuse an app they already have (`$AL setup --app-id cli_xxxxxxxx`, the secret in `AGENT_LARK_APP_SECRET` or the env file). Once they have chosen, run `setup` for them (hand over the QR code's URL line, or render it into a PNG and open it) or let them run it; then run `away on` again.
+     - rc 4 `this project has no live group, but N earlier group(s) could be taken back` ⇒ relay the list on stderr (one line per group: name, when it was let go of, id) and **ask the user which one to rename and reuse, or whether to create a new one** — never pick for them; rerun with `--reuse <chatId>` or `--new`.
+     - rc 3 ⇒ **not enabled**, nothing written. Run `$AL daemon --status`; if the daemon is not running, `$AL daemon --detach` and try `away on` once more; still 3 (Feishu unreachable, `daemon is up but not connected to Feishu: …`) ⇒ stop and tell the user what stderr says.
+  2. `$AL away status --json` and check `away: true` (`away on` also recorded your pane as the injection target — **run it only from your own pane**).
+  3. Report the stdout verdict in one sentence.
+- **Off**: "disable remote mode", "I'm back", "remote off" ⇒ see "Turning it off and wrapping up".
 
-## 开 / 关（用户的话就是开关）
+## While in remote mode
+- **Every moment you would otherwise ask the user a question, or need their confirmation or authorization** ⇒ `$AL ask`; do not wait in the terminal.
+- `ask` blocks until the human answers. If your shell tool has a time limit (Claude Code's Bash tool: 10 minutes), **run it in the background and redirect stdout / stderr to files** — a killed foreground `ask` is treated by the daemon as cancelled and the card is voided; read the files for the reply and exit code when the background job finishes. **Only one `ask` in flight per project** (a second one exits 4).
+- Exit codes: 0 act on the reply; 1 fix the JSON and resend; 2 timeout ⇒ for reversible work continue with the recommended option and note "unconfirmed", for irreversible work stop and wait; 3 channel failure ⇒ `$AL daemon --status`, start it with `--detach` if it is down, resend once, still 3 ⇒ stop; 4 a human is needed (not bound / question already pending) ⇒ stop and wait for the user at the terminal.
+- **`--urgent` only for an irreversible action or a short timeout** (it rings the owner in-app; flag every question and none is urgent any more). An irreversible option is marked `"danger": true` (red button, confirm dialog) and is never the recommendation — validation refuses that.
+- **`"select": "multi"` only when the honest answer may be several options at once** ("which of these checks should run"); a yes / no or a pick-one question stays single choice — one tap instead of several.
+- **Messages from the phone are injected into your session with the prefix `[agent-lark remote] `** (**inside herdr only**; outside herdr there is no injection — a message the user sends on their own gets a "Not delivered" receipt card, while replies to `ask` still return to the call); treat them as user input. Photos and files arrive with `[saved: <path>]` lines (open them from there); a voice note arrives as its transcript.
+- **Which question a phone message answers**: while an `ask` of yours is pending, **anything** the user sends counts as its reply, even a message written as a Feishu reply to some other card. With nothing pending, a Feishu reply to one of your cards arrives with `(reply to: "<that card's title>")` on its first line — that is what "yes, do that" refers to; a message quoting nothing is a plain instruction. A late tap on a closed card arrives as `(follow-up) I pick <label>`; take the latest message as the verdict.
+- **When you see the prefix, the user is on the phone**: answer in the terminal as usual, and push the same answer with `notify`.
+- **`$AL notify` (one-way: JSON `{title, body, lang}` on stdin, non-blocking, no button, allowed while a question is pending) is used in exactly two situations**: ① the user asked a question from the phone that only needs an answer ("how is it going?") — put the answer in the body; ② **a major event the user must know about that needs no decision**: the task is finished / an error or exception occurred / the task cannot continue (including stopping after `ask` exited 3 or 4). Everything else — progress, intermediate results, asides — **is never sent**: each card rings the phone. Anything that needs a decision always goes through `ask`; never substitute `notify`.
+- **`$AL send-file <path> --caption "…"` saves a round trip**: when the user has to look at a layout, a diff or a build product, send the file (a screenshot, the rendered page, the artifact) instead of describing it and waiting to be asked. Only files inside the project, the daemon's media directory or the temp directory can be sent.
+- When the user should verify a change (layout, wording), do not send a separate verification card — fold it into the next card you have to send anyway ("also check X on this card"), or `send-file` the thing itself.
+- **The 🔔 "waiting for you" card is automatic** (inside herdr, while remote mode is on): the daemon pushes it when herdr reports your session stuck on a prompt only a human can answer. Never send one by hand, and do not `notify` about being stuck — if you can still run a command you are not stuck.
+- Remote mode changes the channel, **not the standard**: irreversible actions still need explicit approval; a timeout is not approval.
+- The user answers directly in the terminal (no `[agent-lark remote] ` prefix) while an `ask` is still pending on the phone ⇒ stop that background job first (in Claude Code: TaskStop; the card turns "Cancelled"), then act on the terminal answer. Do not wait on both.
+- **The task changes** (the user hands you something else in the same project) ⇒ `$AL rename "<new task>"` so the group name on the phone says what this is about.
 
-**开启**：用户说「我走了」「出门了」「开启远程模式」「有事发手机」「remote on」「切到手机」之类的意思。
-**当场跑这一条**，然后把 stdout 原样转告用户：
+## When several agent sessions work as a team (a lead session dispatching others)
+- **Only the session that talks to the human (the lead) holds remote mode**: it runs `away on`, sends `ask` / `notify` / `send-file`, reads `state.json`. The other sessions keep reporting to the lead as before; they never call `ask`.
+- When another session needs the human's authorization or decision ⇒ the lead asks via `ask` and relays the answer through whatever channel the team already uses.
+- Phone messages are injected into the lead's session (the pane recorded on the binding), with the `[agent-lark remote] ` prefix ⇒ treat as user input.
+- `state.json` is the truth; after the lead's context is reset, re-read it as in the first section. The team's own status file needs one line ("remote mode: see state.json"), not a second copy.
+- If the team has an "autopilot / no need to ask for each item" authorization, it is orthogonal to remote mode: the former decides what need not be asked, the latter decides which channel the things that must be asked go through.
 
-```bash
-herdr-lark away on
-```
+## Turning it off and wrapping up (skipping a step raises no error)
+- Turning off: make sure no background `ask` is pending (if one is ⇒ wait for it or stop it; the card turns "Cancelled") → `$AL away off` (the switch only; the group and the binding stay, the daemon keeps running).
+- **At the end of a task, remind the user and run `$AL unbind`**: the group is theirs (it stays in Feishu; archiving it is their call), and the next `away on` in this directory will offer it back for renaming. If remote mode is still on (the user has not returned), leave the switch on and do the reminder through `notify`.
+- Subscribing, tapping buttons, scanning the QR code and anything else on the phone are the human's actions; the agent cannot do them.
 
-它一条命令把整条通路准备好：没凭据就告诉你去 `setup`；daemon 没跑就后台起一个；
-这个项目没有飞书群就新建一个（已经有了就复用，不会重复建）；最后才打开开关。
-任何一步失败它都不会把开关留在半开状态。
+## Never
+- Never run `setup` without asking first, and never choose the path for the user (it creates a Feishu app under their account): ask whether to scan a QR code for a new app or reuse an app id they already have; once they have chosen you may run `setup` for them — hand them the QR code's URL line, or render that URL into a PNG yourself and open it. The app secret goes only in the environment or the env file; it must not appear in argv, a file you write, or any output.
+- Do not keep the daemon alive from your own background shell (use `daemon --detach`); do not `daemon --stop --force` while a question is pending; do not edit `state.json` or `bindings.json` by hand — only through `away` / `bind` / `unbind` / `rename`.
+- Do not `bind --chat` a group that belongs to another project; do not reuse a group the user has not chosen.
 
-- 想连「干完了」也推：`herdr-lark away on --idle 30`（跑满 30 分钟的长任务才推，默认不推）。
-- 退出码 4 ⇒ 需要用户本人动手（通常是还没 `setup`），把 stderr 转告他。
-
-**关闭**：用户说「我回来了」「关闭远程模式」「remote off」：
-
-```bash
-herdr-lark away off
-```
-
-daemon 留着不用停。关掉之后照常在终端交互。
-
-## 模式内
-
-- **一切本来要向用户提问、要他确认或授权的时刻** ⇒ 用 `herdr-lark ask`，不再在终端干等。
-- `ask` 会阻塞到用户回答。**必须用你的 harness 自己的后台机制**（Claude Code 是 Bash 工具的
-  `run_in_background`），任务结束时它会主动叫醒你。用 `nohup … &` 这种裸后台 harness 追踪不到，
-  答复会安安静静落到文件里，没人通知你，人在手机上以为你收到了，其实你还在等。
-- **同一时刻只挂一个问题**：同项目第二个 `ask` 直接退 4。
-- 退出码：0 按回复办；1 改 JSON 重发；2 超时 ⇒ **可逆**的事按推荐项继续并记「未获确认」，
-  **不可逆**的停下等人；3 通道故障 ⇒ 起 daemon 重发一次，仍 3 停下；4 需要人 ⇒ 停下等用户回终端。
-- **手机来的消息以 `[herdr-lark remote] ` 前缀注入你的会话**，按用户输入处理。
-  看到这个前缀就说明**人在手机上**：照常在终端回答，同时用 `say` 把同一个答复同步过去。
-- 用户在终端直接回话（没有前缀）而手机上还挂着一张 `ask` ⇒ 先停掉那个后台任务
-  （Claude Code 里是 TaskStop，卡片会变「已取消」），再按终端回话办；不要两边都等。
-
-### ⛔ 模式内，你说的每一句话都要同步到飞书
-
-人不在终端前。你在终端回复得再好，他**一个字也看不到**——通道会变成单向的：
-他能发消息给你，却收不到你的回答，只能干等，最后跑回电脑前看你到底说了什么。
-
-所以 **away 开着时，每一次给用户的回复，都要紧跟一条 `herdr-lark say`**，把**一字不差的同一份内容**
-发到项目群。这不是"顺手"，是这个模式成立的前提。
-
-**逐字，不要精简。** 人没法验证你删掉的是什么，只能猜终端里是不是还有别的话——"你看到的是不是全部"
-这件事不该需要信任。嫌长就在终端也写短，两边始终是同一份。
-卡片支持表格、列表、代码块（飞书卡片 JSON 2.0 的 markdown 组件），所以没有任何格式理由需要改写。
-
-```bash
-herdr-lark say <<'EOF'
-（这里放你刚在终端说的话，markdown）
-EOF
-```
-
-`--title` 是额外加的一句概括，不替换正文——手机通知栏只看得到标题，所以那句要有信息量。
-别用 `notify` 代替 `say`。
-
-### `notify` 只在两种情况下用
-
-**重大事项、必须让他知道但不需要他拍板**：任务完成 / 发生异常 / 任务进行不下去了（含 `ask` 退 3、4 后停下等人）。
-
-日常的对话回复走 `say`，不走 notify——notify 每条都带标题栏，刷起来像告警。
-要拍板的事永远走 `ask`，不用 notify 也不用 say 代替。
-
-### `send-file` 用来省一次往返
-
-需要用户看版式、看 diff、看产物时，`herdr-lark send-file <路径> --caption "..."`。
-**不要为了让他验证某个改动单发一张卡**——把它塞进下一张本来就要发的真问题里。
-
-## 标准不降
-
-远程模式只换通道：**不可逆动作仍然要明确批准，超时不算批准**。
-把不可逆选项标 `"danger": true`（红色按钮 + 二次确认弹窗），并且**它永远不能是推荐项**——校验会直接拦下。
-
-## 多个 agent 会话组队时
-
-- **只有对接用户的那个会话（主会话）持有远程模式**：跑 `away`、发 `ask` / `notify`、读 `state.json`。
-- 别的会话要用户授权的事 ⇒ 由主会话 `ask` 问，拿到答复后按你们既有通道转达。
-- 手机来的消息注入的是 `state.json` 里记的那个窗格（主会话所在窗格）。
-
-## 收尾
-
-- 任务结束：`herdr-lark unbind`（飞书群留着，要不要归档是人的事）。
-- 模式仍开着就留着开关——那说明用户还没回来。
+## Both skills installed (agent-ntfy and agent-lark)
+The two skills know nothing about each other, and neither decides which one a decision goes to. Keep **one** remote-mode rule in force per machine (or per project) and let it name the CLI it calls: this file for agent-lark, `agent-ntfy`'s `examples/remote-mode-rule.md` for ntfy. To route by project instead, keep both rules but open each with one line such as "This rule applies only when the project has `.agent-lark/state.json`" / "… `.agent-ntfy/state.json`" and let `away status --json` of the matching CLI decide. The daemons may run side by side; they share nothing.

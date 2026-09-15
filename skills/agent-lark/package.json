@@ -1,12 +1,11 @@
 {
   "name": "agent-lark",
   "version": "0.1.0",
-  "description": "把 herdr 里跑着的 agent 会话和飞书打通：要拍板的事推到手机，答复注入回原窗格",
+  "description": "Push the decisions an AI coding agent cannot make on its own to your phone as Feishu/Lark cards, and bring your verdict — or any instruction — straight back into its session",
   "type": "module",
   "bin": {
     "agent-lark": "./dist/cli.mjs"
   },
-  "exports": "./dist/index.js",
   "engines": {
     "node": ">=22"
   },
@@ -33,8 +32,7 @@
     "SKILL.md",
     "README.md",
     "README.zh-CN.md",
-    "docs",
-    "examples",
-    "LICENSE"
+    "references",
+    "examples"
   ]
 }

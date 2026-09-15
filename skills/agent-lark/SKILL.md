@@ -256,9 +256,10 @@ cd <project> && agent-lark away on --name "<task>" # once per project: daemon up
 - **No credentials yet** (`away on` exits 4 with `No Feishu app credentials yet. Run once: agent-lark setup`):
   do not just tell the user to run `setup` — ask them first whether to **scan a QR code for a new app**
   (`setup`) or **reuse an app they already have** (`setup --app-id cli_xxxxxxxx`, the secret read from
-  `AGENT_LARK_APP_SECRET` or the env file, never from argv). Either way `setup` is theirs to run: it talks
-  to Feishu on their behalf and prints the QR code as ANSI art with the URL as a plain line right under
-  it. If you cannot show them the terminal, hand over that URL. `setup --update` re-authorizes an existing
+  `AGENT_LARK_APP_SECRET` or the env file, never from argv). Once they have chosen you may run `setup` for
+  them (it creates the app under their account, so never without asking): it prints the QR code as ANSI art
+  with the URL as a plain line right under it — if you cannot show them the terminal, hand over that URL,
+  or render it into a PNG yourself and open it. `setup --update` re-authorizes an existing
   app (adds scopes); `setup --reset` forgets the stored credentials and starts a fresh setup in the same
   run.
 - `away on` does everything in one command: checks credentials, starts the daemon if needed, waits up to

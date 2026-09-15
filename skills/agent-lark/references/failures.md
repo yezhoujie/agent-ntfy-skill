@@ -170,8 +170,9 @@ Run `away on` in the project (SKILL.md, "Remote mode"); it may itself exit 4 wit
 
 **No credentials** (`away on`): `agent-lark: No Feishu app credentials yet. Run once: agent-lark setup`
 — ask the user whether to scan a QR code for a new app (`setup`) or reuse an existing app id
-(`setup --app-id cli_xxxxxxxx` with the secret in `AGENT_LARK_APP_SECRET` or the env file); `setup` is
-theirs to run.
+(`setup --app-id cli_xxxxxxxx` with the secret in `AGENT_LARK_APP_SECRET` or the env file). Once they
+have chosen you may run `setup` for them (never without asking: it creates the app under their account),
+handing over the QR code's URL line or rendering it into a PNG yourself; the secret never goes on argv.
 
 **Earlier groups to choose from** (`away on` / `bind` without `--reuse` / `--new`):
 
