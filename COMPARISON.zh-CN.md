@@ -17,7 +17,7 @@
 | **通道** | [ntfy.sh](https://ntfy.sh) 公共推送服务（或自建 ntfy 实例，`AGENT_NTFY_URL`）；每个项目从池里租一个随机 topic | 你自己的飞书自建应用；每个项目一个飞书群 |
 | **手机上要装什么** | ntfy app；不需要任何账号 | 飞书 / Lark，用你自己的账号登录——个人账号就够，不需要管理员 |
 | **机器上的运行时** | Python ≥ 3.10，只用标准库 | Node.js ≥ 22，单个自包含文件 |
-| **首次配置** | 手机订阅终端里显示的 topic，在测试通知上点按钮（`confirm-sub`，每个 topic 一次） | `setup`：用飞书扫终端里的二维码（或 `--app-id` 用已有应用）；然后 `away on` 建本项目的群并把你拉进去 |
+| **首次配置** | 手机订阅终端里显示的 topic，在测试通知上点按钮（`confirm-sub`，每个 topic 一次） | 终端里跑 `setup`：菜单二选一——用飞书扫二维码，或输入已有应用的 App ID 与 App Secret（不回显）；然后跟 agent 说开启远程模式——它跑 `away on` 建本项目的群并把你拉进去 |
 | **平台** | macOS 真机端到端；Linux / Windows 只有 CI 单测 | 一样：macOS 真机端到端（在 herdr 内）；Linux / Windows 只有 CI 单测 |
 | **herdr** | 可选：手机 → agent 注入、`away on` / `confirm-sub` 开窗格需要它 | 可选：手机 → agent 注入、🔔「等你输入」卡需要它；其余都不需要 |
 | **你怎么回答** | 一个按钮「采纳推荐」，或在 topic 里打字 | 每个选项一个按钮（2–5 个）；不可逆选项红色 + 二次确认；`select: "multi"` 是勾选框 + 提交按钮；或在群里打字 |
