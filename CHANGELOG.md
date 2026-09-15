@@ -11,6 +11,12 @@ pin (`npx skills add 'yezhoujie/agent-remote-communication-skills#v0.1.2' --skil
 
 ### [Unreleased][agent-lark-unreleased]
 
+#### Fixed
+
+- `send-file` with a relative path (`send-file out/shot.png`) no longer fails with `file not found`: the path
+  is resolved against the directory the command runs in before it reaches the daemon, which has a working
+  directory of its own. The `file not found` message now names the resolved absolute path.
+
 ### [0.1.1][agent-lark-0.1.1] - 2026-09-15
 
 #### Added

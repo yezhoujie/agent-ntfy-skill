@@ -77,7 +77,7 @@ argument, `--home=<dir>` is the one exception) · `setup --reuse` after three re
 `连续 3 次没通过，先到开发者后台核对 App ID / App Secret，再跑一次 agent-lark setup --reuse。　/　3 attempts failed; check the App ID / App Secret in the developer console, then run agent-lark setup --reuse again.`
 (on the terminal, so in both languages).
 
-`send-file` rc 1: `file not found: <path>` · `not a regular file: <real path>` · `file too large: 12.3 MB, limit 10 MB`
+`send-file` rc 1: `file not found: <absolute path>` (a relative path is resolved against the directory the command runs in) · `not a regular file: <real path>` · `file too large: 12.3 MB, limit 10 MB`
 (images: `png jpg jpeg gif webp bmp` up to 10 MB; anything else 30 MB) · and, for a path outside the allowlist:
 
 ```

@@ -20,6 +20,7 @@ export type Request =
   | { type: 'setAway'; root: string; away: boolean; paneId: string | null }
   | { type: 'ask'; root: string; label: string; paneId: string | null; payload: unknown; timeoutMs: number; urgent?: boolean }
   | { type: 'notify'; root: string; label: string; paneId: string | null; payload: unknown }
+  /** `path` is absolute: the CLI resolves it against the caller's directory, the daemon has its own. */
   | { type: 'sendFile'; root: string; label: string; paneId: string | null; path: string; caption?: string };
 
 export interface DaemonStatus {

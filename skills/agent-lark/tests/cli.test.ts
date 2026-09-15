@@ -258,6 +258,22 @@ describe('with a fake daemon', () => {
     assert.doesNotMatch(text.stdout, /pane/);
   });
 
+  // The daemon runs in its own directory; a relative path only means anything
+  // where the CLI was invoked, so the CLI must resolve it before asking.
+  test('send-file with a relative path: resolved against the caller\'s directory, not the daemon\'s, and sent', () => {
+    mkdirSync(join(project, 'out'));
+    writeFileSync(join(project, 'out', 'note.txt'), 'hello');
+    const r = cmd(['send-file', 'out/note.txt', '--caption', 'a note']);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /^Sent to the project group$/m);
+  });
+
+  test('send-file with a relative path to a missing file: exit 1 naming the resolved absolute path', () => {
+    const r = cmd(['send-file', 'out/missing.txt']);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    assert.ok(r.stderr.includes(`file not found: ${join(project, 'out', 'missing.txt')}`), r.stderr);
+  });
+
   test('rename with a task name over 60 code points: exit 1 before the daemon is asked', () => {
     const r = cmd(['rename', '😀'.repeat(61)]);
     assert.equal(r.status, 1, r.stdout + r.stderr);

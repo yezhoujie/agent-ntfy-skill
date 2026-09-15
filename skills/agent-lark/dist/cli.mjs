@@ -139229,8 +139229,9 @@ async function cmdNotify() {
 }
 async function cmdSendFile(args) {
   const { root, label, paneId } = ctx();
-  const path2 = args.find((a) => !a.startsWith("--"));
-  if (!path2) die(1, msg.sendFileUsage);
+  const given = args.find((a) => !a.startsWith("--"));
+  if (!given) die(1, msg.sendFileUsage);
+  const path2 = resolve2(given);
   const res = await request({ type: "sendFile", root, label, paneId, path: path2, caption: opt(args, "caption") });
   finish(res, () => process.stdout.write(`${msg.fileSent}
 `));

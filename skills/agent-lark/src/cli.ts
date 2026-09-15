@@ -730,8 +730,11 @@ async function cmdNotify(): Promise<void> {
 
 async function cmdSendFile(args: string[]): Promise<void> {
   const { root, label, paneId } = ctx();
-  const path = args.find((a) => !a.startsWith('--'));
-  if (!path) die(1, msg.sendFileUsage);
+  const given = args.find((a) => !a.startsWith('--'));
+  if (!given) die(1, msg.sendFileUsage);
+  // The daemon checks the path from its own working directory, so a relative
+  // one must be resolved here, where the caller meant it.
+  const path = resolve(given);
   const res = await request({ type: 'sendFile', root, label, paneId, path, caption: opt(args, 'caption') });
   finish(res, () => process.stdout.write(`${msg.fileSent}\n`));
 }

@@ -181,7 +181,7 @@ agent-lark send-file ./shot.png --caption "Current layout"
 - `send-file` only reads files that resolve (after `realpath`, so a symlink cannot escape) inside the
   calling project, the daemon's media directory, or the system temp directory; images (`png jpg jpeg gif
   webp bmp`) up to 10 MB, anything else up to 30 MB. Outside that it exits 1 and says which directories
-  are allowed.
+  are allowed. A relative path is taken from the directory you run the command in.
 - `notify` is for things that matter but need no answer: finished, crashed, blocked and giving up. Every
   card buzzes a phone, so do not narrate steps, and do not send a card just to have a change verified —
   fold that into the next real question.
