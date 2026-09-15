@@ -362,7 +362,9 @@ daemon keeps that on the binding.
 - When your task ends, ask the human whether the group should stay. Keep it: `unbind` (the group stays
   in Feishu, the next `away on` in this directory offers it back). Drop it: `unbind --dissolve` (the group
   is dissolved in Feishu and its record forgotten; rc 4 means Feishu refused — the app can only dissolve
-  a group it owns — so the record is gone but the human has to dissolve the group by hand; the daemon
+  a group it owns, which every group it created through `away on` / `bind --new` is, so a refusal only
+  happens for a human-made group adopted with `bind --chat` — so the record is gone but the human has
+  to dissolve the group by hand; the daemon
   clears the group's marker so it is not offered back meanwhile, and says so if that failed too). `away off` is
   the human's call, not yours. `status` shows credentials, herdr, the daemon and every binding, live and
   released.

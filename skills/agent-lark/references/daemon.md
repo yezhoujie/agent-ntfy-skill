@@ -180,7 +180,10 @@ Feishu to dissolve the group (`im.v1.chat.delete`) and forgets the record either
 - not connected to Feishu ⇒ rc 3 (`not connected to Feishu (<last error>); the daemon keeps retrying, try again shortly`), nothing changes; a plain `unbind` still works;
 - Feishu dissolved it ⇒ rc 0, `Dissolved Feishu group "<name>"; the local record is removed.`;
 - Feishu refused (the app can only dissolve a group it owns, or one it created when it has the
-  `im:chat:operate_as_owner` scope) or the call failed ⇒ rc 4, stderr
+  `im:chat:operate_as_owner` scope) or the call failed ⇒ rc 4, stderr. A group the bot created itself
+  (`away on`, `bind --new`) has the bot as its owner, so this branch is not taken for it: the dissolve
+  succeeds and no extra scope is needed (verified against Feishu); it is the path for a human-made
+  group adopted with `bind --chat`.
   `the Feishu group "<name>" was not dissolved: Feishu answered <code> <msg>. Dissolve it by hand in Feishu (…). The local record is removed.`
   (or `… was not dissolved: <error>. Dissolve it by hand in Feishu. The local record is removed.`) — the
   group is still there for the human to dissolve and the record is gone. The daemon then replaces the

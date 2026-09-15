@@ -227,7 +227,9 @@ for a project that had a group before.
 **`unbind` / switching groups while a question is pending**: `agent-lark: a question is still pending on the phone; answer it or wait for the timeout`.
 
 **`unbind --dissolve` when Feishu will not dissolve the group** (the record is removed all the same, and
-`state.json` cleared, so there is nothing to retry — the group is the human's to dissolve):
+`state.json` cleared, so there is nothing to retry — the group is the human's to dissolve). A group the
+bot created itself (`away on`, `bind --new`) is owned by the bot and dissolves without any extra scope;
+this happens for a human-made group adopted with `bind --chat`:
 
 ```
 agent-lark: the Feishu group "<name>" was not dissolved: Feishu answered 232002 <msg>. Dissolve it by hand in Feishu (the app can only dissolve a group it owns, or one it created if it has the im:chat:operate_as_owner scope). The local record is removed.
