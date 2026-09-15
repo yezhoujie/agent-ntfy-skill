@@ -136313,16 +136313,26 @@ var init_texts = __esm({
       toastBadOption: "\u8FD9\u4E2A\u9009\u9879\u5BF9\u4E0D\u4E0A\uFF0C\u518D\u8BD5\u4E00\u6B21",
       // setup walkthrough (each line is printed as "zh　/　en")
       setupHaveCreds: "\u5DF2\u7ECF\u6709\u51ED\u636E\u4E86\uFF08\u6765\u81EA {origin}\uFF09\u3002\u60F3\u91CD\u65B0\u6388\u6743\u6216\u8865\u6743\u9650\uFF0C\u52A0 --update\uFF1B\u60F3\u6362\u4E00\u4E2A\u5E94\u7528\uFF0C\u5148 agent-lark setup --reset\u3002",
-      setupStoreOption: "--store \u53EA\u80FD\u662F keychain / file / none",
-      setupProbing: "\u6B63\u5728\u7528\u8FD9\u5BF9\u51ED\u636E\u8FDE\u4E00\u6B21\u98DE\u4E66\u786E\u8BA4\u53EF\u7528\uFF08\u6765\u6E90\uFF1A{origin}\uFF09\u2026\u2026",
+      setupMenu: "\u600E\u4E48\u63A5\u5165\u98DE\u4E66\uFF1F\n  1) \u626B\u7801\u65B0\u5EFA\u4E00\u4E2A\u5E94\u7528\uFF08\u7528\u98DE\u4E66\u626B\u7EC8\u7AEF\u91CC\u7684\u4E8C\u7EF4\u7801\uFF09\n  2) \u590D\u7528\u4E00\u4E2A\u5DF2\u6709\u7684\u5E94\u7528\uFF08\u8F93\u5165 App ID \u4E0E App Secret\uFF09",
+      setupMenuPrompt: "\u9009 [1/2]\uFF1A",
+      setupMenuBad: "\u53EA\u80FD\u8F93 1 \u6216 2\u3002",
+      setupAppIdPrompt: "App ID\uFF08cli_ \u5F00\u5934\uFF09\uFF1A",
+      setupAppIdBad: "App ID \u5F62\u6001\u4E0D\u5BF9\uFF1A\u5E94\u662F cli_ \u52A0\u5B57\u6BCD\u6570\u5B57\uFF08\u5728\u5F00\u53D1\u8005\u540E\u53F0\u300C\u51ED\u8BC1\u4E0E\u57FA\u7840\u4FE1\u606F\u300D\u91CC\u770B\uFF09\u3002",
+      setupSecretPrompt: "App Secret\uFF08\u8F93\u5165\u4E0D\u56DE\u663E\uFF09\uFF1A",
+      setupProbing: "\u6B63\u5728\u8FDE\u4E00\u6B21\u98DE\u4E66\u786E\u8BA4\u8FD9\u5BF9\u51ED\u636E\u53EF\u7528\u2026\u2026",
       setupProbeOk: "\u2705 \u51ED\u636E\u53EF\u7528\uFF0C\u5E94\u7528\u540D\u300C{app}\u300D",
       setupUnnamedApp: "(\u672A\u547D\u540D)",
       setupProbeFailed: "\u8FD9\u5BF9\u51ED\u636E\u8FDE\u4E0D\u4E0A\u98DE\u4E66\uFF1A{error}",
       setupSaved: "\u51ED\u636E\u5DF2\u4FDD\u5B58\u5230\uFF1A{where}",
       setupSavedQr: "\u2705 \u5E94\u7528\u5DF2\u7ED1\u5B9A\uFF0C\u51ED\u636E\u4FDD\u5B58\u5230\uFF1A{where}\uFF08\u660E\u6587\u4E0D\u4F1A\u51FA\u73B0\u5728\u4EFB\u4F55\u8F93\u51FA\u91CC\uFF09\u3002",
       setupNext: "\u4E0B\u4E00\u6B65\uFF1A",
-      setupNoSecret: "App Secret \u6CA1\u627E\u5230\u3002\u4E0D\u8981\u5199\u5728\u547D\u4EE4\u884C\u91CC\uFF08argv \u5168\u673A\u5668\u53EF\u89C1\uFF09\uFF0C\u7528\u4E0B\u9762\u4EFB\u4E00\u79CD\uFF1A",
-      setupNoSecretEnvFile: "\u6216\u5199\u8FDB {file}\uFF1AAGENT_LARK_APP_ID=... / AGENT_LARK_APP_SECRET=...",
+      setupReuseGaveUp: "\u8FDE\u7EED {n} \u6B21\u6CA1\u901A\u8FC7\uFF0C\u5148\u5230\u5F00\u53D1\u8005\u540E\u53F0\u6838\u5BF9 App ID / App Secret\uFF0C\u518D\u8DD1\u4E00\u6B21 agent-lark setup --reuse\u3002",
+      setupManualScopes: "\u8FD9\u4E2A\u5E94\u7528\u8981\u5728\u5F00\u53D1\u8005\u540E\u53F0\u624B\u52A8\u5F00\u901A\uFF08\u5E94\u7528 \u2192 \u6743\u9650\u7BA1\u7406 \u2192 \u5F00\u901A\u6743\u9650\uFF09\uFF1A",
+      setupManualEvents: "\u4E8B\u4EF6\u8BA2\u9605\uFF1Aim.message.receive_v1\uFF08\u8BA2\u9605\u65B9\u5F0F\u9009\u300C\u4F7F\u7528\u957F\u8FDE\u63A5\u63A5\u6536\u4E8B\u4EF6\u300D\uFF09\xB7 \u56DE\u8C03\uFF1Acard.action.trigger\uFF08\u540C\u6837\u9009\u957F\u8FDE\u63A5\uFF09",
+      setupManualPublish: "\u5F00\u901A\u540E\u53D1\u5E03\u4E00\u4E2A\u7248\u672C\uFF0C\u6743\u9650\u624D\u751F\u6548\u3002",
+      closePanePrompt: "\u5173\u6389\u8FD9\u4E2A\u7A97\u683C\uFF1F[Y/n] ",
+      paneKept: "\u7A97\u683C\u7559\u7740\u3002",
+      paneCloseFailed: "\u5173\u7A97\u683C\u5931\u8D25\uFF1A{error}",
       setupRequesting: "\u6B63\u5728\u5411\u98DE\u4E66\u7533\u8BF7\u626B\u7801\u6CE8\u518C\u2026\u2026",
       setupScan: "\u7528\u98DE\u4E66\u626B\u4E0A\u9762\u7684\u4E8C\u7EF4\u7801\uFF08\u626B\u4E0D\u5230\u5C31\u6253\u5F00\u8FD9\u4E2A\u94FE\u63A5\uFF09\uFF1A",
       setupScopes: "\u786E\u8BA4\u9875\u4F1A\u5217\u51FA\u8981\u6388\u6743\u7684\u6743\u9650\uFF1A",
@@ -136333,7 +136343,6 @@ var init_texts = __esm({
       setupExpired: "\u4E8C\u7EF4\u7801\u8FC7\u671F\u4E86\uFF0C\u6CA1\u7B49\u5230\u626B\u7801\u3002\u91CD\u8DD1\u4E00\u6B21\uFF1Aagent-lark setup\uFF08\u539F\u59CB\u9519\u8BEF\uFF1A{error}\uFF09",
       setupRegisterFailed: "\u626B\u7801\u6CE8\u518C\u5931\u8D25\uFF1A{error}",
       setupRetry: "\u7F51\u7EDC\u6296\u52A8\uFF08{error}\uFF09\uFF0C\u91CD\u65B0\u7533\u8BF7\u4E00\u5F20\u4E8C\u7EF4\u7801\uFF08\u7B2C {n}/{max} \u6B21\uFF09\u2026\u2026",
-      setupSourceFlag: "--app-id + \u73AF\u5883\u53D8\u91CF",
       appDesc: "\u628A\u7EC8\u7AEF\u91CC agent \u7684\u63D0\u95EE\u63A8\u5230\u624B\u673A\uFF0C\u7B54\u590D\u6CE8\u5165\u56DE\u7EC8\u7AEF"
     };
     en = {
@@ -136371,16 +136380,26 @@ var init_texts = __esm({
       toastClosed: "This question is already closed; that tap was forwarded as a new instruction",
       toastBadOption: "That option does not match, try again",
       setupHaveCreds: "Credentials already exist (from {origin}). Add --update to re-authorize or add scopes; run agent-lark setup --reset first to switch apps.",
-      setupStoreOption: "--store must be keychain / file / none",
-      setupProbing: "Checking these credentials against Feishu once (source: {origin})\u2026",
+      setupMenu: "How do you want to connect to Feishu?\n  1) Create a new app by QR code (scan it with Feishu)\n  2) Reuse an app you already have (enter its App ID and App Secret)",
+      setupMenuPrompt: "Choose [1/2]: ",
+      setupMenuBad: "Type 1 or 2.",
+      setupAppIdPrompt: "App ID (starts with cli_): ",
+      setupAppIdBad: "That is not an App ID: expected cli_ followed by letters and digits (Developer console \u2192 Credentials & Basic Info).",
+      setupSecretPrompt: "App Secret (not echoed): ",
+      setupProbing: "Checking these credentials against Feishu once\u2026",
       setupProbeOk: '\u2705 Credentials work; app name "{app}"',
       setupUnnamedApp: "(unnamed)",
       setupProbeFailed: "These credentials cannot reach Feishu: {error}",
       setupSaved: "Credentials saved to: {where}",
       setupSavedQr: "\u2705 App linked; credentials saved to {where} (the secret never appears in any output).",
       setupNext: "Next:",
-      setupNoSecret: "App Secret not found. Do not put it on the command line (argv is visible machine-wide); use either:",
-      setupNoSecretEnvFile: "or write it to {file}: AGENT_LARK_APP_ID=... / AGENT_LARK_APP_SECRET=...",
+      setupReuseGaveUp: "{n} attempts failed; check the App ID / App Secret in the developer console, then run agent-lark setup --reuse again.",
+      setupManualScopes: "Enable these scopes for the app by hand in the developer console (app \u2192 Permissions & Scopes):",
+      setupManualEvents: "Event subscription: im.message.receive_v1 (delivery: long connection) \xB7 callback: card.action.trigger (long connection as well)",
+      setupManualPublish: "Publish a version afterwards; scopes take effect only then.",
+      closePanePrompt: "Close this pane? [Y/n] ",
+      paneKept: "Pane kept.",
+      paneCloseFailed: "closing the pane failed: {error}",
       setupRequesting: "Asking Feishu for a QR-code registration\u2026",
       setupScan: "Scan the QR code above with Feishu (or open this link):",
       setupScopes: "The confirmation page lists the scopes being requested:",
@@ -136391,15 +136410,17 @@ var init_texts = __esm({
       setupExpired: "The QR code expired before it was scanned. Run again: agent-lark setup (original error: {error})",
       setupRegisterFailed: "QR-code registration failed: {error}",
       setupRetry: "Network hiccup ({error}); asking for a fresh QR code (attempt {n}/{max})\u2026",
-      setupSourceFlag: "--app-id + environment",
       appDesc: "Agent questions pushed to your phone, answers back to the terminal"
     };
     msg = {
       help: `agent-lark \u2014 reach the agent session running in your terminal from Feishu/Lark
 
-  setup [--update] [--scopes a,b]  Create or update the Feishu app by QR code; credentials go to the keychain
-  setup --app-id cli_xxx [--store]  Use an existing app; the secret is read from the environment / env file, never argv
-  setup --reset                      Forget the stored credentials and set up again from scratch in the same run (QR code or --app-id)
+  setup [--update] [--reset] [--scopes a,b]
+                                     On a terminal: a menu, create the app by QR code or reuse one; piped: QR code straight away.
+                                     Credentials go to the keychain (--update re-authorizes, --reset forgets them first)
+  setup --reuse                      Reuse an app you already have: asks for the App ID and the App Secret (not echoed) on the terminal
+  setup --reuse --report-to <pane> [--close-pane]
+                                     What the agent runs for you in a herdr pane: the result comes back to <pane> as one "[agent-lark] setup:" line
   daemon [--detach|--status|--stop]  Resident process holding the Feishu connection (--stop is refused while a question is pending, unless --force)
   away on [--name <task>] [--reuse <chat_id> | --new]
                                      Remote mode on: daemon up, this project bound to a Feishu group named "<task> [<dir>]"
@@ -136421,6 +136442,8 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
 `,
       prefix: "agent-lark: ",
       homeNeedsDir: "--home needs a directory",
+      unknownOption: "unknown option {option}. See agent-lark --help.",
+      offline: "offline: refusing to contact Feishu (AGENT_LARK_OFFLINE=1 is set)",
       unknownCommand: 'Unknown command "{cmd}". See agent-lark --help.',
       needStdin: "This command reads one JSON object from stdin. Feed it with a heredoc.",
       badJson: "stdin is not valid JSON: {error}",
@@ -136432,6 +136455,15 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       renameUsage: 'Usage: agent-lark rename "<task name>"',
       taskNameTooLong: "task name: over {max} characters (code points), got {n}",
       setupNextLines: '  agent-lark daemon --detach\n  cd <project> && agent-lark away on --name "<task>"\n',
+      setupHandoffStarted: 'The interactive setup is running in herdr pane {pane}: the user enters the App ID and App Secret there (they never pass through this session). When it ends, one line prefixed "[agent-lark] setup:" arrives here.',
+      setupHandoffFailed: "could not open a herdr pane for the interactive setup ({why}). Ask the user to run it in their own terminal:\n  {command}",
+      setupReuseNeedsTerminal: "setup --reuse asks for the App ID and App Secret interactively, and there is no terminal here (and no herdr to open one). Ask the user to run it in their own terminal:\n  {command}",
+      setupReportOk: "[agent-lark] setup: credentials stored for {appId} ({app}); the scopes must be enabled in the developer console before use",
+      setupReportFailed: "[agent-lark] setup: failed: {why}",
+      setupReportInterrupted: "[agent-lark] setup: interrupted before any credentials were stored",
+      setupReportExists: "[agent-lark] setup: credentials already stored ({origin}); nothing changed. To switch apps run agent-lark setup --reset --reuse",
+      setupReportNotDelivered: "agent-lark: the result could not be reported to pane {pane} ({why})",
+      awayOffLocal: "daemon is not running; local state cleared",
       // daemon command
       daemonNotRunning: "daemon: not running",
       daemonNoAnswer: "daemon: no answer ({message})",
@@ -136583,11 +136615,8 @@ Exit codes: 0 ok \xB7 1 bad input \xB7 2 timed out, nobody answered \xB7 3 chann
       credsPermWarning: "agent-lark: warning: {file} permissions are too open ({mode}); chmod 600 recommended",
       credsNotPersisted: "not persisted (memory only for this run)",
       originEnv: "environment AGENT_LARK_APP_ID/SECRET",
-      originGeneric: "environment LARK_APP_ID/SECRET (generic names, may clash with other Feishu tools)",
       reportEnv: "environment AGENT_LARK_APP_ID / AGENT_LARK_APP_SECRET",
-      reportEnvFile: "env file {file}",
-      reportUnavailable: " (not available on this machine)",
-      reportGeneric: "environment LARK_APP_ID / LARK_APP_SECRET (generic names, last resort)"
+      reportUnavailable: " (not available on this machine)"
     };
     t = (lang = "zh") => lang === "en" ? en : zh;
   }
@@ -136733,27 +136762,6 @@ function fileWrite(creds) {
   chmodSync(tmp, 384);
   renameSync(tmp, f);
 }
-function readEnvFile(path2) {
-  const out = {};
-  let text;
-  try {
-    text = readFileSync(path2, "utf8");
-  } catch {
-    return out;
-  }
-  for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const eq = line.indexOf("=");
-    if (eq <= 0) continue;
-    const key = line.slice(0, eq).trim().replace(/^export\s+/, "");
-    let value = line.slice(eq + 1).trim();
-    if (value.startsWith('"') && value.endsWith('"') || value.startsWith("'") && value.endsWith("'"))
-      value = value.slice(1, -1);
-    if (key) out[key] = value;
-  }
-  return out;
-}
 function pair(id, secret) {
   const a = id?.trim();
   const s = secret?.trim();
@@ -136763,20 +136771,10 @@ function resolveCreds() {
   const prefixed = pair(process.env.AGENT_LARK_APP_ID, process.env.AGENT_LARK_APP_SECRET);
   if (prefixed)
     return { ...prefixed, ownerOpenId: process.env.AGENT_LARK_OWNER_OPEN_ID?.trim(), source: "env", origin: msg.originEnv };
-  const ef = envFile();
-  if (existsSync(ef)) {
-    const vars = readEnvFile(ef);
-    const fromFile = pair(vars.AGENT_LARK_APP_ID, vars.AGENT_LARK_APP_SECRET) ?? pair(vars.LARK_APP_ID, vars.LARK_APP_SECRET);
-    if (fromFile)
-      return { ...fromFile, ownerOpenId: vars.AGENT_LARK_OWNER_OPEN_ID, source: "env-file", origin: ef };
-  }
   const kc = keychainRead();
   if (kc?.appId && kc.appSecret) return { ...kc, source: "keychain", origin: `${keychainName()} (service: ${SERVICE})` };
   const f = fileRead();
   if (f?.appId && f.appSecret) return { ...f, source: "file", origin: credentialsFile() };
-  const generic = pair(process.env.LARK_APP_ID, process.env.LARK_APP_SECRET);
-  if (generic)
-    return { ...generic, source: "env-generic", origin: msg.originGeneric };
   return null;
 }
 function writeCreds(creds, store = defaultStore()) {
@@ -136800,15 +136798,11 @@ function credsReport() {
   const lines = [];
   const mark = (ok) => ok ? "\u2713" : "\xB7";
   lines.push(`${mark(!!pair(process.env.AGENT_LARK_APP_ID, process.env.AGENT_LARK_APP_SECRET))} ${msg.reportEnv}`);
-  const ef = envFile();
-  const vars = existsSync(ef) ? readEnvFile(ef) : {};
-  lines.push(`${mark(!!(pair(vars.AGENT_LARK_APP_ID, vars.AGENT_LARK_APP_SECRET) ?? pair(vars.LARK_APP_ID, vars.LARK_APP_SECRET)))} ${fill(msg.reportEnvFile, { file: ef })}`);
   lines.push(`${mark(!!keychainRead())} ${keychainName()} (service: ${SERVICE})${keychainAvailable() ? "" : msg.reportUnavailable}`);
   lines.push(`${mark(!!fileRead())} ${credentialsFile()}`);
-  lines.push(`${mark(!!pair(process.env.LARK_APP_ID, process.env.LARK_APP_SECRET))} ${msg.reportGeneric}`);
   return lines;
 }
-var SERVICE, ACCOUNT, credentialsFile, envFile, dpapiFile;
+var SERVICE, ACCOUNT, credentialsFile, dpapiFile;
 var init_creds = __esm({
   "src/creds.ts"() {
     "use strict";
@@ -136816,7 +136810,6 @@ var init_creds = __esm({
     SERVICE = process.env.AGENT_LARK_KEYCHAIN?.trim() || "agent-lark";
     ACCOUNT = "app";
     credentialsFile = () => join(configDir(), "credentials.json");
-    envFile = () => process.env.AGENT_LARK_ENV_FILE?.trim() || join(configDir(), ".env");
     dpapiFile = () => join(configDir(), "credentials.dpapi");
   }
 });
@@ -136866,11 +136859,60 @@ function findPaneForProject(agents, root) {
   const focused = inProject.find((a) => a.focused);
   return (focused ?? inProject[0]).pane_id;
 }
-var execFileAsync;
+async function splitPane(cwd, pane, run = runHerdr) {
+  const r = await run(["pane", "split", "--pane", pane, "--direction", "down", "--cwd", cwd, "--no-focus"]);
+  if (!r.ok) return null;
+  const env = parse(r.stdout);
+  const id = env.result?.pane?.pane_id;
+  return typeof id === "string" && id ? id : null;
+}
+function quoteForPaneShell(argv, platform5 = process.platform) {
+  if (platform5 === "win32") return argv.map(quoteWindows).join(" ");
+  return argv.map(quotePosix).join(" ");
+}
+function quotePosix(a) {
+  if (a !== "" && !a.startsWith("=") && /^[A-Za-z0-9_@%+=:,./-]+$/.test(a)) return a;
+  return `'${a.replace(/'/g, `'\\''`)}'`;
+}
+function quoteWindows(a) {
+  if (a !== "" && !/[\s"]/.test(a)) return a;
+  let out = '"';
+  let backslashes = 0;
+  for (const ch of a) {
+    if (ch === "\\") {
+      backslashes += 1;
+      continue;
+    }
+    if (ch === '"') {
+      out += "\\".repeat(backslashes * 2 + 1) + '"';
+      backslashes = 0;
+      continue;
+    }
+    out += "\\".repeat(backslashes) + ch;
+    backslashes = 0;
+  }
+  return `${out}${"\\".repeat(backslashes * 2)}"`;
+}
+async function runInPane(pane, argv, run = runHerdr) {
+  return (await run(["pane", "run", pane, quoteForPaneShell(argv)])).ok;
+}
+async function closePane(pane, run = runHerdr) {
+  return run(["pane", "close", pane]);
+}
+var execFileAsync, runHerdr;
 var init_herdr = __esm({
   "src/herdr.ts"() {
     "use strict";
     execFileAsync = promisify(execFile);
+    runHerdr = async (args) => {
+      try {
+        const { stdout } = await execFileAsync("herdr", args, { timeout: 1e4, maxBuffer: 1024 * 1024 });
+        return { ok: true, stdout };
+      } catch (err) {
+        const e = err;
+        return { ok: false, stdout: e.stdout ?? "", error: e.message ?? String(err) };
+      }
+    };
   }
 });
 
@@ -138539,17 +138581,90 @@ var init_daemon = __esm({
 init_dist4();
 var import_qrcode = __toESM(require_lib3(), 1);
 init_creds();
-init_creds();
 init_herdr();
+import { spawn } from "node:child_process";
+import { existsSync as existsSync4, openSync, realpathSync as realpathSync2, unlinkSync as unlinkSync4 } from "node:fs";
+import { resolve as resolve2 } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// src/tty.ts
+import { createInterface } from "node:readline/promises";
+var InputInterrupted = class extends Error {
+  constructor() {
+    super("input interrupted");
+    this.name = "InputInterrupted";
+  }
+};
+function terminalIO(input = process.stdin, output = process.stdout) {
+  const raw = input;
+  return {
+    isTTY: Boolean(input.isTTY),
+    async question(prompt) {
+      const rl = createInterface({ input, output, terminal: true });
+      const control = new AbortController();
+      rl.on("SIGINT", () => control.abort());
+      rl.on("close", () => control.abort());
+      try {
+        return await rl.question(prompt, { signal: control.signal });
+      } catch (err) {
+        if (err.name === "AbortError") throw new InputInterrupted();
+        throw err;
+      } finally {
+        rl.close();
+      }
+    },
+    questionHidden(prompt) {
+      output.write(prompt);
+      const wasRaw = raw.isRaw ?? false;
+      raw.setRawMode?.(true);
+      input.resume();
+      return new Promise((resolve3, reject) => {
+        let typed = "";
+        const finish2 = () => {
+          input.off("data", onData);
+          input.off("end", onEnd);
+          raw.setRawMode?.(wasRaw);
+          input.pause();
+          output.write("\n");
+        };
+        const onEnd = () => {
+          finish2();
+          reject(new InputInterrupted());
+        };
+        const onData = (chunk) => {
+          for (const ch of chunk.toString()) {
+            if (ch === "\r" || ch === "\n") {
+              finish2();
+              resolve3(typed);
+              return;
+            }
+            if (ch === "" || ch === "") {
+              finish2();
+              reject(new InputInterrupted());
+              return;
+            }
+            if (ch === "\x7F" || ch === "\b") {
+              typed = typed.slice(0, -1);
+              continue;
+            }
+            typed += ch;
+          }
+        };
+        input.on("data", onData);
+        input.on("end", onEnd);
+      });
+    },
+    close() {
+    }
+  };
+}
+
+// src/cli.ts
 init_bindings();
 init_ipc();
 init_paths();
 init_texts();
 init_validate();
-import { spawn } from "node:child_process";
-import { existsSync as existsSync4, openSync, realpathSync as realpathSync2, unlinkSync as unlinkSync4 } from "node:fs";
-import { resolve as resolve2 } from "node:path";
-import { fileURLToPath } from "node:url";
 for (const stream of [process.stdout, process.stderr]) {
   stream.on("error", (err) => {
     if (err.code === "EPIPE") process.exit(0);
@@ -138593,14 +138708,18 @@ function isTransientNetworkError(err) {
   return /socket disconnected|socket hang up|ECONNRESET|ETIMEDOUT|EAI_AGAIN|network error/i.test(message);
 }
 var SETUP_ATTEMPTS = 3;
+function maskSecret(text, secret) {
+  return secret ? text.split(secret).join("***") : text;
+}
+function describeProbeError(err) {
+  const data = err?.response?.data;
+  if (data && typeof data.code === "number" && data.code !== 0) return `Feishu error ${data.code} ${typeof data.msg === "string" ? data.msg : ""}`.trim();
+  return describeError(err);
+}
 function die(code, text) {
   process.stderr.write(`${msg.prefix}${text}
 `);
   process.exit(code);
-}
-function bilingual(key, vars = {}, varsEn = vars) {
-  process.stdout.write(`${both(key, vars, varsEn)}
-`);
 }
 function flag(args, name) {
   return args.includes(`--${name}`);
@@ -138610,6 +138729,35 @@ function opt(args, name) {
   if (i < 0) return void 0;
   const v = args[i + 1];
   return v && !v.startsWith("--") ? v : void 0;
+}
+var OPTIONS = {
+  setup: { flags: ["update", "reset", "reuse", "close-pane"], opts: ["scopes", "report-to"] },
+  daemon: { flags: ["detach", "status", "stop", "force"], opts: [] },
+  bind: { flags: ["new"], opts: ["chat", "name", "reuse"] },
+  unbind: { flags: [], opts: [] },
+  rename: { flags: [], opts: [] },
+  ask: { flags: ["urgent"], opts: ["timeout"] },
+  notify: { flags: [], opts: [] },
+  "send-file": { flags: [], opts: ["caption"] },
+  "away on": { flags: ["new"], opts: ["name", "reuse"] },
+  "away off": { flags: [], opts: [] },
+  "away status": { flags: ["json"], opts: [] },
+  status: { flags: [], opts: [] },
+  help: { flags: [], opts: [] }
+};
+function rejectUnknownOptions(command, args) {
+  const known = OPTIONS[command] ?? { flags: [], opts: [] };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (!a.startsWith("--")) continue;
+    const name = a.slice(2);
+    if (known.flags.includes(name)) continue;
+    if (known.opts.includes(name)) {
+      i += 1;
+      continue;
+    }
+    die(1, fill(msg.unknownOption, { option: a }));
+  }
 }
 async function readStdin() {
   if (process.stdin.isTTY) die(1, msg.needStdin);
@@ -138630,59 +138778,166 @@ function finish(res, onOk) {
 `);
   process.exit(res.code);
 }
-async function cmdSetup(args) {
+var APP_ID_RE = /^cli_[A-Za-z0-9]+$/;
+var REUSE_ATTEMPTS = 3;
+var SetupExit = class extends Error {
+  constructor(code) {
+    super(`setup exit ${code}`);
+    this.code = code;
+  }
+};
+async function runSetup(args, deps) {
+  const say = (key, vars = {}, varsEn = vars) => deps.out(`${both(key, vars, varsEn)}
+`);
+  const fail = (code, text) => {
+    deps.err(`${msg.prefix}${text}
+`);
+    throw new SetupExit(code);
+  };
   const update = flag(args, "update");
-  if (flag(args, "reset")) clearCreds();
-  const existing = resolveCreds();
-  const alreadyPersisted = existing?.source === "keychain" || existing?.source === "file";
-  if (alreadyPersisted && !update && !flag(args, "reset") && !opt(args, "app-id")) {
-    bilingual("setupHaveCreds", { origin: existing.origin });
-    return;
-  }
-  const storeOpt = opt(args, "store");
-  if (storeOpt && !["keychain", "file", "none"].includes(storeOpt))
-    die(1, both("setupStoreOption"));
-  const store = storeOpt ?? defaultStore();
-  const flagAppId = opt(args, "app-id");
-  const fromEnv = resolveCreds();
-  const manualId = flagAppId ?? fromEnv?.appId;
-  const manualSecret = flagAppId ? (process.env.AGENT_LARK_APP_SECRET ?? process.env.LARK_APP_SECRET ?? "").trim() || fromEnv?.appSecret : fromEnv?.appSecret;
-  if (manualId && manualSecret && (flagAppId || fromEnv?.source === "env" || fromEnv?.source === "env-file" || fromEnv?.source === "env-generic")) {
-    bilingual(
-      "setupProbing",
-      { origin: flagAppId ? zh.setupSourceFlag : fromEnv.origin },
-      { origin: flagAppId ? en.setupSourceFlag : fromEnv.origin }
-    );
-    const probe = createLarkChannel({ appId: manualId, appSecret: manualSecret });
-    let ownerOpenId;
-    try {
-      const info = await probe.getAppInfo();
-      ownerOpenId = info.ownerId;
-      bilingual("setupProbeOk", { app: info.appName ?? zh.setupUnnamedApp }, { app: info.appName ?? en.setupUnnamedApp });
-    } catch (err) {
-      die(3, both("setupProbeFailed", { error: describeError(err) }));
-    }
-    const where2 = writeCreds({ appId: manualId, appSecret: manualSecret, ownerOpenId }, store);
-    bilingual("setupSaved", { where: where2 });
-    bilingual("setupNext");
-    process.stdout.write(msg.setupNextLines);
-    return;
-  }
-  if (flagAppId)
-    die(
-      4,
-      `${both("setupNoSecret")}
-  AGENT_LARK_APP_SECRET=... agent-lark setup --app-id ${flagAppId}
-  ${both("setupNoSecretEnvFile", { file: envFile() })}`
-    );
+  const reuse = flag(args, "reuse");
+  const reportTo = opt(args, "report-to");
+  const closeAfter = flag(args, "close-pane");
   const scopes = opt(args, "scopes")?.split(",").map((s) => s.trim()).filter(Boolean) ?? DEFAULT_SCOPES;
-  bilingual("setupRequesting");
+  const report = async (line) => {
+    if (!reportTo) return;
+    const r = await deps.herdr.promptPane(reportTo, line);
+    if (!r.ok) deps.err(`${fill(msg.setupReportNotDelivered, { pane: reportTo, why: `${r.code ?? "?"} ${r.message ?? ""}`.trim() })}
+`);
+  };
+  try {
+    if (flag(args, "reset")) clearCreds();
+    const existing = resolveCreds();
+    const alreadyPersisted = existing?.source === "keychain" || existing?.source === "file";
+    if (alreadyPersisted && !update && !flag(args, "reset")) {
+      say("setupHaveCreds", { origin: existing.origin });
+      await report(fill(msg.setupReportExists, { origin: existing.origin }));
+      return 0;
+    }
+    const store = defaultStore();
+    let branch = reuse ? "reuse" : "qr";
+    if (!reuse && deps.io.isTTY) {
+      say("setupMenu");
+      for (; ; ) {
+        const pick = (await deps.io.question(both("setupMenuPrompt"))).trim();
+        if (pick === "1" || pick === "2") {
+          branch = pick === "1" ? "qr" : "reuse";
+          break;
+        }
+        say("setupMenuBad");
+      }
+    }
+    if (branch === "reuse") {
+      if (!deps.io.isTTY) return handOff(deps);
+      await runReuse(deps, store, say, fail, report, closeAfter, scopes);
+      return 0;
+    }
+    if (deps.offline) fail(3, msg.offline);
+    await runQr(deps, store, say, fail, update ? existing?.appId : void 0, scopes);
+    return 0;
+  } catch (err) {
+    if (err instanceof SetupExit) {
+      if (err.code === 130) await report(msg.setupReportInterrupted);
+      return err.code;
+    }
+    if (err instanceof InputInterrupted) {
+      deps.out("\n");
+      await report(msg.setupReportInterrupted);
+      return 130;
+    }
+    throw err;
+  } finally {
+    deps.io.close();
+  }
+}
+async function handOff(deps) {
+  const argv = [deps.execPath, deps.cliPath, "--home", homeDir(), "setup", "--reuse"];
+  const pane = deps.herdr.insideHerdr() ? deps.herdr.currentPaneId() : null;
+  const command = quoteForPaneShell(argv);
+  if (!pane) {
+    deps.err(`${msg.prefix}${fill(msg.setupReuseNeedsTerminal, { command })}
+`);
+    return 4;
+  }
+  const opened = await deps.herdr.splitPane(deps.cwd, pane);
+  if (!opened) {
+    deps.err(`${msg.prefix}${fill(msg.setupHandoffFailed, { why: "pane split failed", command })}
+`);
+    return 3;
+  }
+  const typed = await deps.herdr.runInPane(opened, [...argv, "--report-to", pane, "--close-pane"]);
+  if (!typed) {
+    deps.err(`${msg.prefix}${fill(msg.setupHandoffFailed, { why: `pane run failed in ${opened}`, command })}
+`);
+    return 3;
+  }
+  deps.out(`${fill(msg.setupHandoffStarted, { pane: opened })}
+`);
+  return 0;
+}
+async function runReuse(deps, store, say, fail, report, closeAfter, scopes) {
+  for (let attempt = 1; ; attempt++) {
+    let appId;
+    for (; ; ) {
+      appId = (await deps.io.question(both("setupAppIdPrompt"))).trim();
+      if (APP_ID_RE.test(appId)) break;
+      say("setupAppIdBad");
+    }
+    const appSecret = (await deps.io.questionHidden(both("setupSecretPrompt"))).trim();
+    if (deps.offline) fail(3, msg.offline);
+    say("setupProbing");
+    let info;
+    try {
+      info = await deps.probe(appId, appSecret);
+    } catch (err) {
+      const why = maskSecret(describeProbeError(err), appSecret);
+      say("setupProbeFailed", { error: why });
+      if (attempt >= REUSE_ATTEMPTS) {
+        const line = both("setupReuseGaveUp", { n: attempt });
+        await report(fill(msg.setupReportFailed, { why: `${attempt} probes refused (${why})` }));
+        fail(1, line);
+      }
+      continue;
+    }
+    const app = info.appName ?? "";
+    say("setupProbeOk", { app: app || zh.setupUnnamedApp }, { app: app || en.setupUnnamedApp });
+    const where = writeCreds({ appId, appSecret, ownerOpenId: info.ownerId }, store);
+    say("setupSaved", { where });
+    say("setupManualScopes");
+    deps.out(`  ${scopes.join("\n  ")}
+`);
+    say("setupManualEvents");
+    say("setupManualPublish");
+    say("setupNext");
+    deps.out(msg.setupNextLines);
+    await report(fill(msg.setupReportOk, { appId, app: app || en.setupUnnamedApp }));
+    if (closeAfter) await offerClosePane(deps, say);
+    return;
+  }
+}
+async function offerClosePane(deps, say) {
+  const pane = deps.herdr.insideHerdr() ? deps.herdr.currentPaneId() : null;
+  if (!pane) return;
+  let answer;
+  try {
+    answer = (await deps.io.question(both("closePanePrompt"))).trim().toLowerCase();
+  } catch (err) {
+    if (err instanceof InputInterrupted) answer = "n";
+    else throw err;
+  }
+  if (answer === "" || answer === "y" || answer === "yes") {
+    const r = await deps.herdr.closePane(pane);
+    if (!r.ok) say("paneCloseFailed", { error: r.error ?? "herdr refused" });
+  } else say("paneKept");
+}
+async function runQr(deps, store, say, fail, updateAppId, scopes) {
+  say("setupRequesting");
   let deadline = 0;
   let lastStatus = "";
   let heartbeat;
-  const register = () => (0, import_node_sdk.registerApp)({
+  const register = () => deps.register({
     source: "agent-lark",
-    appId: update && existing ? existing.appId : void 0,
+    appId: updateAppId,
     appPreset: {
       name: "agent-lark",
       desc: both("appDesc")
@@ -138695,23 +138950,23 @@ async function cmdSetup(args) {
     onQRCodeReady: ({ url, expireIn }) => {
       deadline = Date.now() + expireIn * 1e3;
       const art = import_qrcode.default.toString(url, { type: "terminal", small: true });
-      void art.then((s) => process.stdout.write(`
+      void art.then((s) => deps.out(`
 ${s}
 `)).catch(() => void 0).finally(() => {
-        bilingual("setupScan");
-        process.stdout.write(`${url}
+        say("setupScan");
+        deps.out(`${url}
 
 `);
-        bilingual("setupScopes");
-        process.stdout.write(`  ${scopes.join("\n  ")}
+        say("setupScopes");
+        deps.out(`  ${scopes.join("\n  ")}
   ${both("setupEvents")}
 
 `);
-        bilingual("setupExpiry", { minutes: Math.round(expireIn / 60), time: new Date(deadline).toLocaleTimeString() });
+        say("setupExpiry", { minutes: Math.round(expireIn / 60), time: new Date(deadline).toLocaleTimeString() });
       });
       heartbeat = setInterval(() => {
         const left = Math.max(0, Math.round((deadline - Date.now()) / 1e3));
-        bilingual("setupWaiting", { seconds: left });
+        say("setupWaiting", { seconds: left });
       }, 6e4);
       heartbeat.unref();
     },
@@ -138719,7 +138974,7 @@ ${s}
     onStatusChange: (s) => {
       if (s.status === lastStatus) return;
       lastStatus = s.status;
-      bilingual("setupStatus", { status: s.status });
+      say("setupStatus", { status: s.status });
     }
   });
   let result;
@@ -138728,9 +138983,9 @@ ${s}
       result = await register();
     } catch (err) {
       const detail = describeError(err);
-      if (deadline && Date.now() >= deadline - 5e3) die(4, both("setupExpired", { error: detail }));
-      if (attempt >= SETUP_ATTEMPTS || !isTransientNetworkError(err)) die(3, both("setupRegisterFailed", { error: detail }));
-      bilingual("setupRetry", { error: detail, n: attempt + 1, max: SETUP_ATTEMPTS });
+      if (deadline && Date.now() >= deadline - 5e3) fail(4, both("setupExpired", { error: detail }));
+      if (attempt >= SETUP_ATTEMPTS || !isTransientNetworkError(err)) fail(3, both("setupRegisterFailed", { error: detail }));
+      say("setupRetry", { error: detail, n: attempt + 1, max: SETUP_ATTEMPTS });
       deadline = 0;
       lastStatus = "";
     } finally {
@@ -138746,10 +139001,34 @@ ${s}
     },
     store
   );
-  process.stdout.write("\n");
-  bilingual("setupSavedQr", { where });
-  bilingual("setupNext");
-  process.stdout.write(msg.setupNextLines);
+  deps.out("\n");
+  say("setupSavedQr", { where });
+  say("setupNext");
+  deps.out(msg.setupNextLines);
+}
+async function cmdSetup(args) {
+  const io = process.stdin.isTTY ? terminalIO() : {
+    isTTY: false,
+    question: () => Promise.reject(new InputInterrupted()),
+    questionHidden: () => Promise.reject(new InputInterrupted()),
+    close: () => void 0
+  };
+  const code = await runSetup(args, {
+    io,
+    probe: async (appId, appSecret) => {
+      const info = await createLarkChannel({ appId, appSecret }).getAppInfo();
+      return { appName: info.appName, ownerId: info.ownerId };
+    },
+    register: import_node_sdk.registerApp,
+    offline: process.env.AGENT_LARK_OFFLINE === "1",
+    herdr: { insideHerdr, currentPaneId, splitPane, runInPane, promptPane, closePane },
+    out: (t2) => process.stdout.write(t2),
+    err: (t2) => process.stderr.write(t2),
+    execPath: process.execPath,
+    cliPath: fileURLToPath(import.meta.url),
+    cwd: process.cwd()
+  });
+  process.exit(code);
 }
 var daemonAlive = () => isDaemonListening(2e3);
 async function startDaemonDetached() {
@@ -139004,6 +139283,15 @@ async function cmdAway(args) {
     }
   }
   const res = await request({ type: "setAway", root, away, paneId });
+  if (!away && !res.ok && res.reason === "down") {
+    const state = writeProjectState(root, { away: false });
+    if (!state) process.stdout.write(`${msg.awayNeverUsed}
+`);
+    else process.stdout.write(`${msg.awayOff}
+${msg.awayOffLocal}
+`);
+    return;
+  }
   finish(res, () => {
     writeProjectState(root, chatId ? { away, chatId } : { away }, { create: away });
     process.stdout.write(`${away ? msg.awayOn : msg.awayOff}
@@ -139073,6 +139361,11 @@ function takeHome(argv) {
 }
 async function main() {
   const [cmd, ...args] = takeHome(process.argv.slice(2));
+  if (cmd === "away") {
+    const sub = args.find((a) => !a.startsWith("--")) ?? "status";
+    rejectUnknownOptions(`away ${sub}`, args);
+  } else if (cmd === void 0 || cmd === "--help" || cmd === "-h" || cmd === "help") rejectUnknownOptions("help", args);
+  else if (cmd in OPTIONS) rejectUnknownOptions(cmd, args);
   switch (cmd) {
     case "setup":
       return cmdSetup(args);
@@ -139114,7 +139407,10 @@ if (isEntry)
   });
 export {
   describeError,
+  describeProbeError,
   isTransientNetworkError,
+  maskSecret,
+  runSetup,
   waitConnected
 };
 /*! Bundled license information:

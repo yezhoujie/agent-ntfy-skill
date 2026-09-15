@@ -97,3 +97,83 @@ export function findPaneForProject(agents: AgentInfo[], root: string): string | 
   const focused = inProject.find((a) => a.focused);
   return (focused ?? inProject[0])!.pane_id;
 }
+
+// ---------------------------------------------------------------- panes (CLI side: the interactive setup handed to a new pane)
+
+/** What one `herdr …` invocation came back with; `ok` is a zero exit, `stdout` the raw text either way. */
+export interface HerdrRun {
+  ok: boolean;
+  stdout: string;
+  error?: string;
+}
+export type HerdrRunner = (args: string[]) => Promise<HerdrRun>;
+
+/** The default runner: `herdr <args>` with a 10 s limit; a missing binary is `ok: false` like any other failure. */
+export const runHerdr: HerdrRunner = async (args) => {
+  try {
+    const { stdout } = await execFileAsync('herdr', args, { timeout: 10_000, maxBuffer: 1024 * 1024 });
+    return { ok: true, stdout };
+  } catch (err) {
+    const e = err as { stdout?: string; message?: string };
+    return { ok: false, stdout: e.stdout ?? '', error: e.message ?? String(err) };
+  }
+};
+
+/**
+ * Open a new pane below `pane` (cwd set, focus left alone) and return its id;
+ * null when it could not be opened or herdr's answer is not the expected shape.
+ */
+export async function splitPane(cwd: string, pane: string, run: HerdrRunner = runHerdr): Promise<string | null> {
+  const r = await run(['pane', 'split', '--pane', pane, '--direction', 'down', '--cwd', cwd, '--no-focus']);
+  if (!r.ok) return null;
+  const env = parse<{ pane?: { pane_id?: unknown } }>(r.stdout);
+  const id = env.result?.pane?.pane_id;
+  return typeof id === 'string' && id ? id : null;
+}
+
+/**
+ * `herdr pane run` types its argument into the pane's shell as is, with no
+ * quoting of its own, so every argv element is quoted here by that shell's
+ * rules and the result handed over as one argument. POSIX: single quotes
+ * (a word starting with `=` is always quoted — zsh expands `=cmd`); Windows:
+ * the CommandLineToArgvW rules, as Python's list2cmdline applies them.
+ */
+export function quoteForPaneShell(argv: string[], platform: NodeJS.Platform = process.platform): string {
+  if (platform === 'win32') return argv.map(quoteWindows).join(' ');
+  return argv.map(quotePosix).join(' ');
+}
+
+function quotePosix(a: string): string {
+  if (a !== '' && !a.startsWith('=') && /^[A-Za-z0-9_@%+=:,./-]+$/.test(a)) return a;
+  return `'${a.replace(/'/g, `'\\''`)}'`;
+}
+
+function quoteWindows(a: string): string {
+  if (a !== '' && !/[\s"]/.test(a)) return a;
+  let out = '"';
+  let backslashes = 0;
+  for (const ch of a) {
+    if (ch === '\\') {
+      backslashes += 1;
+      continue;
+    }
+    if (ch === '"') {
+      out += '\\'.repeat(backslashes * 2 + 1) + '"';
+      backslashes = 0;
+      continue;
+    }
+    out += '\\'.repeat(backslashes) + ch;
+    backslashes = 0;
+  }
+  return `${out}${'\\'.repeat(backslashes * 2)}"`;
+}
+
+/** Type a command (argv, quoted for the pane's shell) into a pane and press Enter. */
+export async function runInPane(pane: string, argv: string[], run: HerdrRunner = runHerdr): Promise<boolean> {
+  return (await run(['pane', 'run', pane, quoteForPaneShell(argv)])).ok;
+}
+
+/** Close a pane (the one the interactive setup ran in, once it is done). */
+export async function closePane(pane: string, run: HerdrRunner = runHerdr): Promise<HerdrRun> {
+  return run(['pane', 'close', pane]);
+}

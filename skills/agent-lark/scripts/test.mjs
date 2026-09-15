@@ -20,6 +20,10 @@ const testsDir = join(outDir, 'tests');
 
 rmSync(outDir, { recursive: true, force: true });
 
+// No test may reach Feishu, whatever it spawns: the CLI refuses both of
+// setup's network paths (QR registration, credential probe) under this.
+process.env.AGENT_LARK_OFFLINE = '1';
+
 // Run tsc through the current Node binary rather than `npx`/`tsc` so no shell
 // lookup (or `.cmd` shim on Windows) is involved.
 const tsc = createRequire(import.meta.url).resolve('typescript/bin/tsc');
@@ -29,6 +33,12 @@ const compiled = spawnSync(process.execPath, [tsc, '-p', join(root, 'tsconfig.te
 });
 if (compiled.error) console.error(compiled.error);
 if (compiled.status !== 0) process.exit(compiled.status ?? 1);
+
+// The CLI tests spawn the shipped bundle, so it is rebuilt from the sources
+// just compiled: a stale dist/cli.mjs would make them pass against old code.
+const built = spawnSync(process.execPath, [join(root, 'scripts', 'build.mjs')], { cwd: root, stdio: 'inherit' });
+if (built.error) console.error(built.error);
+if (built.status !== 0) process.exit(built.status ?? 1);
 
 let files;
 try {

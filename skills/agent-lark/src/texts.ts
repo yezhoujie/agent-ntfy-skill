@@ -53,16 +53,26 @@ export const zh = {
   toastBadOption: '这个选项对不上，再试一次',
   // setup walkthrough (each line is printed as "zh　/　en")
   setupHaveCreds: '已经有凭据了（来自 {origin}）。想重新授权或补权限，加 --update；想换一个应用，先 agent-lark setup --reset。',
-  setupStoreOption: '--store 只能是 keychain / file / none',
-  setupProbing: '正在用这对凭据连一次飞书确认可用（来源：{origin}）……',
+  setupMenu: '怎么接入飞书？\n  1) 扫码新建一个应用（用飞书扫终端里的二维码）\n  2) 复用一个已有的应用（输入 App ID 与 App Secret）',
+  setupMenuPrompt: '选 [1/2]：',
+  setupMenuBad: '只能输 1 或 2。',
+  setupAppIdPrompt: 'App ID（cli_ 开头）：',
+  setupAppIdBad: 'App ID 形态不对：应是 cli_ 加字母数字（在开发者后台「凭证与基础信息」里看）。',
+  setupSecretPrompt: 'App Secret（输入不回显）：',
+  setupProbing: '正在连一次飞书确认这对凭据可用……',
   setupProbeOk: '✅ 凭据可用，应用名「{app}」',
   setupUnnamedApp: '(未命名)',
   setupProbeFailed: '这对凭据连不上飞书：{error}',
   setupSaved: '凭据已保存到：{where}',
   setupSavedQr: '✅ 应用已绑定，凭据保存到：{where}（明文不会出现在任何输出里）。',
   setupNext: '下一步：',
-  setupNoSecret: 'App Secret 没找到。不要写在命令行里（argv 全机器可见），用下面任一种：',
-  setupNoSecretEnvFile: '或写进 {file}：AGENT_LARK_APP_ID=... / AGENT_LARK_APP_SECRET=...',
+  setupReuseGaveUp: '连续 {n} 次没通过，先到开发者后台核对 App ID / App Secret，再跑一次 agent-lark setup --reuse。',
+  setupManualScopes: '这个应用要在开发者后台手动开通（应用 → 权限管理 → 开通权限）：',
+  setupManualEvents: '事件订阅：im.message.receive_v1（订阅方式选「使用长连接接收事件」）· 回调：card.action.trigger（同样选长连接）',
+  setupManualPublish: '开通后发布一个版本，权限才生效。',
+  closePanePrompt: '关掉这个窗格？[Y/n] ',
+  paneKept: '窗格留着。',
+  paneCloseFailed: '关窗格失败：{error}',
   setupRequesting: '正在向飞书申请扫码注册……',
   setupScan: '用飞书扫上面的二维码（扫不到就打开这个链接）：',
   setupScopes: '确认页会列出要授权的权限：',
@@ -73,7 +83,6 @@ export const zh = {
   setupExpired: '二维码过期了，没等到扫码。重跑一次：agent-lark setup（原始错误：{error}）',
   setupRegisterFailed: '扫码注册失败：{error}',
   setupRetry: '网络抖动（{error}），重新申请一张二维码（第 {n}/{max} 次）……',
-  setupSourceFlag: '--app-id + 环境变量',
   appDesc: '把终端里 agent 的提问推到手机，答复注入回终端',
 } as const;
 
@@ -115,16 +124,26 @@ export const en: Record<keyof typeof zh, string> = {
   toastBadOption: 'That option does not match, try again',
   setupHaveCreds:
     'Credentials already exist (from {origin}). Add --update to re-authorize or add scopes; run agent-lark setup --reset first to switch apps.',
-  setupStoreOption: '--store must be keychain / file / none',
-  setupProbing: 'Checking these credentials against Feishu once (source: {origin})…',
+  setupMenu: 'How do you want to connect to Feishu?\n  1) Create a new app by QR code (scan it with Feishu)\n  2) Reuse an app you already have (enter its App ID and App Secret)',
+  setupMenuPrompt: 'Choose [1/2]: ',
+  setupMenuBad: 'Type 1 or 2.',
+  setupAppIdPrompt: 'App ID (starts with cli_): ',
+  setupAppIdBad: 'That is not an App ID: expected cli_ followed by letters and digits (Developer console → Credentials & Basic Info).',
+  setupSecretPrompt: 'App Secret (not echoed): ',
+  setupProbing: 'Checking these credentials against Feishu once…',
   setupProbeOk: '✅ Credentials work; app name "{app}"',
   setupUnnamedApp: '(unnamed)',
   setupProbeFailed: 'These credentials cannot reach Feishu: {error}',
   setupSaved: 'Credentials saved to: {where}',
   setupSavedQr: '✅ App linked; credentials saved to {where} (the secret never appears in any output).',
   setupNext: 'Next:',
-  setupNoSecret: 'App Secret not found. Do not put it on the command line (argv is visible machine-wide); use either:',
-  setupNoSecretEnvFile: 'or write it to {file}: AGENT_LARK_APP_ID=... / AGENT_LARK_APP_SECRET=...',
+  setupReuseGaveUp: '{n} attempts failed; check the App ID / App Secret in the developer console, then run agent-lark setup --reuse again.',
+  setupManualScopes: 'Enable these scopes for the app by hand in the developer console (app → Permissions & Scopes):',
+  setupManualEvents: 'Event subscription: im.message.receive_v1 (delivery: long connection) · callback: card.action.trigger (long connection as well)',
+  setupManualPublish: 'Publish a version afterwards; scopes take effect only then.',
+  closePanePrompt: 'Close this pane? [Y/n] ',
+  paneKept: 'Pane kept.',
+  paneCloseFailed: 'closing the pane failed: {error}',
   setupRequesting: 'Asking Feishu for a QR-code registration…',
   setupScan: 'Scan the QR code above with Feishu (or open this link):',
   setupScopes: 'The confirmation page lists the scopes being requested:',
@@ -135,7 +154,6 @@ export const en: Record<keyof typeof zh, string> = {
   setupExpired: 'The QR code expired before it was scanned. Run again: agent-lark setup (original error: {error})',
   setupRegisterFailed: 'QR-code registration failed: {error}',
   setupRetry: 'Network hiccup ({error}); asking for a fresh QR code (attempt {n}/{max})…',
-  setupSourceFlag: '--app-id + environment',
   appDesc: 'Agent questions pushed to your phone, answers back to the terminal',
 };
 
@@ -143,9 +161,12 @@ export const en: Record<keyof typeof zh, string> = {
 export const msg = {
   help: `agent-lark — reach the agent session running in your terminal from Feishu/Lark
 
-  setup [--update] [--scopes a,b]  Create or update the Feishu app by QR code; credentials go to the keychain
-  setup --app-id cli_xxx [--store]  Use an existing app; the secret is read from the environment / env file, never argv
-  setup --reset                      Forget the stored credentials and set up again from scratch in the same run (QR code or --app-id)
+  setup [--update] [--reset] [--scopes a,b]
+                                     On a terminal: a menu, create the app by QR code or reuse one; piped: QR code straight away.
+                                     Credentials go to the keychain (--update re-authorizes, --reset forgets them first)
+  setup --reuse                      Reuse an app you already have: asks for the App ID and the App Secret (not echoed) on the terminal
+  setup --reuse --report-to <pane> [--close-pane]
+                                     What the agent runs for you in a herdr pane: the result comes back to <pane> as one "[agent-lark] setup:" line
   daemon [--detach|--status|--stop]  Resident process holding the Feishu connection (--stop is refused while a question is pending, unless --force)
   away on [--name <task>] [--reuse <chat_id> | --new]
                                      Remote mode on: daemon up, this project bound to a Feishu group named "<task> [<dir>]"
@@ -167,6 +188,8 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
 `,
   prefix: 'agent-lark: ',
   homeNeedsDir: '--home needs a directory',
+  unknownOption: 'unknown option {option}. See agent-lark --help.',
+  offline: 'offline: refusing to contact Feishu (AGENT_LARK_OFFLINE=1 is set)',
   unknownCommand: 'Unknown command "{cmd}". See agent-lark --help.',
   needStdin: 'This command reads one JSON object from stdin. Feed it with a heredoc.',
   badJson: 'stdin is not valid JSON: {error}',
@@ -178,6 +201,17 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   renameUsage: 'Usage: agent-lark rename "<task name>"',
   taskNameTooLong: 'task name: over {max} characters (code points), got {n}',
   setupNextLines: '  agent-lark daemon --detach\n  cd <project> && agent-lark away on --name "<task>"\n',
+  setupHandoffStarted:
+    'The interactive setup is running in herdr pane {pane}: the user enters the App ID and App Secret there (they never pass through this session). When it ends, one line prefixed "[agent-lark] setup:" arrives here.',
+  setupHandoffFailed: 'could not open a herdr pane for the interactive setup ({why}). Ask the user to run it in their own terminal:\n  {command}',
+  setupReuseNeedsTerminal:
+    'setup --reuse asks for the App ID and App Secret interactively, and there is no terminal here (and no herdr to open one). Ask the user to run it in their own terminal:\n  {command}',
+  setupReportOk: '[agent-lark] setup: credentials stored for {appId} ({app}); the scopes must be enabled in the developer console before use',
+  setupReportFailed: '[agent-lark] setup: failed: {why}',
+  setupReportInterrupted: '[agent-lark] setup: interrupted before any credentials were stored',
+  setupReportExists: '[agent-lark] setup: credentials already stored ({origin}); nothing changed. To switch apps run agent-lark setup --reset --reuse',
+  setupReportNotDelivered: 'agent-lark: the result could not be reported to pane {pane} ({why})',
+  awayOffLocal: 'daemon is not running; local state cleared',
   // daemon command
   daemonNotRunning: 'daemon: not running',
   daemonNoAnswer: 'daemon: no answer ({message})',
@@ -335,11 +369,8 @@ Exit codes: 0 ok · 1 bad input · 2 timed out, nobody answered · 3 channel fai
   credsPermWarning: 'agent-lark: warning: {file} permissions are too open ({mode}); chmod 600 recommended',
   credsNotPersisted: 'not persisted (memory only for this run)',
   originEnv: 'environment AGENT_LARK_APP_ID/SECRET',
-  originGeneric: 'environment LARK_APP_ID/SECRET (generic names, may clash with other Feishu tools)',
   reportEnv: 'environment AGENT_LARK_APP_ID / AGENT_LARK_APP_SECRET',
-  reportEnvFile: 'env file {file}',
   reportUnavailable: ' (not available on this machine)',
-  reportGeneric: 'environment LARK_APP_ID / LARK_APP_SECRET (generic names, last resort)',
 } as const;
 
 export const t = (lang: Lang = 'zh'): Record<keyof typeof zh, string> => (lang === 'en' ? en : zh);

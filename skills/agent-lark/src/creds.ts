@@ -13,7 +13,7 @@ export interface AppCreds {
 }
 
 /** Which layer the credentials actually came from. Shown by `status`. */
-export type CredSource = 'env' | 'env-file' | 'keychain' | 'file' | 'env-generic';
+export type CredSource = 'env' | 'keychain' | 'file';
 
 export interface ResolvedCreds extends AppCreds {
   source: CredSource;
@@ -34,7 +34,6 @@ export function configDir(): string {
 }
 
 export const credentialsFile = (): string => join(configDir(), 'credentials.json');
-export const envFile = (): string => process.env.AGENT_LARK_ENV_FILE?.trim() || join(configDir(), '.env');
 
 /**
  * Which secret store `setup` writes to. Defaults to the OS keychain where one
@@ -194,31 +193,6 @@ function fileWrite(creds: AppCreds): void {
   renameSync(tmp, f);
 }
 
-// ---------------------------------------------------------------- dotenv
-
-/** Minimal dotenv reader: KEY=VALUE, optional quotes, `#` comments. */
-export function readEnvFile(path: string): Record<string, string> {
-  const out: Record<string, string> = {};
-  let text: string;
-  try {
-    text = readFileSync(path, 'utf8');
-  } catch {
-    return out;
-  }
-  for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith('#')) continue;
-    const eq = line.indexOf('=');
-    if (eq <= 0) continue;
-    const key = line.slice(0, eq).trim().replace(/^export\s+/, '');
-    let value = line.slice(eq + 1).trim();
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'")))
-      value = value.slice(1, -1);
-    if (key) out[key] = value;
-  }
-  return out;
-}
-
 // ---------------------------------------------------------------- resolution
 
 function pair(id: string | undefined, secret: string | undefined): { appId: string; appSecret: string } | null {
@@ -231,38 +205,22 @@ function pair(id: string | undefined, secret: string | undefined): { appId: stri
  * Resolution order, highest first. Documented in README — users on a shared
  * machine need to know which layer wins.
  *
- *   1. AGENT_LARK_APP_ID / AGENT_LARK_APP_SECRET       (prefixed env)
- *   2. the env file (AGENT_LARK_ENV_FILE, else <config>/.env)
- *   3. the OS keychain                                  (what `setup` writes)
- *   4. <config>/credentials.json, mode 0600
- *   5. LARK_APP_ID / LARK_APP_SECRET                    (unprefixed, last resort)
+ *   1. AGENT_LARK_APP_ID / AGENT_LARK_APP_SECRET       (environment, a runtime override)
+ *   2. the OS keychain                                  (what `setup` writes)
+ *   3. <config>/credentials.json, mode 0600             (what `AGENT_LARK_STORE=file`, or a platform without a keychain, writes)
  *
- * The unprefixed pair is last deliberately: several Lark tools read those
- * names, so a machine running more than one would otherwise cross-wire.
+ * Nothing else is read: no env file, no unprefixed LARK_* names.
  */
 export function resolveCreds(): ResolvedCreds | null {
   const prefixed = pair(process.env.AGENT_LARK_APP_ID, process.env.AGENT_LARK_APP_SECRET);
   if (prefixed)
     return { ...prefixed, ownerOpenId: process.env.AGENT_LARK_OWNER_OPEN_ID?.trim(), source: 'env', origin: msg.originEnv };
 
-  const ef = envFile();
-  if (existsSync(ef)) {
-    const vars = readEnvFile(ef);
-    const fromFile =
-      pair(vars.AGENT_LARK_APP_ID, vars.AGENT_LARK_APP_SECRET) ?? pair(vars.LARK_APP_ID, vars.LARK_APP_SECRET);
-    if (fromFile)
-      return { ...fromFile, ownerOpenId: vars.AGENT_LARK_OWNER_OPEN_ID, source: 'env-file', origin: ef };
-  }
-
   const kc = keychainRead();
   if (kc?.appId && kc.appSecret) return { ...kc, source: 'keychain', origin: `${keychainName()} (service: ${SERVICE})` };
 
   const f = fileRead();
   if (f?.appId && f.appSecret) return { ...f, source: 'file', origin: credentialsFile() };
-
-  const generic = pair(process.env.LARK_APP_ID, process.env.LARK_APP_SECRET);
-  if (generic)
-    return { ...generic, source: 'env-generic', origin: msg.originGeneric };
 
   return null;
 }
@@ -292,11 +250,7 @@ export function credsReport(): string[] {
   const lines: string[] = [];
   const mark = (ok: boolean): string => (ok ? '✓' : '·');
   lines.push(`${mark(!!pair(process.env.AGENT_LARK_APP_ID, process.env.AGENT_LARK_APP_SECRET))} ${msg.reportEnv}`);
-  const ef = envFile();
-  const vars = existsSync(ef) ? readEnvFile(ef) : {};
-  lines.push(`${mark(!!(pair(vars.AGENT_LARK_APP_ID, vars.AGENT_LARK_APP_SECRET) ?? pair(vars.LARK_APP_ID, vars.LARK_APP_SECRET)))} ${fill(msg.reportEnvFile, { file: ef })}`);
   lines.push(`${mark(!!keychainRead())} ${keychainName()} (service: ${SERVICE})${keychainAvailable() ? '' : msg.reportUnavailable}`);
   lines.push(`${mark(!!fileRead())} ${credentialsFile()}`);
-  lines.push(`${mark(!!pair(process.env.LARK_APP_ID, process.env.LARK_APP_SECRET))} ${msg.reportGeneric}`);
   return lines;
 }

@@ -6,11 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { createLarkChannel, registerApp } from '@larksuite/channel';
 import QRCode from 'qrcode';
 import { clearCreds, credsReport, defaultStore, resolveCreds, writeCreds, type StoreKind } from './creds.js';
-import { envFile } from './creds.js';
-import { currentPaneId, insideHerdr } from './herdr.js';
+import { closePane, currentPaneId, insideHerdr, promptPane, quoteForPaneShell, runInPane, splitPane, type HerdrRun } from './herdr.js';
+import { InputInterrupted, terminalIO, type SetupIO } from './tty.js';
 import { taskNameProblem } from './bindings.js';
 import { isDaemonListening, request, type Request, type Response } from './ipc.js';
-import { ensureHomeDir, ipcEndpoint, logPath, pidPath, projectLabel, projectRoot, readProjectState, writeProjectState } from './paths.js';
+import { ensureHomeDir, homeDir, ipcEndpoint, logPath, pidPath, projectLabel, projectRoot, readProjectState, writeProjectState } from './paths.js';
 import { both, en, fill, msg, zh } from './texts.js';
 import { validateAsk, validateNotify, ValidationError } from './validate.js';
 
@@ -78,18 +78,25 @@ export function isTransientNetworkError(err: unknown): boolean {
 /** A network hiccup while waiting for the scan costs the QR code; this many are asked for before giving up. */
 const SETUP_ATTEMPTS = 3;
 
+/** Replace every occurrence of `secret` in `text` with `***`; an empty secret masks nothing. */
+export function maskSecret(text: string, secret: string): string {
+  return secret ? text.split(secret).join('***') : text;
+}
+
+/**
+ * Why a credential probe was refused, for the human: Feishu's own code and
+ * message when the SDK carried a response body (that is where they live),
+ * otherwise whatever the error says. Never the secret — it is not in the error.
+ */
+export function describeProbeError(err: unknown): string {
+  const data = (err as { response?: { data?: { code?: unknown; msg?: unknown } } } | null)?.response?.data;
+  if (data && typeof data.code === 'number' && data.code !== 0) return `Feishu error ${data.code} ${typeof data.msg === 'string' ? data.msg : ''}`.trim();
+  return describeError(err);
+}
+
 function die(code: number, text: string): never {
   process.stderr.write(`${msg.prefix}${text}\n`);
   process.exit(code);
-}
-
-/** One `setup` line, zh and en side by side — the human is at the terminal for setup, whatever language they read. */
-function bilingual(
-  key: Parameters<typeof both>[0],
-  vars: Record<string, string | number> = {},
-  varsEn: Record<string, string | number> = vars,
-): void {
-  process.stdout.write(`${both(key, vars, varsEn)}\n`);
 }
 
 function flag(args: string[], name: string): boolean {
@@ -101,6 +108,44 @@ function opt(args: string[], name: string): string | undefined {
   if (i < 0) return undefined;
   const v = args[i + 1];
   return v && !v.startsWith('--') ? v : undefined;
+}
+
+/**
+ * Every `--option` a subcommand accepts, by name. Anything else on its
+ * command line is refused before the command does a thing: a misspelt or
+ * unknown option is never silently ignored (`--app-id`, for one, is not an
+ * option of `setup`).
+ */
+const OPTIONS: Record<string, { flags: string[]; opts: string[] }> = {
+  setup: { flags: ['update', 'reset', 'reuse', 'close-pane'], opts: ['scopes', 'report-to'] },
+  daemon: { flags: ['detach', 'status', 'stop', 'force'], opts: [] },
+  bind: { flags: ['new'], opts: ['chat', 'name', 'reuse'] },
+  unbind: { flags: [], opts: [] },
+  rename: { flags: [], opts: [] },
+  ask: { flags: ['urgent'], opts: ['timeout'] },
+  notify: { flags: [], opts: [] },
+  'send-file': { flags: [], opts: ['caption'] },
+  'away on': { flags: ['new'], opts: ['name', 'reuse'] },
+  'away off': { flags: [], opts: [] },
+  'away status': { flags: ['json'], opts: [] },
+  status: { flags: [], opts: [] },
+  help: { flags: [], opts: [] },
+};
+
+/** Exit 1 on the first `--option` that `command` does not know (`--home` was taken out of argv already). */
+function rejectUnknownOptions(command: string, args: string[]): void {
+  const known = OPTIONS[command] ?? { flags: [], opts: [] };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (!a.startsWith('--')) continue;
+    const name = a.slice(2);
+    if (known.flags.includes(name)) continue;
+    if (known.opts.includes(name)) {
+      i += 1; // the option's value, which may look like anything
+      continue;
+    }
+    die(1, fill(msg.unknownOption, { option: a }));
+  }
 }
 
 async function readStdin(): Promise<string> {
@@ -127,65 +172,233 @@ function finish(res: Response, onOk: (r: Extract<Response, { ok: true }>) => voi
 
 // ---------------------------------------------------------------- setup
 
-async function cmdSetup(args: string[]): Promise<void> {
+/** App IDs are `cli_` plus letters and digits; anything else is a typo, not a candidate for the probe. */
+const APP_ID_RE = /^cli_[A-Za-z0-9]+$/;
+/** How many failed credential probes the reuse branch tolerates before giving up. */
+const REUSE_ATTEMPTS = 3;
+/** Prefix of the one line `--report-to` injects back; protocol, never translated. */
+const SETUP_REPORT_PREFIX = '[agent-lark] setup:';
+
+/** What the interactive setup borrows from the outside world; tests inject every piece. */
+export interface SetupDeps {
+  io: SetupIO;
+  /** Check a credential pair against Feishu (`getAppInfo`); resolves with what the app says about itself. */
+  probe: (appId: string, appSecret: string) => Promise<{ appName?: string; ownerId?: string }>;
+  register: typeof registerApp;
+  /** `AGENT_LARK_OFFLINE=1`: never contact Feishu — the test suite sets it, so no test can register an app or probe credentials by accident. */
+  offline: boolean;
+  herdr: {
+    insideHerdr: typeof insideHerdr;
+    currentPaneId: typeof currentPaneId;
+    splitPane: (cwd: string, pane: string) => Promise<string | null>;
+    runInPane: (pane: string, argv: string[]) => Promise<boolean>;
+    promptPane: typeof promptPane;
+    closePane: (pane: string) => Promise<HerdrRun>;
+  };
+  out: (text: string) => void;
+  err: (text: string) => void;
+  /** The interpreter and this CLI's own path: what a new pane is told to run. */
+  execPath: string;
+  cliPath: string;
+  cwd: string;
+}
+
+/** Ends `runSetup` from anywhere inside it with this exit code. */
+class SetupExit extends Error {
+  constructor(readonly code: number) {
+    super(`setup exit ${code}`);
+  }
+}
+
+/**
+ * `setup`: create the Feishu app by QR code, or take over an app that already
+ * exists. Returns the exit code instead of exiting, so tests can run it in
+ * process with a scripted terminal.
+ *
+ * Every wording line is printed in both languages: a human is at the
+ * terminal for setup, whatever language they read.
+ */
+export async function runSetup(args: string[], deps: SetupDeps): Promise<number> {
+  const say = (key: Parameters<typeof both>[0], vars: Record<string, string | number> = {}, varsEn = vars): void =>
+    deps.out(`${both(key, vars, varsEn)}\n`);
+  const fail = (code: number, text: string): never => {
+    deps.err(`${msg.prefix}${text}\n`);
+    throw new SetupExit(code);
+  };
   const update = flag(args, 'update');
-  if (flag(args, 'reset')) clearCreds();
-  const existing = resolveCreds();
-  // Credentials sitting only in the environment are not yet *configured* —
-  // setup's job is to verify and persist them, so only a store short-circuits.
-  const alreadyPersisted = existing?.source === 'keychain' || existing?.source === 'file';
-  if (alreadyPersisted && !update && !flag(args, 'reset') && !opt(args, 'app-id')) {
-    bilingual('setupHaveCreds', { origin: existing.origin });
-    return;
-  }
-  const storeOpt = opt(args, 'store');
-  if (storeOpt && !['keychain', 'file', 'none'].includes(storeOpt))
-    die(1, both('setupStoreOption'));
-  const store = (storeOpt as StoreKind | undefined) ?? defaultStore();
-
-  // Binding an app that already exists on the open platform. The secret is
-  // read from the environment and never travels through argv, a file we
-  // write, or any output — the same rule as every other credential here.
-  // Adopting an app that already exists on the open platform: the secret is
-  // taken from the environment or an env file, never from argv (argv is
-  // visible to every process on the box via `ps`).
-  const flagAppId = opt(args, 'app-id');
-  const fromEnv = resolveCreds();
-  const manualId = flagAppId ?? fromEnv?.appId;
-  const manualSecret = flagAppId
-    ? (process.env.AGENT_LARK_APP_SECRET ?? process.env.LARK_APP_SECRET ?? '').trim() || fromEnv?.appSecret
-    : fromEnv?.appSecret;
-  if (manualId && manualSecret && (flagAppId || fromEnv?.source === 'env' || fromEnv?.source === 'env-file' || fromEnv?.source === 'env-generic')) {
-    bilingual(
-      'setupProbing',
-      { origin: flagAppId ? zh.setupSourceFlag : fromEnv!.origin },
-      { origin: flagAppId ? en.setupSourceFlag : fromEnv!.origin },
-    );
-    const probe = createLarkChannel({ appId: manualId, appSecret: manualSecret });
-    let ownerOpenId: string | undefined;
-    try {
-      const info = await probe.getAppInfo();
-      ownerOpenId = info.ownerId;
-      bilingual('setupProbeOk', { app: info.appName ?? zh.setupUnnamedApp }, { app: info.appName ?? en.setupUnnamedApp });
-    } catch (err) {
-      die(3, both('setupProbeFailed', { error: describeError(err) }));
-    }
-    const where = writeCreds({ appId: manualId, appSecret: manualSecret, ownerOpenId }, store);
-    bilingual('setupSaved', { where });
-    bilingual('setupNext');
-    process.stdout.write(msg.setupNextLines);
-    return;
-  }
-  if (flagAppId)
-    die(
-      4,
-      `${both('setupNoSecret')}\n` +
-        `  AGENT_LARK_APP_SECRET=... agent-lark setup --app-id ${flagAppId}\n` +
-        `  ${both('setupNoSecretEnvFile', { file: envFile() })}`,
-    );
-
+  const reuse = flag(args, 'reuse');
+  const reportTo = opt(args, 'report-to');
+  const closeAfter = flag(args, 'close-pane');
   const scopes = (opt(args, 'scopes')?.split(',').map((s) => s.trim()).filter(Boolean)) ?? DEFAULT_SCOPES;
-  bilingual('setupRequesting');
+
+  // The result reaches the agent that opened this pane as one line, whatever
+  // the outcome — a pane it cannot see is otherwise a black box to it.
+  const report = async (line: string): Promise<void> => {
+    if (!reportTo) return;
+    const r = await deps.herdr.promptPane(reportTo, line);
+    if (!r.ok) deps.err(`${fill(msg.setupReportNotDelivered, { pane: reportTo, why: `${r.code ?? '?'} ${r.message ?? ''}`.trim() })}\n`);
+  };
+
+  try {
+    if (flag(args, 'reset')) clearCreds();
+    const existing = resolveCreds();
+    // Credentials sitting only in the environment are not yet *configured* —
+    // setup's job is to verify and persist them, so only a store short-circuits.
+    const alreadyPersisted = existing?.source === 'keychain' || existing?.source === 'file';
+    if (alreadyPersisted && !update && !flag(args, 'reset')) {
+      say('setupHaveCreds', { origin: existing.origin });
+      await report(fill(msg.setupReportExists, { origin: existing.origin }));
+      return 0;
+    }
+    const store = defaultStore();
+
+    let branch: 'qr' | 'reuse' = reuse ? 'reuse' : 'qr';
+    if (!reuse && deps.io.isTTY) {
+      // A menu only where someone can answer it; an agent's captured stdin
+      // goes straight to the QR code, as before.
+      say('setupMenu');
+      for (;;) {
+        const pick = (await deps.io.question(both('setupMenuPrompt'))).trim();
+        if (pick === '1' || pick === '2') {
+          branch = pick === '1' ? 'qr' : 'reuse';
+          break;
+        }
+        say('setupMenuBad');
+      }
+    }
+
+    if (branch === 'reuse') {
+      if (!deps.io.isTTY) return handOff(deps);
+      await runReuse(deps, store, say, fail, report, closeAfter, scopes);
+      return 0;
+    }
+    if (deps.offline) fail(3, msg.offline);
+    await runQr(deps, store, say, fail, update ? existing?.appId : undefined, scopes);
+    return 0;
+  } catch (err) {
+    if (err instanceof SetupExit) {
+      if (err.code === 130) await report(msg.setupReportInterrupted);
+      return err.code;
+    }
+    if (err instanceof InputInterrupted) {
+      deps.out('\n');
+      await report(msg.setupReportInterrupted);
+      return 130;
+    }
+    throw err;
+  } finally {
+    deps.io.close();
+  }
+}
+
+/**
+ * The reuse branch cannot ask anything without a terminal. Inside herdr the
+ * CLI opens a pane below the caller's and runs itself there, so the secret is
+ * typed where the agent cannot read it; elsewhere the human has to run it.
+ */
+async function handOff(deps: SetupDeps): Promise<number> {
+  const argv = [deps.execPath, deps.cliPath, '--home', homeDir(), 'setup', '--reuse'];
+  const pane = deps.herdr.insideHerdr() ? deps.herdr.currentPaneId() : null;
+  const command = quoteForPaneShell(argv);
+  if (!pane) {
+    deps.err(`${msg.prefix}${fill(msg.setupReuseNeedsTerminal, { command })}\n`);
+    return 4;
+  }
+  const opened = await deps.herdr.splitPane(deps.cwd, pane);
+  if (!opened) {
+    deps.err(`${msg.prefix}${fill(msg.setupHandoffFailed, { why: 'pane split failed', command })}\n`);
+    return 3;
+  }
+  const typed = await deps.herdr.runInPane(opened, [...argv, '--report-to', pane, '--close-pane']);
+  if (!typed) {
+    deps.err(`${msg.prefix}${fill(msg.setupHandoffFailed, { why: `pane run failed in ${opened}`, command })}\n`);
+    return 3;
+  }
+  deps.out(`${fill(msg.setupHandoffStarted, { pane: opened })}\n`);
+  return 0;
+}
+
+async function runReuse(
+  deps: SetupDeps,
+  store: StoreKind,
+  say: (key: Parameters<typeof both>[0], vars?: Record<string, string | number>, varsEn?: Record<string, string | number>) => void,
+  fail: (code: number, text: string) => never,
+  report: (line: string) => Promise<void>,
+  closeAfter: boolean,
+  scopes: string[],
+): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    let appId: string;
+    for (;;) {
+      appId = (await deps.io.question(both('setupAppIdPrompt'))).trim();
+      if (APP_ID_RE.test(appId)) break;
+      say('setupAppIdBad');
+    }
+    // The secret is read hidden and travels only into the probe and the
+    // store: never argv, never a log line, never an error message.
+    const appSecret = (await deps.io.questionHidden(both('setupSecretPrompt'))).trim();
+    if (deps.offline) fail(3, msg.offline);
+    say('setupProbing');
+    let info: { appName?: string; ownerId?: string };
+    try {
+      info = await deps.probe(appId, appSecret);
+    } catch (err) {
+      // Whatever the SDK put in its error text, the secret does not leave this
+      // function through it: not to the terminal, not into the report line.
+      const why = maskSecret(describeProbeError(err), appSecret);
+      say('setupProbeFailed', { error: why });
+      if (attempt >= REUSE_ATTEMPTS) {
+        const line = both('setupReuseGaveUp', { n: attempt });
+        await report(fill(msg.setupReportFailed, { why: `${attempt} probes refused (${why})` }));
+        fail(1, line);
+      }
+      continue;
+    }
+    const app = info.appName ?? '';
+    say('setupProbeOk', { app: app || zh.setupUnnamedApp }, { app: app || en.setupUnnamedApp });
+    const where = writeCreds({ appId, appSecret, ownerOpenId: info.ownerId }, store);
+    say('setupSaved', { where });
+    say('setupManualScopes');
+    deps.out(`  ${scopes.join('\n  ')}\n`);
+    say('setupManualEvents');
+    say('setupManualPublish');
+    say('setupNext');
+    deps.out(msg.setupNextLines);
+    await report(fill(msg.setupReportOk, { appId, app: app || en.setupUnnamedApp }));
+    if (closeAfter) await offerClosePane(deps, say);
+    return;
+  }
+}
+
+/** In a pane the CLI opened for the human: ask whether to close it now that setup is done. */
+async function offerClosePane(
+  deps: SetupDeps,
+  say: (key: Parameters<typeof both>[0], vars?: Record<string, string | number>) => void,
+): Promise<void> {
+  const pane = deps.herdr.insideHerdr() ? deps.herdr.currentPaneId() : null;
+  if (!pane) return;
+  let answer: string;
+  try {
+    answer = (await deps.io.question(both('closePanePrompt'))).trim().toLowerCase();
+  } catch (err) {
+    if (err instanceof InputInterrupted) answer = 'n';
+    else throw err;
+  }
+  if (answer === '' || answer === 'y' || answer === 'yes') {
+    const r = await deps.herdr.closePane(pane);
+    if (!r.ok) say('paneCloseFailed', { error: r.error ?? 'herdr refused' });
+  } else say('paneKept');
+}
+
+async function runQr(
+  deps: SetupDeps,
+  store: StoreKind,
+  say: (key: Parameters<typeof both>[0], vars?: Record<string, string | number>, varsEn?: Record<string, string | number>) => void,
+  fail: (code: number, text: string) => never,
+  updateAppId: string | undefined,
+  scopes: string[],
+): Promise<void> {
+  say('setupRequesting');
 
   let deadline = 0;
   let lastStatus = '';
@@ -194,9 +407,9 @@ async function cmdSetup(args: string[]): Promise<void> {
   // The SDK polls for the scan itself and cannot resume a user code after a
   // dropped connection, so a network failure mid-wait means a fresh QR code.
   const register = () =>
-    registerApp({
+    deps.register({
       source: 'agent-lark',
-      appId: update && existing ? existing.appId : undefined,
+      appId: updateAppId,
       appPreset: {
         name: 'agent-lark',
         desc: both('appDesc'),
@@ -210,19 +423,19 @@ async function cmdSetup(args: string[]): Promise<void> {
         deadline = Date.now() + expireIn * 1000;
         const art = QRCode.toString(url, { type: 'terminal', small: true }) as unknown as Promise<string>;
         void art
-          .then((s) => process.stdout.write(`\n${s}\n`))
+          .then((s) => deps.out(`\n${s}\n`))
           .catch(() => undefined)
           .finally(() => {
-            bilingual('setupScan');
-            process.stdout.write(`${url}\n\n`);
-            bilingual('setupScopes');
-            process.stdout.write(`  ${scopes.join('\n  ')}\n  ${both('setupEvents')}\n\n`);
-            bilingual('setupExpiry', { minutes: Math.round(expireIn / 60), time: new Date(deadline).toLocaleTimeString() });
+            say('setupScan');
+            deps.out(`${url}\n\n`);
+            say('setupScopes');
+            deps.out(`  ${scopes.join('\n  ')}\n  ${both('setupEvents')}\n\n`);
+            say('setupExpiry', { minutes: Math.round(expireIn / 60), time: new Date(deadline).toLocaleTimeString() });
           });
         // One line a minute instead of one every two seconds.
         heartbeat = setInterval(() => {
           const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
-          bilingual('setupWaiting', { seconds: left });
+          say('setupWaiting', { seconds: left });
         }, 60_000);
         heartbeat.unref();
       },
@@ -230,7 +443,7 @@ async function cmdSetup(args: string[]): Promise<void> {
       onStatusChange: (s) => {
         if (s.status === lastStatus) return;
         lastStatus = s.status;
-        bilingual('setupStatus', { status: s.status });
+        say('setupStatus', { status: s.status });
       },
     });
 
@@ -240,9 +453,9 @@ async function cmdSetup(args: string[]): Promise<void> {
       result = await register();
     } catch (err) {
       const detail = describeError(err);
-      if (deadline && Date.now() >= deadline - 5000) die(4, both('setupExpired', { error: detail }));
-      if (attempt >= SETUP_ATTEMPTS || !isTransientNetworkError(err)) die(3, both('setupRegisterFailed', { error: detail }));
-      bilingual('setupRetry', { error: detail, n: attempt + 1, max: SETUP_ATTEMPTS });
+      if (deadline && Date.now() >= deadline - 5000) fail(4, both('setupExpired', { error: detail }));
+      if (attempt >= SETUP_ATTEMPTS || !isTransientNetworkError(err)) fail(3, both('setupRegisterFailed', { error: detail }));
+      say('setupRetry', { error: detail, n: attempt + 1, max: SETUP_ATTEMPTS });
       deadline = 0;
       lastStatus = '';
     } finally {
@@ -259,10 +472,38 @@ async function cmdSetup(args: string[]): Promise<void> {
     },
     store,
   );
-  process.stdout.write('\n');
-  bilingual('setupSavedQr', { where });
-  bilingual('setupNext');
-  process.stdout.write(msg.setupNextLines);
+  deps.out('\n');
+  say('setupSavedQr', { where });
+  say('setupNext');
+  deps.out(msg.setupNextLines);
+}
+
+/** The CLI entry: the real terminal, the real Feishu SDK, the real herdr. */
+async function cmdSetup(args: string[]): Promise<void> {
+  const io: SetupIO = process.stdin.isTTY
+    ? terminalIO()
+    : {
+        isTTY: false,
+        question: () => Promise.reject(new InputInterrupted()),
+        questionHidden: () => Promise.reject(new InputInterrupted()),
+        close: () => undefined,
+      };
+  const code = await runSetup(args, {
+    io,
+    probe: async (appId, appSecret) => {
+      const info = await createLarkChannel({ appId, appSecret }).getAppInfo();
+      return { appName: info.appName, ownerId: info.ownerId };
+    },
+    register: registerApp,
+    offline: process.env.AGENT_LARK_OFFLINE === '1',
+    herdr: { insideHerdr, currentPaneId, splitPane, runInPane, promptPane, closePane },
+    out: (t) => process.stdout.write(t),
+    err: (t) => process.stderr.write(t),
+    execPath: process.execPath,
+    cliPath: fileURLToPath(import.meta.url),
+    cwd: process.cwd(),
+  });
+  process.exit(code);
 }
 
 // ---------------------------------------------------------------- daemon
@@ -558,6 +799,14 @@ async function cmdAway(args: string[]): Promise<void> {
     }
   }
   const res = await request({ type: 'setAway', root, away, paneId });
+  if (!away && !res.ok && res.reason === 'down') {
+    // Switching off must not need the daemon: the file is what the agent's
+    // rule reads, and the daemon's own copy is realigned by the next away on / off.
+    const state = writeProjectState(root, { away: false });
+    if (!state) process.stdout.write(`${msg.awayNeverUsed}\n`);
+    else process.stdout.write(`${msg.awayOff}\n${msg.awayOffLocal}\n`);
+    return;
+  }
   finish(res, () => {
     writeProjectState(root, chatId ? { away, chatId } : { away }, { create: away });
     process.stdout.write(`${away ? msg.awayOn : msg.awayOff}\n`);
@@ -624,6 +873,11 @@ function takeHome(argv: string[]): string[] {
 
 async function main(): Promise<void> {
   const [cmd, ...args] = takeHome(process.argv.slice(2));
+  if (cmd === 'away') {
+    const sub = args.find((a) => !a.startsWith('--')) ?? 'status';
+    rejectUnknownOptions(`away ${sub}`, args);
+  } else if (cmd === undefined || cmd === '--help' || cmd === '-h' || cmd === 'help') rejectUnknownOptions('help', args);
+  else if (cmd in OPTIONS) rejectUnknownOptions(cmd, args);
   switch (cmd) {
     case 'setup':
       return cmdSetup(args);

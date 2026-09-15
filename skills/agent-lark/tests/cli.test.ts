@@ -3,7 +3,7 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -27,10 +27,13 @@ after(() => {
 function run(args: string[], opts: { input?: string; home?: string } = {}) {
   assert.ok(existsSync(cli), `dist/cli.mjs not found at ${cli} — run \`npm run build\` first`);
   const home = opts.home ?? tmp('agent-lark-cli-');
+  // A bounded run: a command that reaches out to Feishu by mistake must fail
+  // the test in seconds, not sit there polling for a scan.
   const r = spawnSync(process.execPath, [cli, ...args], {
     input: opts.input ?? '',
     encoding: 'utf8',
     env: { ...process.env, AGENT_LARK_HOME: home },
+    timeout: 10_000,
   });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, home };
 }
@@ -45,10 +48,68 @@ test('help: exit 0, English, names agent-lark and never herdr-lark', () => {
   assert.equal(hasHan(r.stdout), false, r.stdout);
 });
 
-test('help lists setup --reset, the way to drop stored credentials and switch apps', () => {
+test('help: setup has a menu / QR line, a --reuse line and a hand-off line; --app-id and --store are gone', () => {
   const r = run(['help']);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /^  setup --reset\s{2,}\S.*credentials.*same run/m, r.stdout);
+  assert.match(r.stdout, /^  setup \[--update\] \[--reset\] \[--scopes a,b\]/m, r.stdout);
+  assert.match(r.stdout, /^  setup --reuse\s{2,}\S.*App ID.*Secret/m, r.stdout);
+  assert.match(r.stdout, /--report-to <pane>.*--close-pane/m, r.stdout);
+  assert.doesNotMatch(r.stdout, /--app-id|--store/);
+});
+
+test('the test suite runs offline: `setup` on the shipped bundle exits 3 without contacting Feishu', () => {
+  assert.equal(process.env.AGENT_LARK_OFFLINE, '1', 'scripts/test.mjs must set AGENT_LARK_OFFLINE');
+  const r = run(['setup']);
+  assert.equal(r.status, 3, r.stdout + r.stderr);
+  assert.match(r.stderr, /^agent-lark: offline: refusing to contact Feishu/m);
+});
+
+// ---- unknown options: every subcommand refuses them before doing anything ----
+
+const UNKNOWN: Array<[string, string[], string]> = [
+  ['help', ['help', '--verbose'], '--verbose'],
+  ['setup', ['setup', '--app-id', 'cli_x'], '--app-id'],
+  ['setup --store (gone)', ['setup', '--store', 'file'], '--store'],
+  ['daemon', ['daemon', '--status', '--json'], '--json'],
+  ['bind', ['bind', '--chat', 'oc_x', '--force'], '--force'],
+  ['unbind', ['unbind', '--all'], '--all'],
+  ['rename', ['rename', 'x', '--new'], '--new'],
+  ['ask', ['ask', '--timeout', '5', '--idle'], '--idle'],
+  ['notify', ['notify', '--urgent'], '--urgent'],
+  ['send-file', ['send-file', 'a.png', '--title', 't'], '--title'],
+  ['away on', ['away', 'on', '--chat', 'oc_x'], '--chat'],
+  ['away off', ['away', 'off', '--json'], '--json'],
+  ['away status', ['away', 'status', '--name', 'x'], '--name'],
+  ['status', ['status', '--json'], '--json'],
+];
+for (const [name, argv, bad] of UNKNOWN) {
+  test(`unknown option on ${name}: exit 1 naming the option, nothing else attempted`, () => {
+    const r = run(argv, { input: '{}' });
+    assert.equal(r.status, 1, `${name}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stderr, new RegExp(`^agent-lark: unknown option ${bad}`, 'm'), r.stderr);
+    assert.equal(r.stdout, '');
+  });
+}
+
+test('away off with no daemon: exit 0, the local state file is switched off, and stdout says the daemon was not asked', () => {
+  const project = realpathSync(tmp('agent-lark-off-'));
+  mkdirSync(join(project, '.agent-lark'));
+  writeFileSync(join(project, '.agent-lark', 'state.json'), JSON.stringify({ away: true, chatId: 'oc_x', target: project, updated: '' }));
+  const r = spawnSync(process.execPath, [cli, 'away', 'off'], { encoding: 'utf8', env: { ...process.env, AGENT_LARK_HOME: tmp('agent-lark-home-') }, input: '', cwd: project });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^Remote mode is off\.$/m);
+  assert.match(r.stdout, /daemon is not running; local state cleared/);
+  const state = JSON.parse(readFileSync(join(project, '.agent-lark', 'state.json'), 'utf8')) as { away: boolean; chatId: string | null };
+  assert.equal(state.away, false);
+  assert.equal(state.chatId, 'oc_x');
+});
+
+test('away off with no daemon and no state file: exit 0, "never used", nothing created', () => {
+  const project = realpathSync(tmp('agent-lark-off-'));
+  const r = spawnSync(process.execPath, [cli, 'away', 'off'], { encoding: 'utf8', env: { ...process.env, AGENT_LARK_HOME: tmp('agent-lark-home-') }, input: '', cwd: project });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /never used agent-lark/);
+  assert.equal(existsSync(join(project, '.agent-lark')), false);
 });
 
 test('unknown command: exit 1, English hint on stderr with the agent-lark prefix', () => {
